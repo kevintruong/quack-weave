@@ -100,6 +100,7 @@ struct RawRead {
     limit: Span,
     sort_keys: *const RawSort,
     sort_count: usize,
+    path_variable: Span,
 }
 
 #[repr(C)]
@@ -198,7 +199,11 @@ impl<'a> Input<'a> {
         Ok(Property {
             variable: self.identifier(property.variable)?,
             variable_span: self.source_span(property.variable)?,
-            name: self.identifier(property.name)?,
+            name: if property.name.line == 0 {
+                String::new()
+            } else {
+                self.identifier(property.name)?
+            },
         })
     }
 
@@ -261,8 +266,15 @@ impl<'a> Input<'a> {
             })
             .collect::<Result<_, ParseError>>()?;
         Ok(ParsedRead {
+            path_variable: (raw.path_variable.line != 0)
+                .then(|| self.identifier(raw.path_variable))
+                .transpose()?,
             left: self.node(&raw.left)?,
-            relationship_label: self.identifier(raw.relationship_label)?,
+            relationship_label: if raw.relationship_label.line == 0 {
+                String::new()
+            } else {
+                self.identifier(raw.relationship_label)?
+            },
             relationship_variable: (raw.relationship_variable.line != 0)
                 .then(|| self.identifier(raw.relationship_variable))
                 .transpose()?,
@@ -283,7 +295,9 @@ impl<'a> Input<'a> {
                     .map(|key| Ok((self.identifier(key.alias)?, key.descending)))
                     .collect::<Result<_, ParseError>>()?
             },
-            right: self.node(&raw.right)?,
+            right: (raw.right.variable.line != 0)
+                .then(|| self.node(&raw.right))
+                .transpose()?,
             predicate: self.predicate(&raw.predicate)?,
             projections,
         })

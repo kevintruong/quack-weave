@@ -39,6 +39,15 @@ impl ReadBackend for LadybugBackend {
         path: &Path,
         timeout_ms: Option<u64>,
     ) -> Result<Box<dyn ReadSession>, BackendError> {
+        self.open_projected(path, timeout_ms, &[])
+    }
+
+    fn open_projected(
+        &self,
+        path: &Path,
+        timeout_ms: Option<u64>,
+        schema: &[ColumnSpec],
+    ) -> Result<Box<dyn ReadSession>, BackendError> {
         let mut database = Database::open(path, true)?;
         let mut connection = Connection::open(&mut database)?;
         if let Some(timeout_ms) = timeout_ms {
@@ -51,6 +60,7 @@ impl ReadBackend for LadybugBackend {
         Ok(Box::new(Session {
             connection,
             _database: database,
+            nested: schema.iter().any(|column| column.data_type.is_nested()),
             timeout_ms,
         }))
     }
@@ -60,6 +70,7 @@ impl ReadBackend for LadybugBackend {
 struct Session {
     connection: Connection,
     _database: Database,
+    nested: bool,
     timeout_ms: Option<u64>,
 }
 
@@ -140,7 +151,7 @@ impl ReadSession for Session {
             crate::test_observation::event("schema_rejected", "error", "");
             return Err(BackendError::Schema);
         }
-        let validated = arrow::read_schema(&arrow_schema);
+        let validated = arrow::read_schema_mode(&arrow_schema, self.nested);
         #[cfg(test)]
         if validated.is_ok() {
             crate::test_observation::event("schema_accepted", "ok", "");

@@ -33,6 +33,8 @@ use duckdb_neo::{
 use serde::{Deserialize, Serialize};
 
 mod gql;
+mod graph_value;
+pub use graph_value::{GraphColumn, GraphValue};
 mod parameters;
 
 pub use parameters::GraphParameter;
@@ -63,6 +65,15 @@ pub trait ReadBackend: Send + Sync {
 
     fn native_gql(&self, query: String, parser: Option<GqlParser>) -> Result<String> {
         compile_gql_query(&query, parser)
+    }
+
+    fn open_projected(
+        &self,
+        path: &Path,
+        timeout_ms: Option<u64>,
+        _schema: &[ColumnSpec],
+    ) -> std::result::Result<Box<dyn ReadSession>, BackendError> {
+        self.open(path, timeout_ms)
     }
 
     fn open(
@@ -130,21 +141,24 @@ fn backend_error(error: BackendError) -> Error {
     Error::invalid_input(message)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ScalarType {
     Boolean,
     BigInt,
     Double,
     Varchar,
+    Struct(Vec<ColumnSpec>),
+    List(Box<ScalarType>),
 }
 
 impl ScalarType {
-    fn logical_type(self, context: &Context) -> Result<LogicalType> {
+    fn logical_type(&self, context: &Context) -> Result<LogicalType> {
         match self {
             Self::Boolean => bool::logical_type(context),
             Self::BigInt => i64::logical_type(context),
             Self::Double => f64::logical_type(context),
             Self::Varchar => String::logical_type(context),
+            Self::Struct(_) | Self::List(_) => self.nested_type(context),
         }
     }
 }
@@ -161,20 +175,23 @@ pub enum ColumnData {
     BigInt(Vec<Option<i64>>),
     Double(Vec<Option<f64>>),
     Varchar(Vec<Option<String>>),
+    Graph(Box<GraphColumn>),
 }
 
 impl ColumnData {
-    fn layout(&self) -> (ScalarType, usize) {
+    fn layout(&self) -> (&ScalarType, usize) {
         match self {
-            Self::Boolean(rows) => (ScalarType::Boolean, rows.len()),
-            Self::BigInt(rows) => (ScalarType::BigInt, rows.len()),
-            Self::Double(rows) => (ScalarType::Double, rows.len()),
-            Self::Varchar(rows) => (ScalarType::Varchar, rows.len()),
+            Self::Boolean(rows) => (&ScalarType::Boolean, rows.len()),
+            Self::BigInt(rows) => (&ScalarType::BigInt, rows.len()),
+            Self::Double(rows) => (&ScalarType::Double, rows.len()),
+            Self::Varchar(rows) => (&ScalarType::Varchar, rows.len()),
+            Self::Graph(col) => (col.ty.as_ref(), col.rows.len()),
         }
     }
 
-    fn write(&self, output: &mut DataChunk<'_>, index: usize) -> Result<()> {
+    fn write(&self, context: &Context, output: &mut DataChunk<'_>, index: usize) -> Result<()> {
         match self {
+            Self::Graph(col) => col.write(context, output, index),
             Self::Boolean(rows) => {
                 write_column::<bool>(output, index, rows.iter().map(Option::as_ref))
             }
@@ -206,7 +223,7 @@ impl Batch {
                 .columns
                 .iter()
                 .zip(schema)
-                .any(|(column, expected)| column.layout() != (expected.data_type, self.len))
+                .any(|(column, expected)| column.layout() != (&expected.data_type, self.len))
         {
             return Err(backend_error(BackendError::Arrow));
         }
@@ -646,7 +663,11 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
                     ));
                 }
                 self.backend
-                    .open(Path::new(&path), bound.config.config.timeout_ms)
+                    .open_projected(
+                        Path::new(&path),
+                        bound.config.config.timeout_ms,
+                        &bound.schema,
+                    )
                     .and_then(|session| session.execute_with_params(&bound.cypher, &bound.params))
                     .map_err(backend_error)
             },
@@ -655,7 +676,7 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
             return Ok(());
         };
         for (index, column) in batch.columns.iter().enumerate() {
-            if let Err(error) = column.write(output, index) {
+            if let Err(error) = column.write(context, output, index) {
                 *scan = Scan::Finished;
                 return Err(error);
             }

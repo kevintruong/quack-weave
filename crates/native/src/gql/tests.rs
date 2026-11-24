@@ -10,8 +10,8 @@ fn gql_read_parser_accepts_a_complete_fixed_directed_match() {
     assert_eq!(read.left.variable, "a");
     assert_eq!(read.left.label, "Document");
     assert_eq!(read.relationship_label, "LINKS_TO");
-    assert_eq!(read.right.variable, "b");
-    assert_eq!(read.right.label, "Document");
+    assert_eq!(read.right.as_ref().unwrap().variable, "b");
+    assert_eq!(read.right.as_ref().unwrap().label, "Document");
     let predicate = read.predicate.unwrap();
     assert_eq!(predicate.style, PredicateStyle::Where);
     assert_eq!(predicate.comparison, Comparison::Eq);
@@ -227,6 +227,7 @@ fn fixture_observer_parser() {
                 Ok(read) => {
                     if let Some(predicate) = &read.predicate {
                         match &predicate.literal {
+                            Literal::Parameter(name) => event("literal", "parameter", name),
                             Literal::Boolean(value) => {
                                 event("literal", "boolean", &value.to_string())
                             }

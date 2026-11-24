@@ -66,7 +66,7 @@ extern "C" bool qw_ladybug_is_graph_read(const char* text) noexcept {
     }
 }
 
-using projection_field = bool (*)(void*, const char*, const char*, const char*);
+using projection_field = bool (*)(void*, uint8_t, const char*, const char*, const char*);
 extern "C" bool qw_ladybug_project(const char* text, projection_field visit, void* output) noexcept {
     using namespace lbug::parser;
     using lbug::common::ExpressionType;
@@ -83,24 +83,56 @@ extern "C" bool qw_ladybug_project(const char* text, projection_field visit, voi
             single.getNumUpdatingClauses() || !single.getNumReadingClauses()) return false;
 
         // Only infer properties whose source label is unambiguous in this projection scope.
-        std::unordered_map<std::string, std::string> labels;
-        auto record = [&](const NodePattern& element) {
-            const auto variable = element.getVariableName();
+        enum Kind : uint8_t { Property, Node, Relationship, Path, PathNode, PathEdge };
+        struct Binding {
+            Kind kind;
+            std::string label;
+            std::vector<std::string> nodes, edges;
+            bool ambiguous = false;
+        };
+        std::unordered_map<std::string, Binding> bindings;
+        auto record = [&](const std::string& variable, Binding binding) {
+            if (variable.empty()) return;
+            auto [it, inserted] = bindings.emplace(variable, binding);
+            if (!inserted) {
+                auto& previous = it->second;
+                previous.ambiguous |= binding.ambiguous;
+                if (previous.kind != binding.kind || (!previous.label.empty() && !binding.label.empty() &&
+                    previous.label != binding.label)) previous.ambiguous = true;
+                if (previous.label.empty()) previous.label = binding.label;
+            }
+        };
+        auto label = [](const NodePattern& element) {
             const auto types = element.getTableNames();
-            if (variable.empty() || types.empty()) return;
-            auto [it, inserted] = labels.emplace(variable, types.front());
-            if (types.size() != 1 || (!inserted && it->second != types.front())) it->second.clear();
+            return types.size() == 1 ? types.front() : std::string{};
         };
         for (uint32_t i = 0; i < single.getNumReadingClauses(); ++i) {
             const auto* clause = single.getReadingClause(i);
             if (clause->getClauseType() != ClauseType::MATCH) return false;
             for (const auto& path : static_cast<const MatchClause*>(clause)->getPatternElementsRef()) {
-                record(*path.getFirstNodePattern());
+                const auto& first = *path.getFirstNodePattern();
+                record(first.getVariableName(), {Node, label(first), {}, {}, first.getTableNames().size() > 1});
+                // Keep traversal order. Ladybug merges the fields of each node (and edge)
+                // type in first appearance order when it binds a path expression.
+                auto resolved = [&](const NodePattern& element) {
+                    auto explicit_label = label(element);
+                    if (!explicit_label.empty()) return explicit_label;
+                    auto it = bindings.find(element.getVariableName());
+                    return it != bindings.end() && !it->second.ambiguous ? it->second.label : std::string{};
+                };
+                Binding path_binding {Path, path.getPathName(), {resolved(first)}, {}};
                 for (uint32_t j = 0; j < path.getNumPatternElementChains(); ++j) {
-                    const auto& edge = *path.getPatternElementChain(j);
-                    record(*edge.getRelPattern());
-                    record(*edge.getNodePattern());
+                    const auto& step = *path.getPatternElementChain(j);
+                    const auto& rel = *step.getRelPattern();
+                    const auto& next = *step.getNodePattern();
+                    const bool recursive = lbug::common::QueryRelTypeUtils::isRecursive(rel.getRelType());
+                    record(rel.getVariableName(), {Relationship, label(rel), {}, {}, recursive || rel.getTableNames().size() > 1});
+                    record(next.getVariableName(), {Node, label(next), {}, {}, next.getTableNames().size() > 1});
+                    path_binding.ambiguous |= recursive;
+                    path_binding.edges.push_back(resolved(rel));
+                    path_binding.nodes.push_back(resolved(next));
                 }
+                if (path.hasPathName()) record(path.getPathName(), std::move(path_binding));
             }
         }
         const auto& body = *single.getReturnClause()->getProjectionBody();
@@ -110,17 +142,34 @@ extern "C" bool qw_ladybug_project(const char* text, projection_field visit, voi
                 const auto literal = expr->constCast<ParsedLiteralExpression>().getValue();
                 const auto type = literal.getDataType().toString();
                 const auto name = expr->hasAlias() ? expr->getAlias() : expr->getRawName();
-                if (!visit(output, "", type.c_str(), name.c_str())) return false;
+                if (!visit(output, Property, "", type.c_str(), name.c_str())) return false;
+                continue;
+            }
+            if (expr->getExpressionType() == ExpressionType::VARIABLE) {
+                const auto variable = expr->constCast<ParsedVariableExpression>().getVariableName();
+                const auto it = bindings.find(variable);
+                if (it == bindings.end() || it->second.ambiguous || it->second.label.empty()) return false;
+                const auto& binding = it->second;
+                const auto name = expr->hasAlias() ? expr->getAlias() : variable;
+                if (binding.kind == Path) {
+                    for (const auto& node : binding.nodes) {
+                        if (!visit(output, PathNode, node.c_str(), "", name.c_str())) return false;
+                    }
+                    for (const auto& edge : binding.edges) {
+                        if (!visit(output, PathEdge, edge.c_str(), "", name.c_str())) return false;
+                    }
+                }
+                if (!visit(output, binding.kind, binding.label.c_str(), "", name.c_str())) return false;
                 continue;
             }
             if (expr->getExpressionType() != ExpressionType::PROPERTY || expr->getNumChildren() != 1 ||
                 expr->getChild(0)->getExpressionType() != ExpressionType::VARIABLE) return false;
             const auto& property = expr->constCast<ParsedPropertyExpression>();
             const auto variable = expr->getChild(0)->constCast<ParsedVariableExpression>().getVariableName();
-            const auto label = labels.find(variable);
-            if (label == labels.end() || label->second.empty() || property.isStar()) return false;
+            const auto label = bindings.find(variable);
+            if (label == bindings.end() || label->second.ambiguous || label->second.label.empty() || label->second.kind == Path || property.isStar()) return false;
             const auto name = expr->hasAlias() ? expr->getAlias() : variable + "." + property.getPropertyName();
-            if (!visit(output, label->second.c_str(), property.getPropertyName().c_str(), name.c_str())) {
+            if (!visit(output, Property, label->second.label.c_str(), property.getPropertyName().c_str(), name.c_str())) {
                 return false;
             }
         }

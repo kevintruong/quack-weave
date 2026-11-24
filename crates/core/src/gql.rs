@@ -2,13 +2,14 @@
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct ParsedRead {
+    pub path_variable: Option<String>,
     pub left: NodePattern,
     pub relationship_label: String,
     pub relationship_variable: Option<String>,
     pub distinct: bool,
     pub order: Vec<(String, bool)>,
     pub limit: Option<u64>,
-    pub right: NodePattern,
+    pub right: Option<NodePattern>,
     pub predicate: Option<Predicate>,
     pub projections: Vec<Projection>,
 }

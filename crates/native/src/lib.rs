@@ -18,7 +18,11 @@ pub fn entrypoint(extension: &Extension) -> Result<()> {
     rusty_quack_core::register(extension)?;
     #[cfg(feature = "gql")]
     {
-        rusty_quack_core::qw_query::register_with_gql(extension, ladybug::LadybugBackend, gql::parse)?;
+        rusty_quack_core::qw_query::register_with_gql(
+            extension,
+            ladybug::LadybugBackend,
+            gql::parse,
+        )?;
         return graph_entry::register(extension);
     }
     #[cfg(not(feature = "gql"))]

@@ -97,7 +97,10 @@ fn build_graph_grammar(manifest: &Path, out: &Path) {
     let source = manifest.join(format!("../../build/deps/duckdb-{DUCKDB_REVISION}"));
     require_file(&source.join("src/include/duckdb/parser/grammar_extension.hpp"));
     let sources = manifest.join("grammar");
-    println!("cargo:rerun-if-changed={}", sources.join("graph_table.hpp").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        sources.join("graph_table.hpp").display()
+    );
     let mut objects = Vec::new();
     for unit in ["standalone", "graph_table"] {
         let grammar = sources.join(format!("{unit}.cpp"));

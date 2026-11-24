@@ -63,14 +63,14 @@ LAX
 PDX
 SEA
 
-# case: graph_metadata.invalid Reject unknown properties, graph values and unknown graph names
+# case: graph_metadata.invalid Reject unknown properties, ambiguous projections and unknown graph names
 statement error
 FROM qw_graph_query('air_routes', 'cypher', $$MATCH (a:airport) RETURN a.missing$$);
 ----
 QW_SCHEMA
 
 statement error
-FROM qw_graph_query('air_routes', 'cypher', $$MATCH (a:airport) RETURN a$$);
+FROM qw_graph_query('air_routes', 'cypher', $$MATCH (a:airport) RETURN a.code AS duplicate, a.code AS duplicate$$);
 ----
 QW_SCHEMA
 

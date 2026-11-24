@@ -41,39 +41,57 @@ fn input_error(message: &str, location: Option<Location>) -> Error {
 }
 
 fn lower(read: &ParsedRead) -> Result<String> {
-    if read.left.variable != read.right.variable
-        && read
-            .left
-            .variable
-            .eq_ignore_ascii_case(&read.right.variable)
-    {
-        return Err(input_error(
-            "QW_GQL_SUBSET: Matched variables must not differ only by case",
-            Some(read.right.variable_span.location),
-        ));
-    }
     if read.projections.is_empty() {
         return Err(frontend_error(ParseErrorKind::Unsupported, None));
     }
 
     let mut cypher = String::from("MATCH ");
-    node(&mut cypher, &read.left)?;
-    cypher.push_str("-[");
-    if let Some(variable) = &read.relationship_variable {
-        if variable.eq_ignore_ascii_case(&read.left.variable)
-            || variable.eq_ignore_ascii_case(&read.right.variable)
+    if let Some(path) = &read.path_variable {
+        if path.eq_ignore_ascii_case(&read.left.variable)
+            || read
+                .right
+                .as_ref()
+                .is_some_and(|right| path.eq_ignore_ascii_case(&right.variable))
+            || read
+                .relationship_variable
+                .as_ref()
+                .is_some_and(|edge| path.eq_ignore_ascii_case(edge))
         {
             return Err(input_error(
-                "QW_GQL_SUBSET: Conflicting relationship variable",
+                "QW_GQL_SUBSET: Conflicting path variable",
                 None,
             ));
         }
-        identifier(&mut cypher, variable, None)?;
+        identifier(&mut cypher, path, None)?;
+        cypher.push_str(" = ");
     }
-    cypher.push(':');
-    identifier(&mut cypher, &read.relationship_label, None)?;
-    cypher.push_str("]->");
-    node(&mut cypher, &read.right)?;
+    node(&mut cypher, &read.left)?;
+    if let Some(right) = &read.right {
+        if read.left.variable != right.variable
+            && read.left.variable.eq_ignore_ascii_case(&right.variable)
+        {
+            return Err(input_error(
+                "QW_GQL_SUBSET: Matched variables must not differ only by case",
+                Some(right.variable_span.location),
+            ));
+        }
+        cypher.push_str("-[");
+        if let Some(variable) = &read.relationship_variable {
+            if variable.eq_ignore_ascii_case(&read.left.variable)
+                || variable.eq_ignore_ascii_case(&right.variable)
+            {
+                return Err(input_error(
+                    "QW_GQL_SUBSET: Conflicting relationship variable",
+                    None,
+                ));
+            }
+            identifier(&mut cypher, variable, None)?;
+        }
+        cypher.push(':');
+        identifier(&mut cypher, &read.relationship_label, None)?;
+        cypher.push_str("]->");
+        node(&mut cypher, right)?;
+    }
 
     // With exactly one fixed MATCH, both supported predicate forms filter the same bindings.
     if let Some(predicate) = &read.predicate {
@@ -97,7 +115,9 @@ fn lower(read: &ParsedRead) -> Result<String> {
     let mut aliases = HashSet::new();
     for (index, projection) in read.projections.iter().enumerate() {
         let location = Some(projection.alias_span.location);
-        let column = if projection.alias.is_empty() {
+        let column = if projection.alias.is_empty() && projection.property.name.is_empty() {
+            projection.property.variable.clone()
+        } else if projection.alias.is_empty() {
             format!(
                 "{}.{}",
                 projection.property.variable, projection.property.name
@@ -153,8 +173,12 @@ fn node(cypher: &mut String, node: &NodePattern) -> Result<()> {
 fn property(cypher: &mut String, read: &ParsedRead, property: &Property) -> Result<()> {
     let location = Some(property.variable_span.location);
     if property.variable != read.left.variable
-        && property.variable != read.right.variable
+        && !read
+            .right
+            .as_ref()
+            .is_some_and(|right| property.variable == right.variable)
         && Some(&property.variable) != read.relationship_variable.as_ref()
+        && !(property.name.is_empty() && Some(&property.variable) == read.path_variable.as_ref())
     {
         return Err(input_error(
             "QW_GQL_SUBSET: Property must use a matched variable",
@@ -162,6 +186,9 @@ fn property(cypher: &mut String, read: &ParsedRead, property: &Property) -> Resu
         ));
     }
     identifier(cypher, &property.variable, location)?;
+    if property.name.is_empty() {
+        return Ok(());
+    }
     cypher.push('.');
     identifier(cypher, &property.name, None)
 }

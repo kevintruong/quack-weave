@@ -1,0 +1,166 @@
+# name: test/stabilization/sqllogic/graph_values.test
+# description: Native graph identity, endpoint and path output on Ladybug
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_AIR_ROUTES UNSET_QW_AIR_ROUTES
+
+test-env QW_GRAPH UNSET_QW_GRAPH
+
+# case: values.scalar_and_node Project native graph values from a standalone graph statement
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"air_routes","path":"{QW_AIR_ROUTES}"}';
+
+statement ok
+SESSION SET GRAPH air_routes;
+
+statement ok
+SET qw_graph_dialect = 'gql';
+
+query T
+MATCH (airport:airport) WHERE airport.code = 'ORD' RETURN airport;
+----
+<REGEX>:.*_ID.*_LABEL.*airport.*code.*ORD.*
+
+query TT
+MATCH (o:airport)-[e:route]->(d:airport) WHERE e.rid = 101 RETURN d AS airport, d.code AS code;
+----
+<REGEX>:.*_ID.*offset.*table.*_LABEL.*airport.*code.*BOS.*	BOS
+
+query T
+MATCH (o:airport)-[e:route]->(d:airport) WHERE e.rid = 101 RETURN e;
+----
+<REGEX>:.*_SRC.*_DST.*_LABEL.*route.*_ID.*rid.*101.*dist.*946.*
+
+query T
+MATCH p = (o:airport)-[e:route]->(d:airport) WHERE e.rid = 101 RETURN p;
+----
+<REGEX>:.*_NODES.*ATL.*BOS.*_RELS.*101.*946.*
+
+statement ok
+SET qw_graph_dialect = 'cypher';
+
+query T
+MATCH p = (o:airport)-[e:route]->(d:airport) WHERE e.rid = 101 RETURN p;
+----
+<REGEX>:.*_NODES.*ATL.*BOS.*_RELS.*101.*946.*
+
+# case: values.identity Parallel edges retain different identities, shared endpoints and properties
+query III
+SELECT count(DISTINCT e._ID), count(DISTINCT e._SRC), count(DISTINCT e._DST)
+FROM qw_graph_query('air_routes','cypher',$$
+ MATCH (o:airport)-[e:route]->(d:airport) WHERE d.code='BOS' RETURN e
+$$);
+----
+2	1	1
+
+query III
+SELECT count(DISTINCT e._ID), count(DISTINCT e._SRC), count(DISTINCT e._DST)
+FROM qw_graph_query('air_routes','gql',$$
+ MATCH (o:airport)-[e:route]->(d:airport) WHERE d.code='BOS' RETURN e
+$$);
+----
+2	1	1
+
+query IT
+SELECT e.rid, e._SRC = o._ID AND e._DST = d._ID FROM qw_graph_query('air_routes','cypher',$$
+ MATCH (o:airport)-[e:route]->(d:airport) RETURN o,e,d
+$$) ORDER BY e.rid;
+----
+101	true
+102	true
+103	true
+104	true
+105	true
+
+query IIIT
+SELECT len(p._NODES), len(p._RELS), p._RELS[1].rid, p._NODES[2].code
+FROM qw_graph_query('air_routes','gql',$$
+ MATCH p = (o:airport)-[e:route]->(d:airport) WHERE e.rid=105 RETURN p
+$$)
+WHERE p._RELS[1].dist IS NULL;
+----
+2	1	105	SEA
+
+# case: values.empty Graph values have catalog-bound metadata even with zero rows
+query TT
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM qw_graph_query('air_routes','gql',$$
+ MATCH p = (o:airport)-[e:route]->(d:airport) WHERE e.rid < 0 RETURN d,e,p
+$$));
+----
+d	STRUCT(_ID STRUCT("offset" BIGINT, "table" BIGINT), _LABEL VARCHAR, code VARCHAR)
+e	STRUCT(_SRC STRUCT("offset" BIGINT, "table" BIGINT), _DST STRUCT("offset" BIGINT, "table" BIGINT), _LABEL VARCHAR, _ID STRUCT("offset" BIGINT, "table" BIGINT), rid BIGINT, dist BIGINT)
+p	STRUCT(_NODES STRUCT(_ID STRUCT("offset" BIGINT, "table" BIGINT), _LABEL VARCHAR, code VARCHAR)[], _RELS STRUCT(_SRC STRUCT("offset" BIGINT, "table" BIGINT), _DST STRUCT("offset" BIGINT, "table" BIGINT), _LABEL VARCHAR, _ID STRUCT("offset" BIGINT, "table" BIGINT), rid BIGINT, dist BIGINT)[])
+
+query I
+SELECT count(*) FROM qw_graph_query('air_routes','cypher',$$
+ MATCH p = (o:airport)-[e:route]->(d:airport) WHERE e.rid < 0 RETURN d,e,p
+$$);
+----
+0
+
+query ITT
+SELECT count(*), min(node.code), min(code) FROM qw_graph_query('air_routes','cypher',$$
+ MATCH (o:airport) WHERE o.code='ATL' MATCH (o)-[e:route]->(d:airport) RETURN o AS node, o.code AS code
+$$);
+----
+5	ATL	ATL
+
+query TTTT
+SELECT d IS NULL, e IS NULL, e.rid, d.code FROM qw_graph_query('air_routes','cypher',$$
+ MATCH (o:airport) WHERE o.code='ORD' OPTIONAL MATCH (o:airport)-[e:route]->(d:airport) RETURN d,e
+$$);
+----
+true	true	NULL	NULL
+
+# case: values.path_shapes Distinct endpoint types retain the union of path properties in traversal order
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"docs","path":"{QW_GRAPH}"}';
+
+query TTITIT
+SELECT p._NODES[1]._LABEL, p._NODES[1].title, p._NODES[1].id, p._NODES[2]._LABEL,
+       p._NODES[2].id, p._NODES[2].title
+FROM qw_graph_query('docs','gql',$$
+ MATCH p = (a:Document)-[e:HAS_SAMPLE]->(s:VectorRow) WHERE s.id=42 RETURN p
+$$);
+----
+Document	Source	100	VectorRow	42	NULL
+
+query III
+SELECT count(*), count(DISTINCT s._ID), sum(s.id)
+FROM qw_graph_query('docs','cypher',$$ MATCH (s:VectorRow) RETURN s $$);
+----
+5001	5001	12507501
+
+# case: values.budget Enforce the configured byte budget for nested rows
+# A single typed Document costs 360 bytes with NULL title on the supported 64-bit host.
+# The otherwise identical layout with the 10-byte UTF-8 title exceeds this limit.
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"docs","path":"{QW_GRAPH}","max_batch_bytes":365}';
+
+query I
+SELECT a.id FROM qw_graph_query('docs','gql',$$ MATCH (a:Document) WHERE a.id=102 RETURN a $$);
+----
+102
+
+statement error
+SELECT a.id FROM qw_graph_query('docs','gql',$$ MATCH (a:Document) WHERE a.id=101 RETURN a $$);
+----
+QW_BATCH_BUDGET
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"air_routes","path":"{QW_AIR_ROUTES}","max_batch_bytes":256}';
+
+query T
+MATCH (o:airport) WHERE o.code='ATL' RETURN o.code AS code;
+----
+ATL
+
+statement error
+MATCH p = (o:airport)-[e:route]->(d:airport) WHERE e.rid=101 RETURN p;
+----
+QW_BATCH_BUDGET

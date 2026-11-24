@@ -75,6 +75,7 @@ struct ReadView {
     Span limit;
     const SortKey *sort_keys;
     std::size_t sort_count;
+    Span path_variable;
 };
 
 struct ParsedRead {
@@ -183,11 +184,18 @@ void extract_path(GQLParser::GraphPatternContext &graph, ReadView &read, bool na
         reject(*graph.pathPatternList());
     }
     auto &path = *paths.front();
-    deny(path.pathVariableDeclaration());
+    if (auto *binding = path.pathVariableDeclaration()) {
+        if (!native) reject(*binding);
+        read.path_variable = span(*binding->pathVariable());
+    }
     deny(path.pathPatternPrefix());
     auto &term = require(
         dynamic_cast<GQLParser::PpePathTermContext *>(path.pathPatternExpression()), path);
     auto factors = term.pathTerm()->pathFactor();
+    if (native && factors.size() == 1 && !path.pathVariableDeclaration()) {
+        read.left = node(unquantified(*factors.front()));
+        return;
+    }
     if (factors.size() != 3) {
         reject(term);
     }
@@ -212,8 +220,14 @@ Property property(GQLParser::ValueExpressionContext &expression) {
 Projection projection(GQLParser::ReturnItemContext &item, bool native) {
     auto *alias = item.returnItemAlias();
     if (!alias && !native) reject(item);
-    return {property(*item.aggregatingValueExpression()->valueExpression()),
-        alias ? span(*alias->identifier()) : Span{}};
+    auto &expression = *item.aggregatingValueExpression()->valueExpression();
+    auto output = alias ? span(*alias->identifier()) : Span{};
+    if (native) {
+        if (auto *binding = primary(expression).bindingVariableReference()) {
+            return {{span(*binding), {}}, output};
+        }
+    }
+    return {property(expression), output};
 }
 
 Comparison comparison(GQLParser::CompOpContext &operation) {

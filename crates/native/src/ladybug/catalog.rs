@@ -7,7 +7,17 @@ use rusty_quack_core::qw_query::{BackendError, ColumnSpec, GraphCatalog, ScalarT
 
 use super::{ColumnData, Connection, Database, QueryResult, arrow, ffi};
 
-type Visit = unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char, *const c_char) -> bool;
+// Discriminants shared with qw_ladybug_project. Each path emits its component labels
+// in traversal order, followed by PATH to finish the two typed lists.
+const PROPERTY: u8 = 0;
+const NODE: u8 = 1;
+const RELATIONSHIP: u8 = 2;
+const PATH: u8 = 3;
+const PATH_NODE: u8 = 4;
+const PATH_EDGE: u8 = 5;
+
+type Visit =
+    unsafe extern "C" fn(*mut c_void, u8, *const c_char, *const c_char, *const c_char) -> bool;
 
 unsafe extern "C" {
     fn qw_ladybug_project(query: *const c_char, visit: Visit, output: *mut c_void) -> bool;
@@ -91,6 +101,8 @@ fn catalog_rows(connection: &mut Connection, query: &str) -> Option<Vec<Vec<Stri
 
 struct Projection<'a> {
     catalog: &'a GraphCatalog,
+    nodes: Vec<ColumnSpec>,
+    edges: Vec<ColumnSpec>,
     columns: Vec<ColumnSpec>,
 }
 
@@ -105,6 +117,8 @@ pub(super) fn projection(
     let mut result = Projection {
         catalog,
         columns: Vec::new(),
+        nodes: Vec::new(),
+        edges: Vec::new(),
     };
     let ok = unsafe {
         qw_ladybug_project(
@@ -118,6 +132,7 @@ pub(super) fn projection(
 
 unsafe extern "C" fn project(
     output: *mut c_void,
+    kind: u8,
     label: *const c_char,
     prop: *const c_char,
     name: *const c_char,
@@ -130,27 +145,49 @@ unsafe extern "C" fn project(
     ) else {
         return false;
     };
-    let ty = if label.is_empty() {
-        // A typed scalar literal carries its own type in the expression tree.
-        Some(prop)
-    } else {
-        result
-            .catalog
-            .iter()
-            .find(|(name, _)| name.eq_ignore_ascii_case(label))
-            .and_then(|(_, fields)| {
-                fields
-                    .iter()
-                    .find(|(name, _)| name.eq_ignore_ascii_case(prop))
-            })
-            .map(|(_, ty)| ty.as_str())
+    let data_type = match kind {
+        PROPERTY if label.is_empty() => scalar_type(prop),
+        PROPERTY => schema_fields(result.catalog, label).and_then(|fields| {
+            fields
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case(prop))
+                .and_then(|(_, ty)| scalar_type(ty))
+        }),
+        NODE => entity(result.catalog, label, false),
+        RELATIONSHIP => entity(result.catalog, label, true),
+        PATH if !result.nodes.is_empty() && !result.edges.is_empty() => {
+            let nodes = ScalarType::Struct(std::mem::take(&mut result.nodes));
+            let edges = ScalarType::Struct(std::mem::take(&mut result.edges));
+            Some(ScalarType::Struct(vec![
+                field("_NODES", ScalarType::List(Box::new(nodes))),
+                field("_RELS", ScalarType::List(Box::new(edges))),
+            ]))
+        }
+        PATH_NODE | PATH_EDGE => {
+            let Some(ScalarType::Struct(fields)) = entity(result.catalog, label, kind == PATH_EDGE)
+            else {
+                return false;
+            };
+            let merged = if kind == PATH_EDGE {
+                &mut result.edges
+            } else {
+                &mut result.nodes
+            };
+            for field in fields {
+                if let Some(previous) = merged.iter().find(|previous| previous.name == field.name) {
+                    if previous.data_type != field.data_type {
+                        return false;
+                    }
+                } else {
+                    merged.push(field);
+                }
+            }
+            return true;
+        }
+        _ => None,
     };
-    let data_type = match ty {
-        Some("INT64") => ScalarType::BigInt,
-        Some("STRING") => ScalarType::Varchar,
-        Some("BOOL") => ScalarType::Boolean,
-        Some("DOUBLE") => ScalarType::Double,
-        _ => return false,
+    let Some(data_type) = data_type else {
+        return false;
     };
     if result
         .columns
@@ -164,4 +201,52 @@ unsafe extern "C" fn project(
         data_type,
     });
     true
+}
+
+fn field(name: &str, data_type: ScalarType) -> ColumnSpec {
+    ColumnSpec {
+        name: name.to_owned(),
+        data_type,
+    }
+}
+
+fn scalar_type(ty: &str) -> Option<ScalarType> {
+    Some(match ty {
+        "INT64" => ScalarType::BigInt,
+        "STRING" => ScalarType::Varchar,
+        "BOOL" => ScalarType::Boolean,
+        "DOUBLE" => ScalarType::Double,
+        _ => return None,
+    })
+}
+
+fn schema_fields<'c>(catalog: &'c GraphCatalog, label: &str) -> Option<&'c Vec<(String, String)>> {
+    catalog
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(label))
+        .map(|(_, fields)| fields)
+}
+
+fn entity(catalog: &GraphCatalog, label: &str, relationship: bool) -> Option<ScalarType> {
+    let properties = schema_fields(catalog, label)?;
+    let id = || {
+        ScalarType::Struct(vec![
+            field("offset", ScalarType::BigInt),
+            field("table", ScalarType::BigInt),
+        ])
+    };
+    let mut fields = if relationship {
+        vec![
+            field("_SRC", id()),
+            field("_DST", id()),
+            field("_LABEL", ScalarType::Varchar),
+            field("_ID", id()),
+        ]
+    } else {
+        vec![field("_ID", id()), field("_LABEL", ScalarType::Varchar)]
+    };
+    for (name, ty) in properties {
+        fields.push(field(name, scalar_type(ty)?));
+    }
+    Some(ScalarType::Struct(fields))
 }
