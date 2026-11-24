@@ -1,3 +1,4 @@
+#include "graph_table.hpp"
 
 #include "duckdb/main/capi_v2/capi_v2_internal.hpp"
 #include "duckdb/main/client_config.hpp"
@@ -71,6 +72,7 @@ public:
 		}));
 		changes.push_back(GrammarChange::PrependChoice("Statement", "QwStandalone"));
 		changes.push_back(GrammarChange::PrependChoice("Statement", "QwSelectGraph"));
+		QwAddGraphTableRules(changes);
 		return changes;
 	}
 };

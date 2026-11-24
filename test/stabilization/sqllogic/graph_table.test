@@ -1,0 +1,160 @@
+# name: test/stabilization/sqllogic/graph_table.test
+# description: SQL/PGQ table expressions over a read-only Ladybug graph
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_AIR_ROUTES UNSET_QW_AIR_ROUTES
+
+# case: pgq.table Load the graph and bind GRAPH_TABLE inside host SQL
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"air_routes","path":"{QW_AIR_ROUTES}"}';
+
+query II
+WITH routes AS (
+  SELECT g.* FROM GRAPH_TABLE (
+    air_routes MATCH (o:airport)-[e:route]->(d:airport)
+    WHERE o.code = 'ATL'
+    COLUMNS (e.rid AS route_id, d.code AS destination, e.dist AS miles)
+  ) AS g
+)
+SELECT count(*), count(miles) FROM routes;
+----
+5	4
+
+# case: pgq.view Persist a parser-produced table reference and use SQL projection names
+statement ok
+CREATE VIEW atl_routes AS
+SELECT r.* FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport)
+  WHERE o.code = 'ATL' COLUMNS (e.rid AS route_id, d.code, e.dist AS miles)
+) AS r;
+
+query TI
+SELECT code, count(*) FROM atl_routes
+GROUP BY code ORDER BY code;
+----
+BOS	2
+LAX	1
+PDX	1
+SEA	1
+
+# case: pgq.join Rank after joining and keep graph-side NULLs
+query TI
+WITH directory(code, city) AS (
+  VALUES ('BOS', 'Boston'), ('LAX', 'Los Angeles'), ('SEA', 'Seattle')
+)
+SELECT a.city, r.miles FROM atl_routes AS r
+JOIN directory AS a ON r.code = a.code
+ORDER BY r.miles DESC NULLS LAST, r.route_id FETCH FIRST 2 ROWS ONLY;
+----
+Los Angeles	1946
+Boston	946
+
+query TI
+SELECT g.destination, g.miles FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport)
+  WHERE e.dist IS NULL COLUMNS (d.code AS destination, e.dist AS miles)
+) AS g;
+----
+SEA	NULL
+
+# case: pgq.context Match only the table expression and respect SQL expression evaluation
+query T
+SELECT 'GRAPH_TABLE (air_routes MATCH (o:airport) COLUMNS(o.code))' AS ordinary_text;
+----
+GRAPH_TABLE (air_routes MATCH (o:airport) COLUMNS(o.code))
+
+query TT
+SELECT g.code, g.city_code FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport)
+  WHERE e.dist >= 1900 AND d.code <> 'PDX'
+  COLUMNS (d.code, lower(d.code) AS city_code)
+) AS g;
+----
+LAX	lax
+
+statement error
+SELECT * FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport)
+  COLUMNS (x.code AS unknown_code)
+);
+----
+Unknown GRAPH_TABLE pattern variable
+
+statement error
+SELECT * FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport)
+  COLUMNS (sum(e.dist) AS wrong_scope)
+);
+----
+Aggregates
+
+query II
+SELECT sum(flag), count(*) FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport)
+  COLUMNS (1 AS flag)
+) AS g;
+----
+5	5
+
+statement ok
+CREATE TEMP MACRO qw_graph_query(graph_name, lang, payload) AS TABLE SELECT 999 AS fake;
+
+query I
+SELECT count(*) FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport)
+  COLUMNS (d.code)
+);
+----
+5
+
+statement error
+SELECT * FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport)
+  COLUMNS (row_number() OVER () AS n)
+);
+----
+scalar expressions
+
+statement error
+SELECT * FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport)
+  COLUMNS (unnest([1, 2]) AS n)
+);
+----
+scalar expressions
+
+statement error
+SELECT * FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->{1,3}(d:airport)
+  COLUMNS (d.code)
+);
+----
+Parser Error
+
+# case: pgq.parameters Bind SQL values in both the predicate and the projection
+statement ok
+PREPARE projected_distance AS
+SELECT g.adjusted FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport)
+  WHERE d.code = $1 COLUMNS (e.dist + CAST($2 AS BIGINT) AS adjusted)
+) AS g ORDER BY g.adjusted;
+
+query I
+EXECUTE projected_distance('BOS', 10);
+----
+956
+956
+
+query I
+EXECUTE projected_distance('LAX', 1);
+----
+1947
+
+query I
+EXECUTE projected_distance('O''Hare', 1);
+----

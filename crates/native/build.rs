@@ -92,32 +92,38 @@ fn main() {
 fn build_graph_grammar(manifest: &Path, out: &Path) {
     let source = manifest.join(format!("../../build/deps/duckdb-{DUCKDB_REVISION}"));
     require_file(&source.join("src/include/duckdb/parser/grammar_extension.hpp"));
-    let grammar = manifest.join("grammar/standalone.cpp");
-    println!("cargo:rerun-if-changed={}", grammar.display());
-    let object = out.join("standalone.o");
-    run(
-        Command::new(env::var_os("CXX").as_deref().unwrap_or(OsStr::new("c++")))
-            .args([
-                "-std=c++17",
-                "-O2",
-                "-DNDEBUG",
-                "-fPIC",
-                "-fvisibility=hidden",
-                "-I",
-            ])
-            .arg(source.join("src/include"))
-            .arg("-I")
-            .arg(source.join("third_party/utf8proc/include"))
-            .arg("-c")
-            .arg(grammar)
-            .arg("-o")
-            .arg(&object),
-    );
+    let sources = manifest.join("grammar");
+    println!("cargo:rerun-if-changed={}", sources.join("graph_table.hpp").display());
+    let mut objects = Vec::new();
+    for unit in ["standalone", "graph_table"] {
+        let grammar = sources.join(format!("{unit}.cpp"));
+        let object = out.join(format!("{unit}.o"));
+        println!("cargo:rerun-if-changed={}", grammar.display());
+        run(
+            Command::new(env::var_os("CXX").as_deref().unwrap_or(OsStr::new("c++")))
+                .args([
+                    "-std=c++17",
+                    "-O2",
+                    "-DNDEBUG",
+                    "-fPIC",
+                    "-fvisibility=hidden",
+                    "-I",
+                ])
+                .arg(source.join("src/include"))
+                .arg("-I")
+                .arg(source.join("third_party/utf8proc/include"))
+                .arg("-c")
+                .arg(&grammar)
+                .arg("-o")
+                .arg(&object),
+        );
+        objects.push(object);
+    }
     run(
         Command::new(env::var_os("AR").as_deref().unwrap_or(OsStr::new("ar")))
             .arg("crs")
             .arg(out.join("libqw_grammar.a"))
-            .arg(object),
+            .args(objects),
     );
     println!("cargo:rustc-link-lib=static=qw_grammar");
     // Upstream EXTENSION_STATIC_BUILD links DuckDB privately so loaders using
