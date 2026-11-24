@@ -7,6 +7,8 @@ use super::{
     BackendError, Batch, BatchReader, ColumnData, ColumnSpec, ScalarType, Scan, parse_schema,
 };
 
+mod observer;
+
 #[test]
 fn schema_preserves_order_and_rejects_case_folded_duplicates() {
     let schema = parse_schema("Name VARCHAR, id bigint").unwrap();
