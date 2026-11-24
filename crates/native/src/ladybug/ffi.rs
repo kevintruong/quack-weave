@@ -91,14 +91,17 @@ unsafe extern "C" {
         connection: *mut ConnectionHandle,
         timeout_ms: u64,
     ) -> c_int;
+    #[cfg(not(test))]
     pub(super) fn lbug_connection_prepare(
         connection: *mut ConnectionHandle,
         query: *const c_char,
         prepared: *mut PreparedHandle,
     ) -> c_int;
     pub(super) fn lbug_prepared_statement_is_success(prepared: *mut PreparedHandle) -> bool;
+    #[cfg(not(test))]
     pub(super) fn lbug_prepared_statement_is_read_only(prepared: *mut PreparedHandle) -> bool;
     pub(super) fn lbug_prepared_statement_destroy(prepared: *mut PreparedHandle);
+    #[cfg(not(test))]
     pub(super) fn lbug_connection_execute(
         connection: *mut ConnectionHandle,
         prepared: *mut PreparedHandle,
@@ -110,6 +113,7 @@ unsafe extern "C" {
         result: *mut QueryResultHandle,
         schema: *mut ArrowSchema,
     ) -> c_int;
+    #[cfg(not(test))]
     pub(super) fn lbug_query_result_get_next_arrow_chunk(
         result: *mut QueryResultHandle,
         chunk_size: i64,
@@ -125,3 +129,13 @@ unsafe extern "C" {
         result: *mut QueryResultHandle,
     ) -> c_int;
 }
+
+#[cfg(test)]
+mod observed;
+
+#[cfg(test)]
+pub(super) use observed::{
+    NativeCalls, lbug_connection_execute, lbug_connection_prepare,
+    lbug_prepared_statement_is_read_only, lbug_query_result_get_next_arrow_chunk, native_calls,
+    reset_native_calls,
+};

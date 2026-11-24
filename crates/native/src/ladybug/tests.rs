@@ -23,6 +23,8 @@ impl Fixture {
         for cypher in [
             "CREATE NODE TABLE Person(id INT64, name STRING, PRIMARY KEY(id))",
             "CREATE (:Person {id: 1, name: 'one'}), (:Person {id: 2}), (:Person {id: 3, name: 'three'})",
+            "CREATE REL TABLE KNOWS(FROM Person TO Person)",
+            "MATCH (a:Person), (b:Person) WHERE a.id = 1 AND b.id = 2 CREATE (a)-[:KNOWS]->(b)",
         ] {
             let cypher = CString::new(cypher).unwrap();
             let mut result = QueryResult::default();
@@ -98,18 +100,23 @@ fn read_only_admission_rejects_mutations_and_non_graph_commands() {
         export_path.display()
     );
     for query in [
+        "CALL threads=1",
+        "MATCH (p:Person) RETURN",
         "MATCH (p:Person) SET p.name = 'changed' RETURN p.id",
         "RETURN 1 AS id; MATCH (p:Person) DELETE p",
-        "CALL threads=1",
         "LOAD EXTENSION algo",
         "/* no statement */",
         &copy,
     ] {
+        ffi::reset_native_calls();
         let error = LadybugBackend
             .open(&fixture.path, None)
             .unwrap()
             .execute(query)
             .err();
+        let calls = ffi::native_calls();
+        assert_eq!(calls.execute, 0, "{query}: dispatched to Ladybug");
+        assert_eq!(calls, ffi::NativeCalls::default(), "{query}");
         assert!(matches!(error, Some(BackendError::Admission)), "{query}");
     }
     assert!(!export_path.exists());
@@ -138,12 +145,96 @@ fn empty_graph_result_preserves_schema() {
 #[test]
 fn unsupported_nested_result_fails_during_schema_admission() {
     let fixture = Fixture::new();
+    ffi::reset_native_calls();
     let error = LadybugBackend
         .open(&fixture.path, None)
         .unwrap()
         .execute("MATCH (p:Person) RETURN p AS node")
         .err();
+    assert_eq!(
+        ffi::native_calls(),
+        ffi::NativeCalls {
+            prepare: 1,
+            read_only_check: 1,
+            execute: 1,
+            arrow_pull: 0,
+        },
+        "a rejected schema must never reach Arrow batch conversion",
+    );
     assert!(matches!(error, Some(BackendError::Schema)));
+}
+
+#[cfg(feature = "gql")]
+#[test]
+fn lowered_gql_uses_the_real_prepare_and_execute_boundary_once() {
+    use rusty_quack_core::qw_query::compile_gql_query;
+
+    let fixture = Fixture::new();
+    let cypher = compile_gql_query(
+        "MATCH (a:Person)-[:KNOWS]->(b:Person) WHERE a.id = 1 RETURN b.id AS id",
+        Some(crate::gql::parse),
+    )
+    .unwrap();
+
+    ffi::reset_native_calls();
+    let mut reader = LadybugBackend
+        .open(&fixture.path, None)
+        .unwrap()
+        .execute(&cypher)
+        .unwrap();
+    assert_eq!(
+        ffi::native_calls(),
+        ffi::NativeCalls {
+            prepare: 1,
+            read_only_check: 1,
+            execute: 1,
+            arrow_pull: 0,
+        }
+    );
+    let batch = reader.next_batch(1, None).unwrap().unwrap();
+    assert!(matches!(&batch.columns[0], ColumnData::BigInt(values) if values == &[Some(2)]));
+    assert!(reader.next_batch(1, None).unwrap().is_none());
+    assert_eq!(
+        ffi::native_calls(),
+        ffi::NativeCalls {
+            prepare: 1,
+            read_only_check: 1,
+            execute: 1,
+            arrow_pull: 1,
+        }
+    );
+}
+
+#[cfg(feature = "gql")]
+#[test]
+fn lowered_gql_cannot_dispatch_after_native_prepare_fails() {
+    use rusty_quack_core::qw_query::compile_gql_query;
+
+    let fixture = Fixture::new();
+    let cypher = compile_gql_query(
+        "MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN b.unknown_property AS id",
+        Some(crate::gql::parse),
+    )
+    .unwrap();
+    let native_text = CString::new(cypher.as_str()).unwrap();
+    assert!(unsafe { ffi::qw_ladybug_is_graph_read(native_text.as_ptr()) });
+
+    ffi::reset_native_calls();
+    let error = LadybugBackend
+        .open(&fixture.path, None)
+        .unwrap()
+        .execute(&cypher)
+        .err();
+    assert_eq!(
+        ffi::native_calls(),
+        ffi::NativeCalls {
+            prepare: 1,
+            read_only_check: 0,
+            execute: 0,
+            arrow_pull: 0,
+        }
+    );
+    assert!(matches!(error, Some(BackendError::Admission)));
 }
 
 #[test]
