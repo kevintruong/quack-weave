@@ -1,5 +1,7 @@
 #include "aggregate_pushdown.hpp"
 
+#include <limits>
+
 #include "duckdb/main/config.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/optimizer/optimizer_extension.hpp"
@@ -33,10 +35,28 @@ bool IsIdentifier(const string &s) {
 	return true;
 }
 
+// A vertex emits at most one row per node; a directed step at most one per edge.
+bool SinglePattern(const string &pattern) {
+	if (pattern.size() < 2 || pattern.front() != '(' || pattern.back() != ')')
+		return false;
+	auto named = [](const string &text) {
+		auto parts = StringUtil::Split(text, ':');
+		return parts.size() == 2 && IsIdentifier(parts[0]) && IsIdentifier(parts[1]);
+	};
+	const auto body = pattern.substr(1, pattern.size() - 2);
+	const auto elements = StringUtil::Split(body, ")-[");
+	if (elements.size() == 1)
+		return named(body);
+	if (elements.size() != 2)
+		return false;
+	const auto tail = StringUtil::Split(elements[1], "]->(");
+	return tail.size() == 2 && named(elements[0]) && named(tail[0]) && named(tail[1]);
+}
+
 // GRAPH_TABLE lowers to a single MATCH with simple, explicitly named property projections.
 // Validate the complete return list even for direct calls to the underlying public table function.
-string GraphInput(const LogicalGet &scan) {
-	if (!IsSystem(scan.function) || scan.function.GetName() != "qw_graph_query" || scan.parameters.size() != 3 ||
+string GraphInput(const LogicalGet &scan, bool relate, vector<string> &columns) {
+	if (scan.parameters.size() != 3 ||
 	    scan.parameters[1].ToString() != "cypher" || scan.table_filters.HasFilters() || scan.dynamic_filters ||
 	    scan.extra_info.sample_options || scan.at_clause || scan.row_group_order_options ||
 	    !scan.scan_partition_indices.empty() || scan.source_ordinality != OrdinalityType::WITHOUT_ORDINALITY ||
@@ -52,26 +72,31 @@ string GraphInput(const LogicalGet &scan) {
 	    match.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_ ()[]:->") !=
 	        string::npos)
 		return "";
+	if (relate && !SinglePattern(match.substr(6)))
+		return "";
 	const auto outputs = StringUtil::Split(query.substr(pos + 8), ", ");
 	if (outputs.size() != scan.names.size())
 		return "";
 	for (idx_t i = 0; i < outputs.size(); ++i) {
 		const auto &expr = outputs[i];
-		if (expr == "1 AS qw_row" && scan.names[i] == "qw_row")
+		if (expr == "1 AS qw_row" && scan.names[i] == "qw_row") {
+			columns.push_back(relate ? "1" : "qw_row");
 			continue;
+		}
 		const string alias = "qw_col" + std::to_string(i);
 		const auto dot = expr.find('.');
 		const auto as = expr.find(" AS ");
 		if (as == string::npos || dot >= as || expr.substr(as + 4) != alias || scan.names[i] != Identifier(alias) ||
 		    !IsIdentifier(expr.substr(0, dot)) || !IsIdentifier(expr.substr(dot + 1, as - dot - 1)))
 			return "";
+		columns.push_back(relate ? expr.substr(0, as) : alias);
 	}
-	return match + " WITH " + query.substr(pos + 8);
+	return relate ? match : match + " WITH " + query.substr(pos + 8);
 }
 
 // Follow bound references through purely relational column renames (including views).
 string GraphColumn(ColumnBinding binding, const vector<const LogicalProjection *> &projections,
-                   const LogicalGet &scan) {
+                   const LogicalGet &scan, const vector<string> &columns) {
 	for (auto projection : projections) {
 		if (binding.table_index != projection->table_index || binding.column_index >= projection->expressions.size())
 			return "";
@@ -82,22 +107,22 @@ string GraphColumn(ColumnBinding binding, const vector<const LogicalProjection *
 	auto &col = scan.GetColumnIndex(binding);
 	if (!col.HasPrimaryIndex() || col.HasChildren() || col.GetPrimaryIndex() >= scan.names.size())
 		return "";
-	return scan.names[col.GetPrimaryIndex()].GetIdentifierName();
+	return columns[col.GetPrimaryIndex()];
 }
 
 string AggregateArgument(const Expression &expr, const vector<const LogicalProjection *> &projections,
-                         const LogicalGet &scan) {
+                         const LogicalGet &scan, const vector<string> &columns, int64_t &divisor) {
 	if (expr.GetReturnType() != LogicalType::BIGINT)
 		return "";
 	if (expr.GetExpressionClass() == ExpressionClass::BOUND_COLUMN_REF)
-		return GraphColumn(expr.Cast<BoundColumnRefExpression>().Binding(), projections, scan);
+		return GraphColumn(expr.Cast<BoundColumnRefExpression>().Binding(), projections, scan, columns);
 	if (expr.GetExpressionClass() != ExpressionClass::BOUND_FUNCTION)
 		return "";
 	auto &fn = expr.Cast<BoundFunctionExpression>();
 	if (!IsSystem(fn.Function()) || fn.Function().GetName() != "%" || fn.GetChildren().size() != 2 ||
 	    fn.GetChildren()[0]->GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF)
 		return "";
-	auto lhs = GraphColumn(fn.GetChildren()[0]->Cast<BoundColumnRefExpression>().Binding(), projections, scan);
+	auto lhs = GraphColumn(fn.GetChildren()[0]->Cast<BoundColumnRefExpression>().Binding(), projections, scan, columns);
 	const Expression *rhs = fn.GetChildren()[1].get();
 	if (BoundCastExpression::IsCast(*rhs))
 		rhs = &BoundCastExpression::Child(rhs->Cast<BoundFunctionExpression>());
@@ -106,7 +131,7 @@ string AggregateArgument(const Expression &expr, const vector<const LogicalProje
 	auto &value = rhs->Cast<BoundConstantExpression>().GetValue();
 	if (value.IsNull() || !(value.type() == LogicalType::BIGINT || value.type() == LogicalType::INTEGER))
 		return "";
-	auto divisor = value.GetValue<int64_t>();
+	divisor = value.GetValue<int64_t>();
 	if (divisor <= 0)
 		return ""; // Ladybug and DuckDB can differ for zero and BIGINT_MIN % -1.
 	return lhs + " % " + std::to_string(divisor);
@@ -114,11 +139,14 @@ string AggregateArgument(const Expression &expr, const vector<const LogicalProje
 
 // Both bind calls must refer to the same registration. An explicit resource limit
 // also precludes changing the provider's query and output batch boundaries.
-optional_idx AggregateGeneration(ClientContext &context, LogicalGet &get) {
+optional_idx AggregateGeneration(ClientContext &context, LogicalGet &get, optional_idx &row_bound) {
 	if (!get.bind_data || !get.function.get_bind_info)
 		return optional_idx();
 	TableFunctionGetBindInfoInput input(context, get.bind_data.get());
 	auto info = get.function.get_bind_info(input);
+	auto bound = info.options.find("qw_single_pattern_row_bound");
+	if (bound != info.options.end())
+		row_bound = optional_idx(bound->second.GetValue<uint64_t>());
 	auto entry = info.options.find("qw_aggregate_generation");
 	return entry == info.options.end() ? optional_idx() : optional_idx(entry->second.GetValue<uint64_t>());
 }
@@ -141,7 +169,15 @@ void PushAggregate(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &
 	if (source->type != LogicalOperatorType::LOGICAL_GET)
 		return;
 	auto &scan = source->Cast<LogicalGet>();
-	const auto graph = GraphInput(scan);
+	if (!IsSystem(scan.function) || scan.function.GetName() != "qw_graph_query")
+		return;
+	optional_idx row_bound;
+	auto generation = AggregateGeneration(input.context, scan, row_bound);
+	if (!generation.IsValid())
+		return;
+	const auto relate = row_bound.IsValid();
+	vector<string> columns;
+	const auto graph = GraphInput(scan, relate, columns);
 	if (graph.empty())
 		return;
 	vector<string> fields, schema;
@@ -157,10 +193,19 @@ void PushAggregate(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &
 			field = "count(*)";
 			ty = "BIGINT";
 		} else if ((name == "sum" || name == "count") && aggr.GetChildren().size() == 1) {
-			auto arg = AggregateArgument(*aggr.GetChildren()[0], projections, scan);
+			int64_t divisor = 0;
+			auto arg = AggregateArgument(*aggr.GetChildren()[0], projections, scan, columns, divisor);
 			if (arg.empty())
 				return;
-			if (name == "sum" && expr->GetReturnType() == LogicalType::HUGEINT) {
+			if (name == "sum" && expr->GetReturnType() == LogicalType::HUGEINT && relate) {
+				// Relate promotes overflowing integer sums to FLOAT and returns zero on
+				// empty input. Prove every partial sum fits i64 before delegating it.
+				if (!divisor || (row_bound.GetIndex() && uint64_t(divisor - 1) >
+				                    uint64_t(std::numeric_limits<int64_t>::max()) / row_bound.GetIndex()))
+					return;
+				field = "CASE WHEN count(" + arg + ") = 0 THEN NULL ELSE sum(" + arg + ") END";
+				ty = "BIGINT";
+			} else if (name == "sum" && expr->GetReturnType() == LogicalType::HUGEINT) {
 				// Ladybug sums INT64 to INT128. Its lossless decimal text fits the existing
 				// provider schema; only one scalar per SUM crosses the boundary.
 				field = "CAST(sum(" + arg + ") AS STRING)";
@@ -177,9 +222,6 @@ void PushAggregate(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &
 		schema.push_back(alias + " " + ty);
 		types.push_back(expr->GetReturnType());
 	}
-	auto generation = AggregateGeneration(input.context, scan);
-	if (!generation.IsValid())
-		return;
 	vector<FunctionArgument> args;
 	args.emplace_back(ConstantExpression::String(scan.parameters[0].ToString()));
 	args.emplace_back(ConstantExpression::String("cypher"));
@@ -198,7 +240,7 @@ void PushAggregate(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &
 		return;
 	}
 	auto &get = replacement.plan->Cast<LogicalGet>();
-	auto rebound = AggregateGeneration(input.context, get);
+	auto rebound = AggregateGeneration(input.context, get, row_bound);
 	if (!rebound.IsValid() || rebound.GetIndex() != generation.GetIndex())
 		return;
 	get.ClearColumnIds();

@@ -28,6 +28,9 @@ def fixture_snapshot(directory):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    cases = sorted(HERE.glob("*.test"))
+    parser.add_argument("--case", action="append", choices=[case.name for case in cases],
+                        help="Run only the named SQLLogic file (repeatable)")
     for option in ("fixture-builder", "duckdb-unittest", "extension", "lbug"):
         parser.add_argument(f"--{option}", required=True, type=lambda path: Path(path).resolve(strict=True))
     args = parser.parse_args()
@@ -51,7 +54,7 @@ def main():
         run_cases(args.duckdb_unittest, scratch, {
             "QW_EXT": args.extension, "QW_RELATE": relate, "QW_LADYBUG": lbug,
             "QW_MISSING": fixtures / "missing.rl", "QW_CORRUPT": corrupt, "QW_DIR": fixtures,
-        }, [HERE / "provider.test"])
+        }, [HERE / name for name in args.case] if args.case else cases)
         after = fixture_snapshot(fixtures)
         changed = sorted(path for path in before.keys() | after.keys() if before.get(path) != after.get(path))
         if changed:

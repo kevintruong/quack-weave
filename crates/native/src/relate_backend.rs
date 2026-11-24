@@ -51,6 +51,9 @@ impl ReadBackend for RelateBackend {
         } else {
             None
         };
+        let single_pattern_row_bound = catalog
+            .as_ref()
+            .and_then(|_| catalog::single_pattern_row_bound(&mut connection));
         let registered = RegisteredDatabase {
             generation,
             path: path.into(),
@@ -58,6 +61,7 @@ impl ReadBackend for RelateBackend {
         };
         Ok(PreparedRegistration {
             catalog,
+            single_pattern_row_bound,
             activate: Box::new(move || {
                 *self
                     .registered

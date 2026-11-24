@@ -51,6 +51,7 @@ pub type GraphCatalog = BTreeMap<String, Vec<(String, String)>>;
 /// configuration, file identity and alias check succeeds.
 pub struct PreparedRegistration<'a> {
     pub catalog: Option<GraphCatalog>,
+    pub single_pattern_row_bound: Option<u64>,
     pub activate: Box<dyn FnOnce() + 'a>,
 }
 
@@ -78,6 +79,7 @@ pub trait ReadBackend: Send + Sync {
     ) -> std::result::Result<PreparedRegistration<'a>, BackendError> {
         Ok(PreparedRegistration {
             catalog: self.registration_catalog(path, declared)?,
+            single_pattern_row_bound: None,
             activate: Box::new(move || self.set_generation(Some(generation))),
         })
     }
@@ -418,6 +420,8 @@ struct ConfigSnapshot {
     config: ConfigInput,
     #[serde(default)]
     catalog: Option<GraphCatalog>,
+    #[serde(default)]
+    single_pattern_row_bound: Option<u64>,
 }
 
 fn admit_local_path(context: &Context, path: &str) -> Result<String> {

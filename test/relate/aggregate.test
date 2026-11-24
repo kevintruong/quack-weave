@@ -1,0 +1,104 @@
+# name: test/relate/aggregate.test
+# description: Push safe scalar aggregates into a frozen Relate graph, preserving SQL NULL and wide sums
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_RELATE UNSET_QW_RELATE
+
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"routes","path":"{QW_RELATE}"}';
+
+statement ok
+CREATE VIEW edges AS SELECT * FROM GRAPH_TABLE (
+    routes MATCH (o:airport)-[r:route]->(d:airport) COLUMNS(r.rid AS id, r.dist AS miles)
+) AS g;
+
+query IIIITT
+SELECT count(*), sum(id % 11), count(miles), sum(miles % 11), typeof(sum(id % 11)), typeof(count(*)) FROM edges;
+----
+3	12	2	7	HUGEINT	BIGINT
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT count(*), sum(id % 11) FROM edges;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 1,[^{}]*"name": "QW_QUERY".*
+
+query III
+SELECT count(*), sum(miles % 11), count(miles) FROM edges WHERE id = 203;
+----
+1	NULL	0
+
+query II
+SELECT count(*), sum(id % 11) FROM edges WHERE id = -1;
+----
+0	NULL
+
+# These unfiltered native aggregates must preserve SQL SUM on empty/all-NULL inputs.
+query II
+SELECT count(*), sum(id % 11) FROM GRAPH_TABLE (
+    routes MATCH (a:Item)-[r:route]->(b:Item) COLUMNS(r.rid AS id)
+) g;
+----
+0	NULL
+
+query III
+SELECT count(*), sum(dst % 3), sum(src % 3) FROM GRAPH_TABLE (
+    routes MATCH (a:airport)-[r:route]->(b:airport) COLUMNS(a.rank AS src, b.rank AS dst)
+) g;
+----
+3	NULL	-6
+
+# The provider converts overflowing INT64 sums to floating point. Both results must be exact.
+query II
+SELECT sum(w), sum(w % 9223372036854775807) FROM GRAPH_TABLE (
+    routes MATCH (a:Item) COLUMNS(a.wide AS w)
+) g;
+----
+18446744073709551612	18446744073709551612
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT sum(w % 9223372036854775807) FROM GRAPH_TABLE (
+    routes MATCH (a:Item) COLUMNS(a.wide AS w)
+) g;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 2,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+# Multi-hop matches can repeat an edge across many paths and exceed the row bound.
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT sum(id % 11) FROM GRAPH_TABLE (
+    routes MATCH (a:airport)-[r:route]->(b:airport)-[s:route]->(c:airport) COLUMNS(s.rid AS id)
+) g;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 0,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+# Unguarded full-width SQL sums retain DuckDB HUGEINT accumulation.
+query I
+SELECT sum(id) FROM edges;
+----
+606
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT sum(id) FROM edges;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 3,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"routes","path":"{QW_RELATE}","max_batch_bytes":4096}';
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT sum(id % 11) FROM edges;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 3,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+# A declared property type is a promise that each row still has to satisfy.
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"routes","path":"{QW_RELATE}","catalog":{"airport":{"code":"BIGINT"}}}';
+
+statement error
+SELECT count(id) FROM GRAPH_TABLE (routes MATCH (a:airport) COLUMNS(a.code AS id)) g;
+----
+QW_SCHEMA

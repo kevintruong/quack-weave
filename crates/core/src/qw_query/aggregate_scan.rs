@@ -10,10 +10,13 @@ impl TableGetBindInfoCallbacks for GraphQuery {
         // Replanning the provider work changes batch boundaries and timing. Preserve
         // the original scan whenever the caller configured an explicit execution limit.
         let config = &bound.config.config;
-        if bound.provider.kind == ProviderKind::Ladybug
-            && config.max_batch_bytes.is_none()
-            && config.timeout_ms.is_none()
-        {
+        if config.max_batch_bytes.is_none() && config.timeout_ms.is_none() {
+            if bound.provider.kind == ProviderKind::Relate {
+                let Some(bound_rows) = bound.config.single_pattern_row_bound else {
+                    return Ok(());
+                };
+                info.set_option("qw_single_pattern_row_bound", &bound_rows.value(context)?)?;
+            }
             info.set_option(
                 "qw_aggregate_generation",
                 &bound.config.generation.id().value(context)?,

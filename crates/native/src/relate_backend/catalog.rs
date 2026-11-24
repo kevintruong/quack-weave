@@ -12,6 +12,26 @@ const NODE_PROPERTIES: &str = "CALL db.schema.nodeTypeProperties() \
 const EDGE_PROPERTIES: &str = "CALL db.schema.relTypeProperties() \
     YIELD relType, propertyName, propertyTypes RETURN relType, propertyName, propertyTypes";
 
+/// A single directed step emits at most one row per edge, a vertex match one
+/// per node. Take both counts from the registered immutable read snapshot.
+pub(super) fn single_pattern_row_bound(connection: &mut Connection) -> Option<u64> {
+    let mut bound = 0;
+    for query in [
+        "MATCH (n) RETURN count(*) AS n",
+        "MATCH ()-[r]->() RETURN count(*) AS n",
+    ] {
+        let result = connection.query(query).ok()?;
+        let [row] = result.rows.as_slice() else {
+            return None;
+        };
+        let [Value::Int(n)] = row.as_slice() else {
+            return None;
+        };
+        bound = bound.max(u64::try_from(*n).ok()?);
+    }
+    Some(bound)
+}
+
 pub(super) fn discover(connection: &mut Connection) -> Result<GraphCatalog, BackendError> {
     let mut labels: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
     for (kind, query) in [("node", NODE_PROPERTIES), ("relationship", EDGE_PROPERTIES)] {

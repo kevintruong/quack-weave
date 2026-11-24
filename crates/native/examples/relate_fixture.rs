@@ -14,13 +14,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         let database = Database::open(&path)?;
         let mut writer = database.connect()?;
         writer.execute(
-            "CREATE (o:airport {code: 'OSL', hub: true, score: 2.5}), \
+            "CREATE (o:airport {code: 'OSL', hub: true, score: 2.5, rank: -5}), \
              (a:airport {code: 'AMS'}), (b:airport {code: 'RIX'}), (:airport {code: 'BOS'}), \
              (o)-[:route {rid: 201, dist: 595}]->(a), \
              (o)-[:route {rid: 202, dist: 600}]->(a), (o)-[:route {rid: 203}]->(b)",
         )?;
         writer.execute(
-            "CREATE (a:Item {id: 7, ID: 'seven'}), (b:Item {id: 8, ID: 'eight'}), \
+            "CREATE (a:Item {id: 7, ID: 'seven', wide: 9223372036854775806}), (b:Item {id: 8, ID: 'eight', wide: 9223372036854775806}), \
              (a)-[:Item {id: 'edge', edge_only: true}]->(b)",
         )?;
         drop(writer);
