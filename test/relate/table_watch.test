@@ -1,0 +1,77 @@
+# name: test/relate/table_watch.test
+# description: DuckDB USING watchlists reduce the Ladybug scan and preserve join multiplicity
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_LADYBUG UNSET_QW_LADYBUG
+
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"air_routes","path":"{QW_LADYBUG}"}';
+
+statement ok
+CREATE TEMP TABLE watch(author BIGINT, miles BIGINT);
+
+statement ok
+INSERT INTO watch VALUES (101,946),(101,946),(104,999),(NULL,NULL),(-1,0);
+
+# The public USING key names a direct graph projection. The graph returns two
+# distinct route keys and DuckDB joins the two watch rows with key 101.
+query III
+SELECT author, count(*), sum(miles_graph) FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS author, e.dist AS miles_graph)) AS g JOIN watch USING(author) GROUP BY author ORDER BY author;
+----
+101	2	1892
+104	1	2172
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT author, count(*), sum(miles_graph) FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS author, e.dist AS miles_graph)) AS g JOIN watch USING(author) GROUP BY author ORDER BY author;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 2,[^{}]*"name": "QW_GRAPH_QUERY_WATCH".*
+
+# USING also names the graph output when no table alias was supplied.
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT author FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS author)) JOIN watch USING(author);
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 2,[^{}]*"name": "QW_GRAPH_QUERY_WATCH".*
+
+# A table column-name list renames the actual join key, including on a
+# prepared statement whose table contents change after its first execution.
+statement ok
+PREPARE joined AS SELECT author FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS flight)) AS g(author) JOIN watch USING(author) ORDER BY author;
+
+query I
+EXECUTE joined;
+----
+101
+101
+104
+
+statement ok
+UPDATE watch SET author=105 WHERE author=104;
+
+query I
+EXECUTE joined;
+----
+101
+101
+105
+
+# A composite USING join must apply both equalities. A LEFT JOIN must also
+# return graph rows for keys missing in the watch table.
+query I
+SELECT count(*) FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS author, e.dist AS miles)) AS g JOIN watch USING(author,miles);
+----
+2
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT count(*) FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS author, e.dist AS miles)) AS g JOIN watch USING(author,miles);
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 5,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+query I
+SELECT count(*) FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS author)) AS g LEFT JOIN watch USING(author);
+----
+6

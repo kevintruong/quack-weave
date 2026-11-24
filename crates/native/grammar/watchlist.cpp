@@ -70,8 +70,15 @@ const Literal *IntegerOrNull(const ParsedExpression &expr, bool &negated) {
 } // namespace
 
 const ParsedExpression *QwTableWatchKey(const SelectNode &graph, const TableAlias &alias, const JoinRef &join) {
-	if (join.type != JoinType::INNER || join.ref_type != JoinRefType::REGULAR || !join.condition ||
-	    join.right->type != TableReferenceType::BASE_TABLE || graph.where_clause || alias.name.empty() ||
+	if (join.type != JoinType::INNER || join.ref_type != JoinRefType::REGULAR ||
+	    join.right->type != TableReferenceType::BASE_TABLE || graph.where_clause) {
+		return nullptr;
+	}
+	// DuckDB binds USING from its column list, without an ON expression.
+	if (!join.using_columns.empty()) {
+		return join.using_columns.size() == 1 ? DirectProperty(graph, alias, join.using_columns[0]) : nullptr;
+	}
+	if (!join.condition || alias.name.empty() ||
 	    join.condition->GetExpressionType() != ExpressionType::COMPARE_EQUAL ||
 	    join.condition->GetExpressionClass() != ExpressionClass::COMPARISON) {
 		return nullptr;
