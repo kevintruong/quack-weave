@@ -3,6 +3,9 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+const DUCKGQL_REVISION: &str = "b4421c5cb5e3a389f9658de591a0aa6d397da991";
+const ANTLR_VERSION: &str = "4.13.2";
+
 fn main() {
     if env::var_os("CARGO_FEATURE_TEMPLATE_COMPAT").is_some() {
         return;
@@ -54,6 +57,10 @@ fn main() {
 
     println!("cargo:rustc-link-search=native={}", out.display());
     println!("cargo:rustc-link-lib=static=qw_ladybug_admission");
+    if env::var_os("CARGO_FEATURE_GQL").is_some() {
+        build_gql(&manifest_dir, &out);
+    }
+
     let macos = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos");
     // Link these exact archives. Apple's linker can otherwise pick their dylib
     // siblings when resolving a library by bare name.
@@ -78,6 +85,84 @@ fn main() {
         "stdc++"
     };
     println!("cargo:rustc-link-lib=dylib={cpp_runtime}");
+}
+
+fn build_gql(manifest_dir: &Path, out: &Path) {
+    let dependencies = manifest_dir.join("../../build/deps/gql-antlr");
+    let runtime = dependencies
+        .join(format!("antlr4-{ANTLR_VERSION}"))
+        .join("runtime/Cpp/runtime/src");
+    let generated = dependencies
+        .join(format!("duckdb-gql-{DUCKGQL_REVISION}"))
+        .join("src/parser/generated");
+    for path in [
+        runtime.join("antlr4-runtime.h"),
+        generated.join("GQLParser.cpp"),
+    ] {
+        assert!(
+            path.is_file(),
+            "Missing {}. Run make mvp2-deps.",
+            path.display()
+        );
+    }
+
+    let bridge = manifest_dir.join("src/gql_parser.cpp");
+    let cmake_source = manifest_dir.join("gql");
+    let cmake_build = out.join("gql");
+    for path in [&bridge, &runtime, &generated, &cmake_source] {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+    println!("cargo:rerun-if-env-changed=CMAKE");
+    let cmake = env::var_os("CMAKE").unwrap_or_else(|| "cmake".into());
+    let mut configure = Command::new(&cmake);
+    configure
+        .arg("-S")
+        .arg(&cmake_source)
+        .arg("-B")
+        .arg(&cmake_build)
+        .arg("-DCMAKE_BUILD_TYPE=Release")
+        .arg(path_definition("QW_ANTLR_SOURCE", &runtime))
+        .arg(path_definition("QW_GQL_GENERATED", &generated))
+        .arg(path_definition("CMAKE_ARCHIVE_OUTPUT_DIRECTORY", out));
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
+        configure.arg(format!(
+            "-DCMAKE_OSX_DEPLOYMENT_TARGET={}",
+            macos_deployment_target()
+        ));
+    }
+    run(&mut configure);
+    let jobs = env::var_os("NUM_JOBS").unwrap_or_else(|| "1".into());
+    run(Command::new(cmake)
+        .arg("--build")
+        .arg(cmake_build)
+        .arg("--parallel")
+        .arg(jobs));
+    println!("cargo:rustc-link-lib=static=qw_gql_parser");
+}
+
+fn macos_deployment_target() -> String {
+    let output = Command::new(env::var_os("RUSTC").expect("Cargo rustc"))
+        .args(["--print", "deployment-target", "--target"])
+        .arg(env::var_os("TARGET").expect("Cargo target"))
+        .output()
+        .expect("Read the Rust macOS deployment target");
+    assert!(
+        output.status.success(),
+        "Could not read the Rust deployment target"
+    );
+    let output = String::from_utf8(output.stdout).expect("UTF-8 rustc output");
+    output
+        .trim()
+        .strip_prefix("MACOSX_DEPLOYMENT_TARGET=")
+        .expect("Rust macOS deployment target")
+        .to_owned()
+}
+
+fn path_definition(name: &str, path: &Path) -> std::ffi::OsString {
+    let mut argument = std::ffi::OsString::from(format!("-D{name}="));
+    argument.push(path);
+    argument
 }
 
 fn configured(name: &str, default: PathBuf) -> PathBuf {

@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := mvp1
 
-.PHONY: clean clean_all mvp1 mvp1-release mvp1-deps mvp1-test
+.PHONY: clean clean_all mvp1 mvp1-release mvp1-deps mvp1-test mvp2-deps
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -54,6 +54,9 @@ LBUG ?= lbug
 
 mvp1-deps:
 	$(PYTHON_BIN) scripts/prepare_mvp1_deps.py
+
+mvp2-deps: mvp1-deps
+	$(PYTHON_BIN) -B scripts/prepare_gql_deps.py
 
 define make_mvp1
 	@test "$$(uname -s):$$(uname -m)" = "Darwin:arm64" || { echo 'MVP1 builds on macOS arm64.' >&2; exit 1; }

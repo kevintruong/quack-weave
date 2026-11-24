@@ -1,5 +1,8 @@
 use duckdb_neo::{Result, duckdb_entrypoint_c_api_v2, extension::Extension};
 
+#[cfg(all(feature = "gql", not(feature = "template-compat")))]
+pub mod gql;
+
 #[cfg(not(feature = "template-compat"))]
 mod ladybug;
 

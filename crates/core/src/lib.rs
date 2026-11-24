@@ -20,6 +20,7 @@ use duckdb_neo::{Result, extension::Extension};
 
 pub mod aggregate;
 pub mod copy;
+pub mod gql;
 pub mod macros;
 pub mod options;
 pub mod pragma;
