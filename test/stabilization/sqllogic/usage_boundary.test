@@ -1,0 +1,118 @@
+# name: test/stabilization/sqllogic/usage_boundary.test
+# description: Graph scope, read-only admission, host functions and planning in hybrid queries
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_GRAPH UNSET_QW_GRAPH
+
+test-env QW_CORRUPT UNSET_QW_CORRUPT
+
+# case: usage_boundary.setup Load the extension and provision one graph alias
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+# case: usage_boundary.graph_scope Compose dialects on the provisioned graph and reject a second alias
+query II
+WITH cypher AS (
+    SELECT id FROM qw_query('kg', 'cypher', $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$, schema := 'id BIGINT')
+), gql AS (
+    SELECT id FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT')
+)
+SELECT id, count(*) FROM cypher JOIN gql USING (id) GROUP BY id;
+----
+101	4
+
+statement error
+SET GLOBAL qw_ladybug_config = '[{"alias":"kg","path":"{QW_GRAPH}"},{"alias":"other","path":"{QW_GRAPH}"}]';
+----
+QW_CONFIG
+
+statement error
+SELECT count(*)
+FROM qw_query('kg', 'cypher', $$MATCH (d:Document) RETURN d.id AS id$$, schema := 'id BIGINT') c
+JOIN qw_query('other', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$, schema := 'id BIGINT') g
+USING (id);
+----
+QW_CONFIG: Unknown Ladybug graph alias
+
+# case: usage_boundary.read_only Reject graph mutations in SQL composition and retain the read result
+statement error
+CALL qw_mutate('kg', 'cypher', $$CREATE (:Document {id: 999})$$);
+----
+Table Function with name qw_mutate does not exist
+
+statement error
+WITH graph_rows AS (
+    SELECT id FROM qw_query('kg', 'cypher', $$CREATE (:Document {id: 999}) RETURN 999 AS id$$, schema := 'id BIGINT')
+)
+SELECT count(*) FROM graph_rows JOIN (VALUES (999::BIGINT)) AS local_rows(id) USING (id);
+----
+QW_ADMISSION
+
+statement error
+WITH graph_rows AS (
+    SELECT id FROM qw_query('kg', 'gql', $$INSERT (:Document {id: 999})$$, schema := 'id BIGINT')
+)
+SELECT count(*) FROM graph_rows JOIN (VALUES (999::BIGINT)) AS local_rows(id) USING (id);
+----
+QW_GQL_SUBSET
+
+query I
+SELECT count(*) FROM qw_query('kg', 'cypher', $$MATCH (d:Document) WHERE d.id = 999 RETURN d.id AS id$$, schema := 'id BIGINT');
+----
+0
+
+query II
+SELECT id, count(*)
+FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT')
+JOIN (VALUES (101::BIGINT)) AS local_rows(id) USING (id)
+GROUP BY id;
+----
+101	2
+
+# case: usage_boundary.host_functions Invoke a DuckDB macro on graph rows in the SQL host
+statement ok
+CREATE TEMP MACRO usage_host_offset(input_id) AS input_id + 1;
+
+query I rowsort
+SELECT usage_host_offset(id)
+FROM qw_query('kg', 'cypher', $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+102
+102
+
+statement error
+SELECT id
+FROM qw_query('kg', 'cypher', $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN usage_host_offset(b.id) AS id$$, schema := 'id BIGINT');
+----
+QW_ADMISSION
+
+# case: usage_boundary.explain Plan hybrid reads against a corrupt graph and report the open failure during execution
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_CORRUPT}"}';
+
+statement ok
+EXPLAIN SELECT count(*)
+FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT')
+JOIN (VALUES (101::BIGINT)) AS local_rows(id) USING (id);
+
+statement error
+EXPLAIN ANALYZE SELECT count(*)
+FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT')
+JOIN (VALUES (101::BIGINT)) AS local_rows(id) USING (id);
+----
+QW_OPEN
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+query I
+SELECT count(*)
+FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT')
+JOIN (VALUES (101::BIGINT)) AS local_rows(id) USING (id);
+----
+2

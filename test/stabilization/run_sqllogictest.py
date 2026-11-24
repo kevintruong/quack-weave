@@ -175,6 +175,7 @@ def main():
         snapshot(lbug, graph, duckgql_graph, replacement_graph, before)
         run_cases(unittest, scratch, variables, [test_dir / name for name in (
             "reads.test", "gql_compatibility.test", "usage_relations.test", "usage_binding.test",
+            "usage_boundary.test",
             "bind.test", "admission.test", "scan.test", "host_access.test", "limits.test",
             "timeout.test_slow", "artifact.test",
             "duckgql_admission.test", "duckgql_aggregates.test", "duckgql_basic.test",

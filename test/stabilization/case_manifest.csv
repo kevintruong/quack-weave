@@ -97,3 +97,8 @@ usage_binding.deferred_arguments,usage_binding.test,mvp2-debug|mvp2-release,5
 usage_binding.host_parameter,usage_binding.test,mvp2-debug|mvp2-release,3
 usage_binding.graph_parameters,usage_binding.test,mvp2-debug|mvp2-release,3
 usage_binding.host_macro,usage_binding.test,mvp2-debug|mvp2-release,2
+usage_boundary.setup,usage_boundary.test,mvp2-debug|mvp2-release,2
+usage_boundary.graph_scope,usage_boundary.test,mvp2-debug|mvp2-release,3
+usage_boundary.read_only,usage_boundary.test,mvp2-debug|mvp2-release,5
+usage_boundary.host_functions,usage_boundary.test,mvp2-debug|mvp2-release,3
+usage_boundary.explain,usage_boundary.test,mvp2-debug|mvp2-release,5
