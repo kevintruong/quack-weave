@@ -186,3 +186,70 @@ fn gql_read_parser_bounds_input_bytes_tokens_and_nesting() {
         assert_eq!(parse(&input).unwrap_err().kind, expected);
     }
 }
+
+#[test]
+fn fixture_observer_parser() {
+    use crate::test_observation::{capture, event, hex};
+
+    fn span(input: &str, name: &str, span: SourceSpan) {
+        let bytes = hex(&input.as_bytes()[span.start..span.end]);
+        event(
+            name,
+            "ok",
+            &format!(
+                "{}:{}:{}:{}:{bytes}",
+                span.start, span.end, span.location.line, span.location.column
+            ),
+        );
+    }
+
+    for (invocation, input) in [
+        (
+            "boolean",
+            "MATCH (a:A)-[:E]->(b:B) WHERE a.active = TRUE RETURN b.id AS id",
+        ),
+        (
+            "integer",
+            "MATCH (a:A)-[:E]->(b:B) WHERE a.id = -9223372036854775808 RETURN b.id AS id",
+        ),
+        (
+            "unicode",
+            r"MATCH (a:A)-[:E]->(b:B) FILTER a.name = 'Zoë; O''Brien\\path\U01F4A9' RETURN b.id AS id",
+        ),
+        (
+            "invalid_unicode",
+            "MATCH (a:A)-[:E]->(b:B)\nWHERE a.name = 'Zoë; O''Brien' ; RETURN b.id AS id",
+        ),
+    ] {
+        capture("observer.parser", invocation, None, || {
+            event("input", "ok", &hex(input.as_bytes()));
+            match parse(input) {
+                Ok(read) => {
+                    if let Some(predicate) = &read.predicate {
+                        match &predicate.literal {
+                            Literal::Boolean(value) => {
+                                event("literal", "boolean", &value.to_string())
+                            }
+                            Literal::Integer(value) => {
+                                event("literal", "integer", &value.to_string())
+                            }
+                            Literal::String(value) => {
+                                event("literal", "string", &hex(value.as_bytes()))
+                            }
+                        }
+                        span(input, "span_before", predicate.property.variable_span);
+                    }
+                    if let Some(projection) = read.projections.first() {
+                        span(input, "span_after", projection.alias_span);
+                    }
+                }
+                Err(error) => {
+                    let location = error.location.map_or_else(String::new, |value| {
+                        format!("{}:{}", value.line, value.column)
+                    });
+                    event("diagnostic", &format!("{:?}", error.kind), &location);
+                }
+            }
+        });
+    }
+}

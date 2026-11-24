@@ -77,9 +77,18 @@ impl ReadSession for Session {
         let status =
             unsafe { ffi::lbug_query_result_get_arrow_schema(&mut result.0, &mut arrow_schema) };
         if status != ffi::SUCCESS {
+            #[cfg(test)]
+            crate::test_observation::event("schema_rejected", "error", "");
             return Err(BackendError::Schema);
         }
-        let (schema, formats) = arrow::read_schema(&arrow_schema)?;
+        let validated = arrow::read_schema(&arrow_schema);
+        #[cfg(test)]
+        if validated.is_ok() {
+            crate::test_observation::event("schema_accepted", "ok", "");
+        } else {
+            crate::test_observation::event("schema_rejected", "error", "");
+        }
+        let (schema, formats) = validated?;
         let remaining = unsafe { ffi::lbug_query_result_get_num_tuples(&mut result.0) };
         Ok(Box::new(Reader {
             result,

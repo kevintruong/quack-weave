@@ -264,3 +264,131 @@ fn native_batch_budget_counts_nullable_slots_and_owned_utf8() {
         required - 1
     );
 }
+
+fn observe_result(result: Result<Option<Batch>, BackendError>) {
+    use crate::test_observation::event;
+
+    match result {
+        Ok(Some(batch)) => event("result", "ok", &batch.len.to_string()),
+        Ok(None) => event("result", "eof", ""),
+        Err(error) => event("result", "error", &format!("{error:?}")),
+    }
+}
+
+fn observed_query(
+    fixture: &Fixture,
+    cypher: &str,
+    timeout_ms: Option<u64>,
+) -> Result<Box<dyn BatchReader>, BackendError> {
+    ffi::reset_native_calls();
+    LadybugBackend
+        .open(&fixture.path, timeout_ms)?
+        .execute(cypher)
+}
+
+fn observe_first_batch(
+    fixture: &Fixture,
+    cypher: &str,
+    timeout_ms: Option<u64>,
+    max_bytes: Option<usize>,
+) {
+    match observed_query(fixture, cypher, timeout_ms) {
+        Ok(mut reader) => observe_result(reader.next_batch(1, max_bytes)),
+        Err(error) => observe_result(Err(error)),
+    }
+}
+
+#[cfg(feature = "gql")]
+#[test]
+fn fixture_observer_native_admission() {
+    use crate::test_observation::{capture, event};
+    use rusty_quack_core::qw_query::compile_gql_query;
+
+    let fixture = Fixture::new();
+    capture("observer.admission", "ast_rejected", None, || {
+        observe_first_batch(&fixture, "CALL threads=1", None, None);
+    });
+
+    for (invocation, gql) in [
+        (
+            "prepare_rejected",
+            "MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN b.unknown_property AS id",
+        ),
+        (
+            "admitted",
+            "MATCH (a:Person)-[:KNOWS]->(b:Person) WHERE a.id = 1 RETURN b.id AS id",
+        ),
+    ] {
+        capture(
+            "observer.admission",
+            invocation,
+            None,
+            || match compile_gql_query(gql, Some(crate::gql::parse)) {
+                Ok(cypher) => observe_first_batch(&fixture, &cypher, None, None),
+                Err(_) => event("result", "error", "GqlFrontend"),
+            },
+        );
+    }
+}
+
+#[test]
+fn fixture_observer_native_schema() {
+    use crate::test_observation::capture;
+
+    let fixture = Fixture::new();
+    capture("observer.schema", "nested", None, || {
+        observe_first_batch(&fixture, "MATCH (p:Person) RETURN p AS node", None, None);
+    });
+}
+
+#[test]
+fn fixture_observer_native_quota() {
+    use crate::test_observation::{capture, event};
+
+    let fixture = Fixture::new();
+    let threshold = size_of::<ColumnData>() + size_of::<Option<String>>() + "three".len();
+    for (invocation, budget) in [("at_budget", threshold), ("below_budget", threshold - 1)] {
+        capture("observer.quota", invocation, None, || {
+            event("threshold", "ok", &threshold.to_string());
+            event("budget", "ok", &budget.to_string());
+            observe_first_batch(
+                &fixture,
+                "MATCH (p:Person) WHERE p.id = 3 RETURN p.name AS name",
+                None,
+                Some(budget),
+            );
+        });
+    }
+}
+
+#[test]
+fn fixture_observer_native_faults() {
+    use crate::test_observation::{Fault, capture};
+
+    let fixture = Fixture::new();
+    capture(
+        "observer.failure",
+        "arrow_after_batch",
+        Some(Fault::ArrowAfterBatch),
+        || match observed_query(
+            &fixture,
+            "MATCH (p:Person) RETURN p.id AS id ORDER BY p.id",
+            None,
+        ) {
+            Ok(mut reader) => {
+                observe_result(reader.next_batch(1, None));
+                observe_result(reader.next_batch(1, None));
+            }
+            Err(error) => observe_result(Err(error)),
+        },
+    );
+
+    for (invocation, fault, timeout_ms) in [
+        ("timeout", Fault::Timeout, Some(1_000)),
+        ("execution", Fault::Execution, None),
+    ] {
+        capture("observer.failure", invocation, Some(fault), || {
+            observe_first_batch(&fixture, "RETURN 1 AS id", timeout_ms, None);
+        });
+    }
+}

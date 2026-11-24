@@ -74,11 +74,13 @@ impl Drop for ArrowArray {
 }
 
 unsafe extern "C" {
+    #[cfg(not(test))]
     pub(super) fn qw_ladybug_open_database(
         path: *const c_char,
         read_only: bool,
         database: *mut DatabaseHandle,
     ) -> c_int;
+    #[cfg(not(test))]
     pub(super) fn qw_ladybug_is_graph_read(text: *const c_char) -> bool;
 
     pub(super) fn lbug_database_destroy(database: *mut DatabaseHandle);
@@ -86,6 +88,7 @@ unsafe extern "C" {
         database: *mut DatabaseHandle,
         connection: *mut ConnectionHandle,
     ) -> c_int;
+    #[cfg(not(test))]
     pub(super) fn lbug_connection_destroy(connection: *mut ConnectionHandle);
     pub(super) fn lbug_connection_set_query_timeout(
         connection: *mut ConnectionHandle,
@@ -97,6 +100,7 @@ unsafe extern "C" {
         query: *const c_char,
         prepared: *mut PreparedHandle,
     ) -> c_int;
+    #[cfg(not(test))]
     pub(super) fn lbug_prepared_statement_is_success(prepared: *mut PreparedHandle) -> bool;
     #[cfg(not(test))]
     pub(super) fn lbug_prepared_statement_is_read_only(prepared: *mut PreparedHandle) -> bool;
@@ -119,7 +123,9 @@ unsafe extern "C" {
         chunk_size: i64,
         array: *mut ArrowArray,
     ) -> c_int;
+    #[cfg(not(test))]
     pub(super) fn lbug_get_last_error() -> *mut c_char;
+    #[cfg(not(test))]
     pub(super) fn lbug_destroy_string(message: *mut c_char);
 
     #[cfg(test)]
@@ -135,7 +141,8 @@ mod observed;
 
 #[cfg(test)]
 pub(super) use observed::{
-    NativeCalls, lbug_connection_execute, lbug_connection_prepare,
-    lbug_prepared_statement_is_read_only, lbug_query_result_get_next_arrow_chunk, native_calls,
-    reset_native_calls,
+    NativeCalls, lbug_connection_destroy, lbug_connection_execute, lbug_connection_prepare,
+    lbug_destroy_string, lbug_get_last_error, lbug_prepared_statement_is_read_only,
+    lbug_prepared_statement_is_success, lbug_query_result_get_next_arrow_chunk, native_calls,
+    qw_ladybug_is_graph_read, qw_ladybug_open_database, reset_native_calls,
 };

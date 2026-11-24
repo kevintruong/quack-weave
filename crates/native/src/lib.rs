@@ -6,6 +6,9 @@ pub mod gql;
 #[cfg(not(feature = "template-compat"))]
 mod ladybug;
 
+#[cfg(all(test, not(feature = "template-compat")))]
+mod test_observation;
+
 #[cfg(not(feature = "template-compat"))]
 #[duckdb_entrypoint_c_api_v2(extension_name = "quack_weave", api_version = "2.0.1")]
 pub fn entrypoint(extension: &Extension) -> Result<()> {
