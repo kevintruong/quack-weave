@@ -60,6 +60,7 @@ pub enum Comparison {
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum Literal {
+    Parameter(String),
     Boolean(bool),
     Integer(i64),
     String(String),

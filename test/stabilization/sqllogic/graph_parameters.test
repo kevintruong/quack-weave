@@ -1,0 +1,121 @@
+# name: test/stabilization/sqllogic/graph_parameters.test
+# description: Typed graph-language parameters through prepared native reads
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_AIR_ROUTES UNSET_QW_AIR_ROUTES
+
+# case: graph_parameters.setup Load and select the airport graph
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"air_routes","path":"{QW_AIR_ROUTES}"}';
+
+# case: graph_parameters.values Bind independent typed values into Ladybug's prepared read
+query T
+FROM qw_graph_query_params('air_routes','cypher',
+   $$MATCH (o:airport)-[e:route]->(d:airport) WHERE e.rid = $id RETURN d.code AS airport$$,
+   struct_pack(id := 103::BIGINT));
+----
+LAX
+
+statement ok
+SESSION SET GRAPH air_routes;
+
+# case: graph_parameters.gql Run the same native GQL statement with different bound values
+statement ok
+PREPARE flights AS MATCH (o:airport)-[e:route]->(d:airport)
+WHERE o.code = $origin RETURN d.code AS destination;
+
+query T rowsort
+EXECUTE flights(origin := 'ATL');
+----
+BOS
+BOS
+LAX
+PDX
+SEA
+
+query T
+EXECUTE flights(origin := 'ORD');
+----
+
+query T
+EXECUTE flights(origin := 'O''Brien');
+----
+
+query T
+EXECUTE flights(origin := NULL::VARCHAR);
+----
+
+# case: graph_parameters.cypher Keep parameter-looking literals and comments outside the binding map
+statement ok
+SET qw_graph_dialect = 'cypher';
+
+statement ok
+PREPARE find_route AS MATCH (o:airport)-[e:route]->(d:airport)
+WHERE (e.rid = $route_id OR e.rid = $route_id) AND d.code <> '$literal'
+/* $not_a_parameter */ RETURN d.code AS destination;
+
+query T
+EXECUTE find_route(route_id := 103);
+----
+LAX
+
+query T
+EXECUTE find_route(route_id := 101);
+----
+BOS
+
+statement ok
+PREPARE cypher_flights AS MATCH (o:airport)-[e:route]->(d:airport)
+WHERE o.code = $origin RETURN d.code AS destination;
+
+query T rowsort
+EXECUTE cypher_flights(origin := 'ATL');
+----
+BOS
+BOS
+LAX
+PDX
+SEA
+
+query T
+EXECUTE cypher_flights(origin := 'ORD');
+----
+
+query T
+EXECUTE cypher_flights(origin := 'ATL' || chr(0) || 'X');
+----
+
+query T
+EXECUTE cypher_flights(origin := 'ATL'' OR TRUE');
+----
+
+# case: graph_parameters.scalars Bind distinct typed scalar parameters by name across executions
+statement ok
+PREPARE test_scalars AS MATCH (o:airport)-[e:route]->(d:airport)
+WHERE $enabled AND e.dist > $distance AND o.code = $origin RETURN e.rid AS rid ORDER BY e.rid;
+
+query I
+EXECUTE test_scalars(distance := 1945.5::DOUBLE, origin := 'ATL', enabled := TRUE);
+----
+103
+104
+
+query I
+EXECUTE test_scalars(origin := 'ATL', distance := 0.5::REAL, enabled := FALSE);
+----
+
+# case: graph_parameters.rejections Reject unrepresentable values and ambiguous names explicitly
+statement error
+EXECUTE find_route(route_id := [103]);
+----
+QW_ARGUMENT: Unsupported graph parameter type
+
+statement error
+PREPARE case_clash AS MATCH (a:airport) WHERE a.code = $code OR a.code = $Code RETURN a.code;
+----
+QW_ARGUMENT: Expected distinct ASCII graph parameter names

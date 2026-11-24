@@ -212,6 +212,9 @@ impl<'a> Input<'a> {
             1 => text.parse().ok().map(Literal::Integer),
             2 => format!("-{text}").parse().ok().map(Literal::Integer),
             3 => decode_string(text).map(Literal::String),
+            4 => text
+                .strip_prefix('$')
+                .map(|name| Literal::Parameter(name.to_owned())),
             _ => return Err(internal_error()),
         };
         literal.ok_or_else(|| span.unsupported())

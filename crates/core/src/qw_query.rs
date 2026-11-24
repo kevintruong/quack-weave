@@ -33,6 +33,9 @@ use duckdb_neo::{
 use serde::{Deserialize, Serialize};
 
 mod gql;
+mod parameters;
+
+pub use parameters::GraphParameter;
 
 pub use gql::{GqlParser, compile_gql_query};
 
@@ -74,6 +77,14 @@ pub trait ReadSession: Send {
     fn execute(
         self: Box<Self>,
         cypher: &str,
+    ) -> std::result::Result<Box<dyn BatchReader>, BackendError> {
+        self.execute_with_params(cypher, &[])
+    }
+
+    fn execute_with_params(
+        self: Box<Self>,
+        cypher: &str,
+        params: &[(String, GraphParameter)],
     ) -> std::result::Result<Box<dyn BatchReader>, BackendError>;
 }
 
@@ -409,6 +420,7 @@ pub fn validate_graph_alias(context: &Context, alias: &str) -> Result<()> {
 }
 
 struct BoundRead {
+    params: Vec<(String, GraphParameter)>,
     config: ConfigSnapshot,
     cypher: String,
     schema: Vec<ColumnSpec>,
@@ -567,7 +579,18 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
         for column in &schema {
             handle.add_result_column(&column.name, &column.data_type.logical_type(context)?)?;
         }
+        let params = if self.inferred && args.len()? == 4 {
+            parameters::from_struct(
+                context,
+                &args.arg(3)?.value()?.ok_or_else(|| {
+                    Error::invalid_input("QW_ARGUMENT: Expected bound graph parameter values")
+                })?,
+            )?
+        } else {
+            Vec::new()
+        };
         Ok(BoundRead {
+            params,
             config,
             cypher,
             schema,
@@ -624,7 +647,7 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
                 }
                 self.backend
                     .open(Path::new(&path), bound.config.config.timeout_ms)
-                    .and_then(|session| session.execute(&bound.cypher))
+                    .and_then(|session| session.execute_with_params(&bound.cypher, &bound.params))
                     .map_err(backend_error)
             },
         )?
@@ -695,19 +718,27 @@ fn register_query(
         },
     )
     .register(extension)?;
-    TableFunctionBuilder::new(
-        "qw_graph_query",
-        SignatureBuilder::new()
+    for (name, parameterized) in [("qw_graph_query", false), ("qw_graph_query_params", true)] {
+        let mut signature = SignatureBuilder::new()
             .param(FunctionParameter::new::<String>("alias"))
             .param(FunctionParameter::new::<String>("dialect"))
-            .param(FunctionParameter::new::<String>("query")),
-        GraphQuery {
-            backend,
-            inferred: true,
-            gql_parser,
-        },
-    )
-    .register(extension)
+            .param(FunctionParameter::new::<String>("query"));
+        if parameterized {
+            signature =
+                signature.param(FunctionParameter::new::<duckdb_neo::types::Any>("bindings"));
+        }
+        TableFunctionBuilder::new(
+            name,
+            signature,
+            GraphQuery {
+                backend: Arc::clone(&backend),
+                inferred: true,
+                gql_parser,
+            },
+        )
+        .register(extension)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

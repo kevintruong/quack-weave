@@ -104,6 +104,27 @@ unsafe extern "C" {
     pub(super) fn lbug_prepared_statement_is_success(prepared: *mut PreparedHandle) -> bool;
     #[cfg(not(test))]
     pub(super) fn lbug_prepared_statement_is_read_only(prepared: *mut PreparedHandle) -> bool;
+    pub(super) fn lbug_prepared_statement_bind_bool(
+        prepared: *mut PreparedHandle,
+        name: *const c_char,
+        value: bool,
+    ) -> c_int;
+    pub(super) fn lbug_prepared_statement_bind_int64(
+        prepared: *mut PreparedHandle,
+        name: *const c_char,
+        value: i64,
+    ) -> c_int;
+    pub(super) fn lbug_prepared_statement_bind_double(
+        prepared: *mut PreparedHandle,
+        name: *const c_char,
+        value: f64,
+    ) -> c_int;
+    pub(super) fn qw_ladybug_bind_text(
+        prepared: *mut PreparedHandle,
+        name: *const c_char,
+        bytes: *const u8,
+        length: usize,
+    ) -> c_int;
     pub(super) fn lbug_prepared_statement_destroy(prepared: *mut PreparedHandle);
     #[cfg(not(test))]
     pub(super) fn lbug_connection_execute(

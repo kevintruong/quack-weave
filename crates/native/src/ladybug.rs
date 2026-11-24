@@ -2,7 +2,8 @@ use std::ffi::{CStr, CString};
 use std::path::Path;
 
 use rusty_quack_core::qw_query::{
-    BackendError, Batch, BatchReader, ColumnData, ColumnSpec, ReadBackend, ReadSession, ScalarType,
+    BackendError, Batch, BatchReader, ColumnData, ColumnSpec, GraphParameter, ReadBackend,
+    ReadSession, ScalarType,
 };
 
 mod arrow;
@@ -67,7 +68,11 @@ struct Session {
 unsafe impl Send for Session {}
 
 impl ReadSession for Session {
-    fn execute(mut self: Box<Self>, cypher: &str) -> Result<Box<dyn BatchReader>, BackendError> {
+    fn execute_with_params(
+        mut self: Box<Self>,
+        cypher: &str,
+        params: &[(String, GraphParameter)],
+    ) -> Result<Box<dyn BatchReader>, BackendError> {
         let cypher = CString::new(cypher).map_err(|_| BackendError::Admission)?;
 
         // Parse before prepare. Native read-only mode deliberately permits some standalone
@@ -85,6 +90,38 @@ impl ReadSession for Session {
             || !unsafe { ffi::lbug_prepared_statement_is_read_only(&mut prepared.0) }
         {
             return Err(BackendError::Admission);
+        }
+
+        for (name, value) in params {
+            let name = CString::new(name.as_str()).map_err(|_| BackendError::Execution)?;
+            let status = unsafe {
+                match value {
+                    GraphParameter::Boolean(v) => {
+                        ffi::lbug_prepared_statement_bind_bool(&mut prepared.0, name.as_ptr(), *v)
+                    }
+                    GraphParameter::Integer(v) => {
+                        ffi::lbug_prepared_statement_bind_int64(&mut prepared.0, name.as_ptr(), *v)
+                    }
+                    GraphParameter::Double(v) => {
+                        ffi::lbug_prepared_statement_bind_double(&mut prepared.0, name.as_ptr(), *v)
+                    }
+                    GraphParameter::Text(v) => ffi::qw_ladybug_bind_text(
+                        &mut prepared.0,
+                        name.as_ptr(),
+                        v.as_ptr(),
+                        v.len(),
+                    ),
+                    GraphParameter::Null => ffi::qw_ladybug_bind_text(
+                        &mut prepared.0,
+                        name.as_ptr(),
+                        std::ptr::null(),
+                        0,
+                    ),
+                }
+            };
+            if status != ffi::SUCCESS {
+                return Err(BackendError::Execution);
+            }
         }
 
         let mut result = QueryResult::default();

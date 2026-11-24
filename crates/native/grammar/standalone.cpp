@@ -11,6 +11,10 @@
 #include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/planner/extension_callback.hpp"
 
+using ParameterVisitor = bool (*)(void *, const char *, size_t);
+extern "C" bool qw_gql_parameters(const char *, size_t, ParameterVisitor, void *) noexcept;
+extern "C" bool qw_cypher_parameters(const char *, size_t, ParameterVisitor, void *) noexcept;
+
 namespace duckdb {
 namespace {
 
@@ -20,6 +24,21 @@ unique_ptr<ParsedExpression> CurrentOption(const char *option) {
 	vector<unique_ptr<ParsedExpression>> args;
 	args.push_back(ConstantExpression::String(option));
 	return make_uniq<FunctionExpression>(QualifiedName("system", "main", "current_setting"), std::move(args));
+}
+
+bool CollectParameter(void *output, const char *bytes, size_t length) {
+	auto &names = *static_cast<vector<string> *>(output);
+	string name(bytes, length);
+	if (name.empty() || !(StringUtil::CharacterIsAlpha(name[0]) || name[0] == '_')) return false;
+	for (auto c : name) {
+		if (!(StringUtil::CharacterIsAlpha(c) || StringUtil::CharacterIsDigit(c) || c == '_')) return false;
+	}
+	for (const auto &previous : names) {
+		if (previous == name) return true;
+		if (StringUtil::CIEquals(previous, name)) return false;
+	}
+	names.push_back(std::move(name));
+	return true;
 }
 
 arena_ptr<TransformResultValue> TransformMatch(PEGTransformer &transformer, ParseResult &result) {
@@ -33,10 +52,32 @@ arena_ptr<TransformResultValue> TransformMatch(PEGTransformer &transformer, Pars
 	vector<unique_ptr<ParsedExpression>> args;
 	args.push_back(CurrentOption("qw_selected_graph"));
 	args.push_back(CurrentOption("qw_graph_dialect"));
-	args.push_back(ConstantExpression::String(text->substr(span.offset, span.length)));
+	auto source = text->substr(span.offset, span.length);
+	args.push_back(ConstantExpression::String(source));
+
+	vector<string> names;
+	if (source.find('$') != string::npos) {
+		string dialect = "gql";
+		if (transformer.options.context) {
+			transformer.options.context->TryGetCurrentSetting(Identifier("qw_graph_dialect"), dialect);
+		}
+		auto enumerate = dialect == "cypher" ? qw_cypher_parameters : qw_gql_parameters;
+		if (!enumerate(source.data(), source.size(), CollectParameter, &names)) {
+			throw ParserException("QW_ARGUMENT: Expected distinct ASCII graph parameter names");
+		}
+	}
+	if (!names.empty()) {
+		vector<unique_ptr<ParsedExpression>> fields;
+		for (const auto &name : names) {
+			auto field = PEGTransformerFactory::TransformColLabelParameter(transformer, name);
+			field->SetAlias(Identifier(name));
+			fields.push_back(std::move(field));
+		}
+		args.push_back(make_uniq<FunctionExpression>(QualifiedName("system", "main", "struct_pack"), std::move(fields)));
+	}
 
 	auto read = make_uniq<TableFunctionRef>();
-	read->function = make_uniq<FunctionExpression>(QualifiedName("system", "main", "qw_graph_query"), std::move(args));
+	read->function = make_uniq<FunctionExpression>(QualifiedName("system", "main", names.empty() ? "qw_graph_query" : "qw_graph_query_params"), std::move(args));
 	auto select = make_uniq<SelectNode>();
 	select->from_table = std::move(read);
 	select->select_list.push_back(make_uniq<StarExpression>());

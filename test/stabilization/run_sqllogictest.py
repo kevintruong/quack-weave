@@ -180,7 +180,7 @@ def main():
         snapshot(lbug, graph, fixtures, before)
         run_cases(unittest, scratch, variables, [test_dir / name for name in (
             "reads.test", "gql_compatibility.test", "usage_relations.test", "usage_binding.test",
-            "usage_boundary.test", "air_routes_fixture.test", "graph_metadata.test", "graph_entry.test", "graph_table.test", "hybrid_public.test",
+            "usage_boundary.test", "air_routes_fixture.test", "graph_metadata.test", "graph_entry.test", "graph_table.test", "hybrid_public.test", "graph_parameters.test",
             "bind.test", "admission.test", "scan.test", "host_access.test", "limits.test",
             "timeout.test_slow", "artifact.test",
             "duckgql_admission.test", "duckgql_aggregates.test", "duckgql_basic.test",

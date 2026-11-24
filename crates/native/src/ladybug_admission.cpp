@@ -1,4 +1,5 @@
 #include "c_api/lbug.h"
+#include "cypher_lexer.h"
 #include "parser/expression/parsed_literal_expression.h"
 #include "parser/expression/parsed_property_expression.h"
 #include "parser/expression/parsed_variable_expression.h"
@@ -122,6 +123,38 @@ extern "C" bool qw_ladybug_project(const char* text, projection_field visit, voi
             if (!visit(output, label->second.c_str(), property.getPropertyName().c_str(), name.c_str())) {
                 return false;
             }
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+// The ordinary string binding takes a C string. Length-delimited strings preserve embedded NULs.
+extern "C" lbug_state qw_ladybug_bind_text(lbug_prepared_statement* statement, const char* name,
+    const char* bytes, size_t size) noexcept {
+    try {
+        auto value = bytes ? lbug::common::Value(std::string(bytes, size))
+                           : lbug::common::Value::createNullValue();
+        lbug_value handle{&value, true};
+        return lbug_prepared_statement_bind_value(statement, name, &handle);
+    } catch (...) {
+        return LbugError;
+    }
+}
+
+// Use the provider's tokens so a dollar inside a literal, identifier or comment
+// cannot become a DuckDB parameter. The generated Cypher lexer splits $ and name.
+extern "C" bool qw_cypher_parameters(const char* text, size_t length,
+    bool (*visit)(void*, const char*, size_t), void* output) noexcept {
+    try {
+        antlr4::ANTLRInputStream stream(text, length);
+        CypherLexer lexer(&stream);
+        lexer.removeErrorListeners();
+        for (auto token = lexer.nextToken(); token->getType() != antlr4::Token::EOF; token = lexer.nextToken()) {
+            if (token->getText() != "$") continue;
+            auto name = lexer.nextToken()->getText();
+            if (!visit(output, name.data(), name.size())) return false;
         }
         return true;
     } catch (...) {

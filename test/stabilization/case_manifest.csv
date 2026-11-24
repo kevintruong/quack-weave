@@ -126,3 +126,9 @@ hybrid.sets,hybrid_public.test,mvp2-debug|mvp2-release,3
 hybrid.parameters,hybrid_public.test,mvp2-debug|mvp2-release,4
 hybrid.read_only,hybrid_public.test,mvp2-debug|mvp2-release,4
 hybrid.explain,hybrid_public.test,mvp2-debug|mvp2-release,5
+graph_parameters.setup,graph_parameters.test,mvp2-debug|mvp2-release,2
+graph_parameters.values,graph_parameters.test,mvp2-debug|mvp2-release,2
+graph_parameters.gql,graph_parameters.test,mvp2-debug|mvp2-release,5
+graph_parameters.cypher,graph_parameters.test,mvp2-debug|mvp2-release,9
+graph_parameters.scalars,graph_parameters.test,mvp2-debug|mvp2-release,3
+graph_parameters.rejections,graph_parameters.test,mvp2-debug|mvp2-release,2

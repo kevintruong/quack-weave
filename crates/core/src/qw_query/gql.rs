@@ -181,6 +181,16 @@ fn identifier(cypher: &mut String, value: &str, location: Option<Location>) -> R
 
 fn literal(cypher: &mut String, literal: &Literal) -> Result<()> {
     match literal {
+        Literal::Parameter(name) => {
+            if !is_identifier(name) {
+                return Err(input_error(
+                    "QW_GQL_SUBSET: Unsupported graph parameter name",
+                    None,
+                ));
+            }
+            cypher.push('$');
+            cypher.push_str(name);
+        }
         Literal::Boolean(value) => cypher.push_str(if *value { "true" } else { "false" }),
         Literal::Integer(value) => write!(cypher, "{value}").unwrap(),
         Literal::String(value) => {

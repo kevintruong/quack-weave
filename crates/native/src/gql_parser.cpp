@@ -18,7 +18,7 @@ enum Status : std::int32_t {
 };
 
 enum Comparison : std::int32_t { eq, ne, lt, le, gt, ge };
-enum Literal : std::int32_t { boolean, integer, negative_integer, string };
+enum Literal : std::int32_t { boolean, integer, negative_integer, string, parameter };
 enum PredicateStyle : std::int32_t { absent, where, filter };
 
 struct Diagnostic {
@@ -228,10 +228,16 @@ Comparison comparison(GQLParser::CompOpContext &operation) {
     }
 }
 
-void extract_literal(GQLParser::ValueExpressionContext &expression, Predicate &predicate) {
+void extract_literal(GQLParser::ValueExpressionContext &expression, Predicate &predicate, bool native) {
     auto *signed_expression = dynamic_cast<GQLParser::SignedExprAltContext *>(&expression);
     auto &value = primary(signed_expression ? *signed_expression->valueExpression() : expression);
     auto &specification = require(value.unsignedValueSpecification(), value);
+    if (native && !signed_expression && specification.generalValueSpecification()) {
+        auto &dynamic = require(specification.generalValueSpecification()->dynamicParameterSpecification(), specification);
+        predicate.literal_kind = parameter;
+        predicate.literal_text = span(dynamic);
+        return;
+    }
     auto &literal = require(specification.unsignedLiteral(), specification);
     if (auto *numeric = literal.unsignedNumericLiteral()) {
         auto &exact = require(numeric->exactNumericLiteral(), *numeric);
@@ -257,14 +263,14 @@ void extract_literal(GQLParser::ValueExpressionContext &expression, Predicate &p
     predicate.literal_text = span(value_string);
 }
 
-Predicate predicate(GQLParser::SearchConditionContext &condition, PredicateStyle style) {
+Predicate predicate(GQLParser::SearchConditionContext &condition, PredicateStyle style, bool native) {
     auto &expression = *condition.booleanValueExpression()->valueExpression();
     auto &test = require(dynamic_cast<GQLParser::ComparisonExprAltContext *>(&expression), expression);
     Predicate result{};
     result.style = style;
     result.comparison = comparison(*test.compOp());
     result.property = property(*test.valueExpression(0));
-    extract_literal(*test.valueExpression(1), result);
+    extract_literal(*test.valueExpression(1), result, native);
     return result;
 }
 
@@ -299,7 +305,7 @@ void extract_read(GQLParser::GqlProgramContext &program, ParsedRead &result, boo
     extract_path(graph, result.view, native);
 
     if (auto *where_clause = graph.graphPatternWhereClause()) {
-        result.view.predicate = predicate(*where_clause->searchCondition(), where);
+        result.view.predicate = predicate(*where_clause->searchCondition(), where, native);
     }
     if (clauses.size() > 1) {
         auto &clause = *clauses[1];
@@ -310,7 +316,7 @@ void extract_read(GQLParser::GqlProgramContext &program, ParsedRead &result, boo
         auto &filter_clause = require(primitive.filterStatement(), primitive);
         auto *search = filter_clause.whereClause() ? filter_clause.whereClause()->searchCondition()
                                                   : filter_clause.searchCondition();
-        result.view.predicate = predicate(*search, filter);
+        result.view.predicate = predicate(*search, filter, native);
     }
 
     auto &ending = *query.primitiveResultStatement();
@@ -447,4 +453,22 @@ extern "C" const ReadView *qw_gql_read(const ParsedRead *read) noexcept {
 
 extern "C" void qw_gql_destroy(ParsedRead *read) noexcept {
     delete read;
+}
+
+extern "C" bool qw_gql_parameters(const char *text, std::size_t length,
+    bool (*visit)(void*, const char*, std::size_t), void *output) noexcept {
+    try {
+        if (length > max_input_bytes) return false;
+        antlr4::ANTLRInputStream stream(std::string_view{text, length});
+        GQLLexer lexer(&stream);
+        lexer.removeErrorListeners();
+        for (auto token = lexer.nextToken(); token->getType() != Token::EOF; token = lexer.nextToken()) {
+            if (token->getType() != GQLLexer::GENERAL_PARAMETER_REFERENCE) continue;
+            auto name = token->getText();
+            if (!visit(output, name.data() + 1, name.size() - 1)) return false;
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
