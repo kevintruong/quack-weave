@@ -82,6 +82,12 @@ struct RawPredicate {
 }
 
 #[repr(C)]
+struct RawSort {
+    alias: Span,
+    descending: bool,
+}
+
+#[repr(C)]
 struct RawRead {
     left: RawNode,
     relationship_label: Span,
@@ -89,6 +95,11 @@ struct RawRead {
     predicate: RawPredicate,
     projections: *const RawProjection,
     projection_count: usize,
+    relationship_variable: Span,
+    distinct: bool,
+    limit: Span,
+    sort_keys: *const RawSort,
+    sort_count: usize,
 }
 
 #[repr(C)]
@@ -97,8 +108,12 @@ struct RawHandle {
 }
 
 unsafe extern "C" {
-    fn qw_gql_parse(bytes: *const u8, length: usize, diagnostic: *mut Diagnostic)
-    -> *mut RawHandle;
+    fn qw_gql_parse(
+        bytes: *const u8,
+        length: usize,
+        native: bool,
+        diagnostic: *mut Diagnostic,
+    ) -> *mut RawHandle;
     fn qw_gql_read(parsed: *const RawHandle) -> *const RawRead;
     fn qw_gql_destroy(parsed: *mut RawHandle);
 }
@@ -233,7 +248,11 @@ impl<'a> Input<'a> {
             .map(|item| {
                 Ok(Projection {
                     property: self.property(&item.property)?,
-                    alias: self.identifier(item.alias)?,
+                    alias: if item.alias.line == 0 {
+                        String::new()
+                    } else {
+                        self.identifier(item.alias)?
+                    },
                     alias_span: self.source_span(item.alias)?,
                 })
             })
@@ -241,6 +260,26 @@ impl<'a> Input<'a> {
         Ok(ParsedRead {
             left: self.node(&raw.left)?,
             relationship_label: self.identifier(raw.relationship_label)?,
+            relationship_variable: (raw.relationship_variable.line != 0)
+                .then(|| self.identifier(raw.relationship_variable))
+                .transpose()?,
+            distinct: raw.distinct,
+            limit: (raw.limit.line != 0)
+                .then(|| {
+                    self.text(raw.limit)?
+                        .parse::<u64>()
+                        .map_err(|_| raw.limit.unsupported())
+                })
+                .transpose()?,
+            order: if raw.sort_count == 0 {
+                Vec::new()
+            } else {
+                // The native parser owns this immutable array until OwnedRead drops.
+                unsafe { std::slice::from_raw_parts(raw.sort_keys, raw.sort_count) }
+                    .iter()
+                    .map(|key| Ok((self.identifier(key.alias)?, key.descending)))
+                    .collect::<Result<_, ParseError>>()?
+            },
             right: self.node(&raw.right)?,
             predicate: self.predicate(&raw.predicate)?,
             projections,
@@ -301,10 +340,18 @@ fn decode_unicode_escape(chars: &mut std::str::Chars<'_>, digits: usize) -> Opti
 }
 
 pub fn parse(input: &str) -> Result<ParsedRead, ParseError> {
+    parse_with_mode(input, false)
+}
+
+pub(crate) fn parse_native(input: &str) -> Result<ParsedRead, ParseError> {
+    parse_with_mode(input, true)
+}
+
+fn parse_with_mode(input: &str, native: bool) -> Result<ParsedRead, ParseError> {
     let mut diagnostic = Diagnostic::default();
     // SAFETY: The parser reads the UTF-8 input during the call and fills the diagnostic.
     // The output owns its parsed fields and retains offsets, never a Rust string pointer.
-    let raw = unsafe { qw_gql_parse(input.as_ptr(), input.len(), &mut diagnostic) };
+    let raw = unsafe { qw_gql_parse(input.as_ptr(), input.len(), native, &mut diagnostic) };
     let parsed = OwnedRead(NonNull::new(raw).ok_or_else(|| ParseError::from(diagnostic))?);
     Input::new(input).read(parsed.view())
 }

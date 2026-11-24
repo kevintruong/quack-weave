@@ -1,0 +1,123 @@
+# name: test/stabilization/sqllogic/graph_metadata.test
+# description: Native metadata binding uses the provisioned graph catalog
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_AIR_ROUTES UNSET_QW_AIR_ROUTES
+
+test-env QW_ROOT UNSET_QW_ROOT
+
+# case: graph_metadata.setup Provision the route graph before binding its return shape
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"air_routes","path":"{QW_AIR_ROUTES}"}';
+
+# case: graph_metadata.cypher Preserve multiplicity, names and types with no schema argument
+query TTI rowsort
+FROM qw_graph_query('air_routes', 'cypher', $$MATCH (o:airport)-[e:route]->(d:airport)
+WHERE o.code = 'ATL' RETURN o.code AS origin, d.code AS destination, e.dist AS miles LIMIT 10$$);
+----
+ATL	BOS	946
+ATL	BOS	946
+ATL	LAX	1946
+ATL	PDX	2172
+ATL	SEA	NULL
+
+query TT
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM qw_graph_query('air_routes', 'cypher',
+    $$MATCH (o:airport)-[e:route]->(d:airport) WHERE o.code = 'ORD' RETURN d.code, e.dist AS miles$$));
+----
+d.code	VARCHAR
+miles	BIGINT
+
+query I
+SELECT count(*) FROM qw_graph_query('air_routes', 'cypher',
+    $$MATCH (o:airport)-[e:route]->(d:airport) WHERE o.code = 'ORD' RETURN e.dist$$);
+----
+0
+
+query I
+SELECT SUM(row_marker) FROM qw_graph_query('air_routes', 'cypher',
+    $$MATCH (o:airport)-[e:route]->(d:airport) RETURN 1 AS row_marker$$);
+----
+5
+
+# case: graph_metadata.gql Infer edge and node properties for the native GQL shape
+query TI
+SELECT destination, miles FROM qw_graph_query('air_routes', 'gql', $$
+    MATCH (o:airport)-[e:route]->(d:airport) WHERE e.dist > 0
+    RETURN DISTINCT d.code AS destination, e.dist AS miles ORDER BY miles DESC LIMIT 2$$);
+----
+PDX	2172
+LAX	1946
+
+query T rowsort
+SELECT "d.code" FROM qw_graph_query('air_routes', 'gql',
+    $$MATCH (o:airport)-[e:route]->(d:airport) RETURN DISTINCT d.code$$);
+----
+BOS
+LAX
+PDX
+SEA
+
+# case: graph_metadata.invalid Reject unknown properties, graph values and unknown graph names
+statement error
+FROM qw_graph_query('air_routes', 'cypher', $$MATCH (a:airport) RETURN a.missing$$);
+----
+QW_SCHEMA
+
+statement error
+FROM qw_graph_query('air_routes', 'cypher', $$MATCH (a:airport) RETURN a$$);
+----
+QW_SCHEMA
+
+statement error
+FROM qw_graph_query('other', 'cypher', $$MATCH (a:airport) RETURN a.code$$);
+----
+QW_CONFIG
+
+
+# case: graph_metadata.plan Bind projected types without accessing source rows at plan time
+statement ok
+COPY (SELECT content FROM read_blob('{QW_AIR_ROUTES}')) TO '{QW_ROOT}/metadata_probe.lbdb' (FORMAT BLOB);
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"air_routes","path":"{QW_ROOT}/metadata_probe.lbdb"}';
+
+statement ok
+COPY (SELECT 'invalid Ladybug database'::BLOB) TO '{QW_ROOT}/metadata_probe.lbdb' (FORMAT BLOB);
+
+statement ok
+EXPLAIN SELECT * FROM qw_graph_query('air_routes', 'cypher',
+    $$MATCH (o:airport)-[e:route]->(d:airport) RETURN e.dist AS miles$$);
+
+query TT
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM qw_graph_query('air_routes', 'cypher',
+    $$MATCH (o:airport)-[e:route]->(d:airport) RETURN e.dist AS miles$$));
+----
+miles	BIGINT
+
+statement error
+EXPLAIN ANALYZE SELECT * FROM qw_graph_query('air_routes', 'cypher',
+    $$MATCH (o:airport)-[e:route]->(d:airport) RETURN e.dist AS miles$$);
+----
+QW_OPEN
+
+# case: graph_metadata.generation Reject scans bound against a superseded catalog generation
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"air_routes","path":"{QW_AIR_ROUTES}"}';
+
+statement ok
+PREPARE saved_graph AS SELECT count(*) FROM qw_graph_query('air_routes', 'cypher',
+    $$MATCH (o:airport)-[e:route]->(d:airport) RETURN e.dist AS miles$$);
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"air_routes","path":"{QW_AIR_ROUTES}"}';
+
+statement error
+EXECUTE saved_graph;
+----
+QW_CONFIG

@@ -6,11 +6,33 @@ use rusty_quack_core::qw_query::{
 };
 
 mod arrow;
+mod catalog;
 mod ffi;
 
 pub(crate) struct LadybugBackend;
 
 impl ReadBackend for LadybugBackend {
+    fn catalog(&self, path: &Path) -> Option<rusty_quack_core::qw_query::GraphCatalog> {
+        catalog::snapshot(path)
+    }
+
+    fn projection(
+        &self,
+        catalog: &rusty_quack_core::qw_query::GraphCatalog,
+        cypher: &str,
+    ) -> Result<Vec<ColumnSpec>, BackendError> {
+        catalog::projection(catalog, cypher)
+    }
+
+    #[cfg(feature = "gql")]
+    fn native_gql(
+        &self,
+        query: String,
+        _: Option<rusty_quack_core::qw_query::GqlParser>,
+    ) -> duckdb_neo::Result<String> {
+        rusty_quack_core::qw_query::compile_gql_query(&query, Some(crate::gql::parse_native))
+    }
+
     fn open(
         &self,
         path: &Path,

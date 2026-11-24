@@ -1,10 +1,13 @@
 //! Read-only Ladybug results exposed as a DuckDB table function.
 
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     num::NonZeroUsize,
     path::Path,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use duckdb_neo::{
@@ -36,8 +39,29 @@ pub use gql::{GqlParser, compile_gql_query};
 const CONFIG: &str = "qw_ladybug_config";
 static CONFIG_GENERATION: AtomicU64 = AtomicU64::new(0);
 
+/// Table and property names with their Ladybug logical types, captured at registration.
+pub type GraphCatalog = BTreeMap<String, Vec<(String, String)>>;
+
 /// A backend that exclusively opens read-only database handles.
 pub trait ReadBackend: Send + Sync {
+    /// Read only catalog metadata while registering a graph generation.
+    fn catalog(&self, _path: &Path) -> Option<GraphCatalog> {
+        None
+    }
+
+    /// Resolve the projection using the saved metadata, without opening the graph.
+    fn projection(
+        &self,
+        _catalog: &GraphCatalog,
+        _cypher: &str,
+    ) -> std::result::Result<Vec<ColumnSpec>, BackendError> {
+        Err(BackendError::Schema)
+    }
+
+    fn native_gql(&self, query: String, parser: Option<GqlParser>) -> Result<String> {
+        compile_gql_query(&query, parser)
+    }
+
     fn open(
         &self,
         path: &Path,
@@ -270,6 +294,8 @@ fn parse_config(text: &str) -> Result<ConfigInput> {
 struct ConfigSnapshot {
     generation: u64,
     config: ConfigInput,
+    #[serde(default)]
+    catalog: Option<GraphCatalog>,
 }
 
 fn admit_local_path(context: &Context, path: &str) -> Result<String> {
@@ -309,9 +335,9 @@ fn admit_local_path(context: &Context, path: &str) -> Result<String> {
     Ok(canonical.to_owned())
 }
 
-struct LadybugConfig;
+struct LadybugConfig<B>(Arc<B>);
 
-impl CustomOptionCallbacks for LadybugConfig {
+impl<B: ReadBackend + 'static> CustomOptionCallbacks for LadybugConfig<B> {
     fn update(
         &self,
         context: &Context,
@@ -339,10 +365,15 @@ impl CustomOptionCallbacks for LadybugConfig {
                 value.checked_add(1)
             })
             .map_err(|_| Error::internal("QW_CONFIG: Configuration generation exhausted"))?;
-        let serialized =
-            serde_json::to_string(&ConfigSnapshot { generation, config }).map_err(|_| {
-                Error::internal("QW_CONFIG: Could not store the validated graph configuration")
-            })?;
+        let catalog = self.0.catalog(Path::new(&config.path));
+        let serialized = serde_json::to_string(&ConfigSnapshot {
+            generation,
+            config,
+            catalog,
+        })
+        .map_err(|_| {
+            Error::internal("QW_CONFIG: Could not store the validated graph configuration")
+        })?;
         serialized.value(context)
     }
 }
@@ -361,6 +392,20 @@ fn current_config(context: &Context) -> Result<ConfigSnapshot> {
     })?;
     serde_json::from_str(&config)
         .map_err(|_| Error::invalid_input("QW_CONFIG: Invalid graph configuration"))
+}
+
+/// Validate a session graph selection against the provisioned name.
+pub fn validate_graph_alias(context: &Context, alias: &str) -> Result<()> {
+    if !current_config(context)?
+        .config
+        .alias
+        .eq_ignore_ascii_case(alias)
+    {
+        return Err(Error::invalid_input(
+            "QW_CONFIG: Unknown Ladybug graph alias",
+        ));
+    }
+    Ok(())
 }
 
 struct BoundRead {
@@ -442,7 +487,8 @@ impl GraphLanguage {
 }
 
 struct GraphQuery<B> {
-    backend: B,
+    backend: Arc<B>,
+    inferred: bool,
     gql_parser: Option<GqlParser>,
 }
 
@@ -464,10 +510,25 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
                     "QW_ARGUMENT: qw_query requires constant alias, dialect, query and schema values",
                 ))
         };
+        if self.inferred
+            && args
+                .arg(0)?
+                .resolved_value::<String>()?
+                .flatten()
+                .is_none_or(|alias| alias.is_empty())
+        {
+            return Err(Error::invalid_input(
+                "QW_CONFIG: Select a graph with SESSION SET GRAPH",
+            ));
+        }
         let alias = required(0)?;
         let dialect = required(1)?;
         let query = required(2)?;
-        let schema = parse_schema(&required(3)?)?;
+        let declared = if self.inferred {
+            None
+        } else {
+            Some(parse_schema(&required(3)?)?)
+        };
         if !is_identifier(&alias) {
             return Err(Error::invalid_input(
                 "QW_ARGUMENT: Use a configured graph alias",
@@ -480,7 +541,29 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
                 "QW_CONFIG: Unknown Ladybug graph alias",
             ));
         }
-        let cypher = language.compile(query, self.gql_parser)?;
+        let cypher = match language {
+            GraphLanguage::Gql if self.inferred => {
+                self.backend.native_gql(query, self.gql_parser)?
+            }
+            _ => language.compile(query, self.gql_parser)?,
+        };
+        let schema = if let Some(declared) = declared {
+            declared
+        } else {
+            let catalog = config.catalog.as_ref().ok_or_else(|| {
+                Error::invalid_input(
+                    "QW_SCHEMA: Ladybug catalog metadata unavailable for this graph generation",
+                )
+            })?;
+            self.backend
+                .projection(catalog, &cypher)
+                .map_err(|err| match err {
+                    BackendError::Schema => {
+                        Error::invalid_input("QW_SCHEMA: Unknown or unsupported graph projection")
+                    }
+                    other => backend_error(other),
+                })?
+        };
         for column in &schema {
             handle.add_result_column(&column.name, &column.data_type.logical_type(context)?)?;
         }
@@ -577,11 +660,12 @@ fn register_query(
     backend: impl ReadBackend + 'static,
     gql_parser: Option<GqlParser>,
 ) -> Result<()> {
+    let backend = Arc::new(backend);
     CustomOptionBuilder::new(
         CONFIG,
         "JSON configuration for the embedded read-only Ladybug graph",
         String::logical_type(extension)?,
-        LadybugConfig,
+        LadybugConfig(Arc::clone(&backend)),
     )
     .default_value(Option::<String>::None.value(extension)?)
     .default_scope(SettingScope::Global)
@@ -605,7 +689,21 @@ fn register_query(
                     .add_category("quack_weave"),
             ),
         GraphQuery {
+            backend: Arc::clone(&backend),
+            inferred: false,
+            gql_parser,
+        },
+    )
+    .register(extension)?;
+    TableFunctionBuilder::new(
+        "qw_graph_query",
+        SignatureBuilder::new()
+            .param(FunctionParameter::new::<String>("alias"))
+            .param(FunctionParameter::new::<String>("dialect"))
+            .param(FunctionParameter::new::<String>("query")),
+        GraphQuery {
             backend,
+            inferred: true,
             gql_parser,
         },
     )

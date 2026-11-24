@@ -128,7 +128,6 @@ unsafe extern "C" {
     #[cfg(not(test))]
     pub(super) fn lbug_destroy_string(message: *mut c_char);
 
-    #[cfg(test)]
     pub(super) fn lbug_connection_query(
         connection: *mut ConnectionHandle,
         query: *const c_char,

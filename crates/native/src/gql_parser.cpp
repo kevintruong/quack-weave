@@ -58,6 +58,11 @@ struct Predicate {
     Span literal_text;
 };
 
+struct SortKey {
+    Span alias;
+    bool descending;
+};
+
 struct ReadView {
     Node left;
     Span relationship_label;
@@ -65,11 +70,17 @@ struct ReadView {
     Predicate predicate;
     const Projection *projections;
     std::size_t projection_count;
+    Span relationship_variable;
+    bool distinct;
+    Span limit;
+    const SortKey *sort_keys;
+    std::size_t sort_count;
 };
 
 struct ParsedRead {
     ReadView view{};
     std::vector<Projection> projections;
+    std::vector<SortKey> sort_keys;
 };
 
 constexpr std::size_t max_input_bytes = 16 * 1024;
@@ -136,12 +147,15 @@ Node node(GQLParser::ElementPatternContext &element) {
     return {span(variable), label(filler)};
 }
 
-Span relationship(GQLParser::ElementPatternContext &element) {
+Span relationship(GQLParser::ElementPatternContext &element, bool native, ReadView &read) {
     auto &edge = require(element.edgePattern(), element);
     auto &full = require(edge.fullEdgePattern(), edge);
     auto &right = require(full.fullEdgePointingRight(), full);
     auto &filler = *right.elementPatternFiller();
-    deny(filler.elementVariableDeclaration());
+    if (auto *variable = filler.elementVariableDeclaration()) {
+        if (!native) reject(*variable);
+        read.relationship_variable = span(*variable);
+    }
     return label(filler);
 }
 
@@ -161,7 +175,7 @@ GQLParser::GraphPatternContext &pattern(GQLParser::SimpleQueryStatementContext &
     return *table.graphPattern();
 }
 
-void extract_path(GQLParser::GraphPatternContext &graph, ReadView &read) {
+void extract_path(GQLParser::GraphPatternContext &graph, ReadView &read, bool native) {
     deny(graph.matchMode());
     deny(graph.keepClause());
     auto paths = graph.pathPatternList()->pathPattern();
@@ -178,7 +192,7 @@ void extract_path(GQLParser::GraphPatternContext &graph, ReadView &read) {
         reject(term);
     }
     read.left = node(unquantified(*factors[0]));
-    read.relationship_label = relationship(unquantified(*factors[1]));
+    read.relationship_label = relationship(unquantified(*factors[1]), native, read);
     read.right = node(unquantified(*factors[2]));
 }
 
@@ -195,9 +209,11 @@ Property property(GQLParser::ValueExpressionContext &expression) {
     return {span(variable), span(name)};
 }
 
-Projection projection(GQLParser::ReturnItemContext &item) {
-    auto &alias = require(item.returnItemAlias(), item);
-    return {property(*item.aggregatingValueExpression()->valueExpression()), span(*alias.identifier())};
+Projection projection(GQLParser::ReturnItemContext &item, bool native) {
+    auto *alias = item.returnItemAlias();
+    if (!alias && !native) reject(item);
+    return {property(*item.aggregatingValueExpression()->valueExpression()),
+        alias ? span(*alias->identifier()) : Span{}};
 }
 
 Comparison comparison(GQLParser::CompOpContext &operation) {
@@ -275,12 +291,12 @@ GQLParser::AmbientLinearQueryStatementContext &ambient(GQLParser::GqlProgramCont
     return require(linear.ambientLinearQueryStatement(), linear);
 }
 
-void extract_read(GQLParser::GqlProgramContext &program, ParsedRead &result) {
+void extract_read(GQLParser::GqlProgramContext &program, ParsedRead &result, bool native) {
     auto &query = ambient(program);
     auto &prefix = require(query.simpleLinearQueryStatement(), query);
     auto clauses = prefix.simpleQueryStatement();
     auto &graph = pattern(*clauses.front());
-    extract_path(graph, result.view);
+    extract_path(graph, result.view, native);
 
     if (auto *where_clause = graph.graphPatternWhereClause()) {
         result.view.predicate = predicate(*where_clause->searchCondition(), where);
@@ -298,13 +314,36 @@ void extract_read(GQLParser::GqlProgramContext &program, ParsedRead &result) {
     }
 
     auto &ending = *query.primitiveResultStatement();
-    deny(ending.orderByAndPageStatement());
+    if (auto *paging = ending.orderByAndPageStatement()) {
+        if (!native) reject(*paging);
+        deny(paging->offsetClause());
+        if (auto *limit = paging->limitClause()) {
+            auto &value = require(limit->nonNegativeIntegerSpecification()->unsignedInteger(), *limit);
+            auto &integer = require(value.UNSIGNED_DECIMAL_INTEGER(), value);
+            result.view.limit = span(*integer.getSymbol(), *integer.getSymbol());
+        }
+        if (auto *order = paging->orderByClause()) {
+            for (auto *key : order->sortSpecificationList()->sortSpecification()) {
+                deny(key->nullOrdering());
+                auto &expr = primary(*key->sortKey()->aggregatingValueExpression()->valueExpression());
+                auto &name = require(expr.bindingVariableReference(), expr);
+                auto *direction = key->orderingSpecification();
+                result.sort_keys.push_back({span(name),
+                    direction && (direction->DESC() || direction->DESCENDING())});
+            }
+            result.view.sort_keys = result.sort_keys.data();
+            result.view.sort_count = result.sort_keys.size();
+        }
+    }
     auto &body = *require(ending.returnStatement(), ending).returnStatementBody();
-    deny(body.setQuantifier());
+    if (auto *quantifier = body.setQuantifier()) {
+        if (!native) reject(*quantifier);
+        result.view.distinct = quantifier->DISTINCT() != nullptr;
+    }
     deny(body.groupByClause());
     auto &items = require(body.returnItemList(), body);
     for (auto *item : items.returnItem()) {
-        result.projections.push_back(projection(*item));
+        result.projections.push_back(projection(*item, native));
     }
     result.view.projections = result.projections.data();
     result.view.projection_count = result.projections.size();
@@ -350,7 +389,7 @@ void check_complexity(antlr4::CommonTokenStream &tokens) {
     }
 }
 
-std::unique_ptr<ParsedRead> parse(std::string_view input) {
+std::unique_ptr<ParsedRead> parse(std::string_view input, bool native) {
     if (input.size() > max_input_bytes) {
         throw at(limit, nullptr);
     }
@@ -384,16 +423,16 @@ std::unique_ptr<ParsedRead> parse(std::string_view input) {
         throw errors.first.status ? errors.first : at(syntax, parser.getCurrentToken());
     }
     auto result = std::make_unique<ParsedRead>();
-    extract_read(*program, *result);
+    extract_read(*program, *result, native);
     return result;
 }
 
 } // namespace
 
-extern "C" ParsedRead *qw_gql_parse(const char *bytes, std::size_t length, Diagnostic *diagnostic) noexcept {
+extern "C" ParsedRead *qw_gql_parse(const char *bytes, std::size_t length, bool native, Diagnostic *diagnostic) noexcept {
     *diagnostic = {};
     try {
-        return parse(std::string_view(bytes, length)).release();
+        return parse(std::string_view(bytes, length), native).release();
     } catch (const Diagnostic &failure) {
         *diagnostic = failure;
     } catch (...) {

@@ -4,6 +4,10 @@
 pub struct ParsedRead {
     pub left: NodePattern,
     pub relationship_label: String,
+    pub relationship_variable: Option<String>,
+    pub distinct: bool,
+    pub order: Vec<(String, bool)>,
+    pub limit: Option<u64>,
     pub right: NodePattern,
     pub predicate: Option<Predicate>,
     pub projections: Vec<Projection>,

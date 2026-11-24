@@ -58,7 +58,19 @@ fn lower(read: &ParsedRead) -> Result<String> {
 
     let mut cypher = String::from("MATCH ");
     node(&mut cypher, &read.left)?;
-    cypher.push_str("-[:");
+    cypher.push_str("-[");
+    if let Some(variable) = &read.relationship_variable {
+        if variable.eq_ignore_ascii_case(&read.left.variable)
+            || variable.eq_ignore_ascii_case(&read.right.variable)
+        {
+            return Err(input_error(
+                "QW_GQL_SUBSET: Conflicting relationship variable",
+                None,
+            ));
+        }
+        identifier(&mut cypher, variable, None)?;
+    }
+    cypher.push(':');
     identifier(&mut cypher, &read.relationship_label, None)?;
     cypher.push_str("]->");
     node(&mut cypher, &read.right)?;
@@ -79,10 +91,21 @@ fn lower(read: &ParsedRead) -> Result<String> {
     }
 
     cypher.push_str(" RETURN ");
+    if read.distinct {
+        cypher.push_str("DISTINCT ");
+    }
     let mut aliases = HashSet::new();
     for (index, projection) in read.projections.iter().enumerate() {
         let location = Some(projection.alias_span.location);
-        if !aliases.insert(projection.alias.to_ascii_lowercase()) {
+        let column = if projection.alias.is_empty() {
+            format!(
+                "{}.{}",
+                projection.property.variable, projection.property.name
+            )
+        } else {
+            projection.alias.clone()
+        };
+        if !aliases.insert(column.to_ascii_lowercase()) {
             return Err(input_error(
                 "QW_GQL_SUBSET: Duplicate projection alias",
                 location,
@@ -92,8 +115,28 @@ fn lower(read: &ParsedRead) -> Result<String> {
             cypher.push_str(", ");
         }
         property(&mut cypher, read, &projection.property)?;
-        cypher.push_str(" AS ");
-        identifier(&mut cypher, &projection.alias, location)?;
+        if !projection.alias.is_empty() {
+            cypher.push_str(" AS ");
+            identifier(&mut cypher, &projection.alias, location)?;
+        }
+    }
+    for (index, (name, descending)) in read.order.iter().enumerate() {
+        if !read
+            .projections
+            .iter()
+            .any(|projection| projection.alias == *name)
+        {
+            return Err(input_error(
+                "QW_GQL_SUBSET: Expected projected order key",
+                None,
+            ));
+        }
+        cypher.push_str(if index == 0 { " ORDER BY " } else { ", " });
+        identifier(&mut cypher, name, None)?;
+        cypher.push_str(if *descending { " DESC" } else { " ASC" });
+    }
+    if let Some(limit) = read.limit {
+        write!(cypher, " LIMIT {limit}").unwrap();
     }
     Ok(cypher)
 }
@@ -109,7 +152,10 @@ fn node(cypher: &mut String, node: &NodePattern) -> Result<()> {
 
 fn property(cypher: &mut String, read: &ParsedRead, property: &Property) -> Result<()> {
     let location = Some(property.variable_span.location);
-    if property.variable != read.left.variable && property.variable != read.right.variable {
+    if property.variable != read.left.variable
+        && property.variable != read.right.variable
+        && Some(&property.variable) != read.relationship_variable.as_ref()
+    {
         return Err(input_error(
             "QW_GQL_SUBSET: Property must use a matched variable",
             location,

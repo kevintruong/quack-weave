@@ -103,3 +103,9 @@ usage_boundary.graph_scope,usage_boundary.test,mvp2-debug|mvp2-release,3
 usage_boundary.read_only,usage_boundary.test,mvp2-debug|mvp2-release,5
 usage_boundary.host_functions,usage_boundary.test,mvp2-debug|mvp2-release,3
 usage_boundary.explain,usage_boundary.test,mvp2-debug|mvp2-release,5
+graph_metadata.setup,graph_metadata.test,mvp2-debug|mvp2-release,2
+graph_metadata.cypher,graph_metadata.test,mvp2-debug|mvp2-release,4
+graph_metadata.gql,graph_metadata.test,mvp2-debug|mvp2-release,2
+graph_metadata.invalid,graph_metadata.test,mvp2-debug|mvp2-release,3
+graph_metadata.plan,graph_metadata.test,mvp2-debug|mvp2-release,6
+graph_metadata.generation,graph_metadata.test,mvp2-debug|mvp2-release,4
