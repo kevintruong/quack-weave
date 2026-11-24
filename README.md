@@ -31,6 +31,8 @@ The `schema` argument accepts ordered `name TYPE` pairs using `BOOLEAN`, `BIGINT
 
 Set `max_batch_bytes` to a positive integer to bound the size of each bridge-owned batch. An oversized batch raises `QW_BATCH_BUDGET` before its rows are published. Ladybug may still materialize the native result.
 
+Interactive reads in one DuckDB instance reuse the registered graph's read-only Ladybug database handle. Each scan opens its own connection and applies the configured timeout. Use `RESET GLOBAL qw_ladybug_config` to release the registration before replacing the file, then register the new file with `SET GLOBAL`. Readers already holding a handle can finish their scans.
+
 Run the native acceptance suite with version-matched DuckDB and Ladybug CLI binaries:
 
 ```sh

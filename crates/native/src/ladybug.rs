@@ -1,18 +1,61 @@
 use std::ffi::{CStr, CString};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use rusty_quack_core::qw_query::{
-    BackendError, Batch, BatchReader, ColumnData, ColumnSpec, GraphParameter, ReadBackend,
-    ReadSession, ScalarType,
+    BackendError, Batch, BatchReader, ColumnData, ColumnSpec, GraphGeneration, GraphParameter,
+    ReadBackend, ReadSession, ScalarType,
 };
 
 mod arrow;
 mod catalog;
 mod ffi;
 
-pub(crate) struct LadybugBackend;
+#[derive(Default)]
+pub(crate) struct LadybugBackend {
+    cache: Mutex<DatabaseCache>,
+}
+
+#[derive(Default)]
+struct DatabaseCache {
+    generation: Option<u64>,
+    database: Option<(PathBuf, Arc<Mutex<Database>>)>,
+}
+
+impl LadybugBackend {
+    fn database(
+        &self,
+        path: &Path,
+        generation: &GraphGeneration,
+    ) -> Result<Arc<Mutex<Database>>, BackendError> {
+        let mut cache = self.cache.lock().map_err(|_| BackendError::Open)?;
+        // A scan admitted just before RESET/SET can finish, but must never repopulate
+        // an evicted generation or replace the handle for the new registration.
+        if cache.generation != Some(generation.id()) {
+            drop(cache);
+            return Ok(Arc::new(Mutex::new(Database::open(path, true)?)));
+        }
+        if let Some((cached_path, handle)) = &cache.database
+            && cached_path == path
+        {
+            return Ok(Arc::clone(handle));
+        }
+        let handle = Arc::new(Mutex::new(Database::open(path, true)?));
+        // Never publish an open that raced a replacement of the registered file.
+        generation.validate(path).map_err(|_| BackendError::Open)?;
+        cache.database = Some((path.to_owned(), Arc::clone(&handle)));
+        Ok(handle)
+    }
+}
 
 impl ReadBackend for LadybugBackend {
+    fn set_generation(&self, generation: Option<u64>) {
+        *self.cache.lock().unwrap_or_else(|err| err.into_inner()) = DatabaseCache {
+            generation,
+            database: None,
+        };
+    }
+
     fn catalog(&self, path: &Path) -> Option<rusty_quack_core::qw_query::GraphCatalog> {
         catalog::snapshot(path)
     }
@@ -48,8 +91,31 @@ impl ReadBackend for LadybugBackend {
         timeout_ms: Option<u64>,
         schema: &[ColumnSpec],
     ) -> Result<Box<dyn ReadSession>, BackendError> {
-        let mut database = Database::open(path, true)?;
-        let mut connection = Connection::open(&mut database)?;
+        let database = Arc::new(Mutex::new(Database::open(path, true)?));
+        Session::connect(database, timeout_ms, schema)
+    }
+
+    fn open_for_generation(
+        &self,
+        path: &Path,
+        timeout_ms: Option<u64>,
+        schema: &[ColumnSpec],
+        generation: &GraphGeneration,
+    ) -> Result<Box<dyn ReadSession>, BackendError> {
+        Session::connect(self.database(path, generation)?, timeout_ms, schema)
+    }
+}
+
+impl Session {
+    fn connect(
+        database: Arc<Mutex<Database>>,
+        timeout_ms: Option<u64>,
+        schema: &[ColumnSpec],
+    ) -> Result<Box<dyn ReadSession>, BackendError> {
+        let mut connection = {
+            let mut handle = database.lock().map_err(|_| BackendError::Open)?;
+            Connection::open(&mut handle)?
+        };
         if let Some(timeout_ms) = timeout_ms {
             let status =
                 unsafe { ffi::lbug_connection_set_query_timeout(&mut connection.0, timeout_ms) };
@@ -69,7 +135,7 @@ impl ReadBackend for LadybugBackend {
 // Fields drop in declaration order, so the database outlives its connection.
 struct Session {
     connection: Connection,
-    _database: Database,
+    _database: Arc<Mutex<Database>>,
     nested: bool,
     timeout_ms: Option<u64>,
 }
@@ -240,6 +306,10 @@ fn execution_error(timeout_configured: bool) -> BackendError {
 #[derive(Default)]
 struct Database(ffi::DatabaseHandle);
 
+// Moving the owning handle does not move the native database. Connection creation
+// takes the shared mutex; each connection keeps the database alive until it drops.
+unsafe impl Send for Database {}
+
 impl Database {
     fn open(path: &Path, read_only: bool) -> Result<Self, BackendError> {
         let path =
@@ -248,6 +318,10 @@ impl Database {
         let status =
             unsafe { ffi::qw_ladybug_open_database(path.as_ptr(), read_only, &mut database.0) };
         if status == ffi::SUCCESS && !database.0.ptr.is_null() {
+            #[cfg(test)]
+            if read_only {
+                tests::READ_OPENS.set(tests::READ_OPENS.get() + 1);
+            }
             Ok(database)
         } else {
             Err(BackendError::Open)
@@ -269,6 +343,8 @@ impl Connection {
         let mut connection = Self::default();
         let status = unsafe { ffi::lbug_connection_init(&mut database.0, &mut connection.0) };
         if status == ffi::SUCCESS && !connection.0.ptr.is_null() {
+            #[cfg(test)]
+            tests::CONNECTION_OPENS.set(tests::CONNECTION_OPENS.get() + 1);
             Ok(connection)
         } else {
             Err(BackendError::Open)

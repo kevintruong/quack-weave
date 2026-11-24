@@ -108,7 +108,7 @@ graph_metadata.cypher,graph_metadata.test,mvp2-debug|mvp2-release,4
 graph_metadata.gql,graph_metadata.test,mvp2-debug|mvp2-release,2
 graph_metadata.invalid,graph_metadata.test,mvp2-debug|mvp2-release,3
 graph_metadata.plan,graph_metadata.test,mvp2-debug|mvp2-release,6
-graph_metadata.generation,graph_metadata.test,mvp2-debug|mvp2-release,4
+graph_metadata.generation,graph_metadata.test,mvp2-debug|mvp2-release,15
 graph_entry.selection,graph_entry.test,mvp2-debug|mvp2-release,5
 graph_entry.isolation,graph_entry.test,mvp2-debug|mvp2-release,5
 graph_entry.gql_native,graph_entry.test,mvp2-debug|mvp2-release,1

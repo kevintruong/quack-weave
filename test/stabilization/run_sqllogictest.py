@@ -172,6 +172,10 @@ def main():
         air_routes = scratch / "air_routes.lbdb"
         ladybug(lbug, air_routes, (HERE / "fixtures/air_routes.cypher").read_text(encoding="utf-8"))
         variables["QW_AIR_ROUTES"] = air_routes
+        archived_routes = scratch / "archived_routes.lbdb"
+        shutil.copyfile(air_routes, archived_routes)
+        os.utime(archived_routes, ns=(-1_000_000_001, -1_000_000_001))
+        variables["QW_ARCHIVED_ROUTES"] = archived_routes
         fixtures = {"duckgql": duckgql_graph, "replacement": replacement_graph, "air_routes": air_routes}
 
         before = scratch / "before.json"

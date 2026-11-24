@@ -2,6 +2,11 @@ use super::*;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+thread_local! {
+    pub(super) static READ_OPENS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static CONNECTION_OPENS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 static FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture {
@@ -46,9 +51,57 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn interactive_reads_share_one_database_and_own_their_connections() {
+    let fixture = Fixture::new();
+    let backend = LadybugBackend::default();
+    let first = GraphGeneration::capture(1, &fixture.path).unwrap();
+    let second = GraphGeneration::capture(2, &fixture.path).unwrap();
+    backend.set_generation(Some(first.id()));
+    READ_OPENS.set(0);
+    CONNECTION_OPENS.set(0);
+    let mut readers = Vec::new();
+    for timeout in [None, Some(10_000), None] {
+        readers.push(
+            backend
+                .open_for_generation(&fixture.path, timeout, &[], &first)
+                .unwrap()
+                .execute("MATCH (p:Person) RETURN p.id AS id ORDER BY id")
+                .unwrap(),
+        );
+    }
+    assert_eq!(READ_OPENS.get(), 1, "three scans of the same generation");
+    assert_eq!(CONNECTION_OPENS.get(), 3);
+    // Invalidate the registration while its readers still own the old database.
+    backend.set_generation(Some(second.id()));
+    let next = backend
+        .open_for_generation(&fixture.path, None, &[], &second)
+        .unwrap();
+    assert_eq!(READ_OPENS.get(), 2);
+    drop(next);
+    // A late scan for the old generation cannot evict the new generation.
+    drop(
+        backend
+            .open_for_generation(&fixture.path, None, &[], &first)
+            .unwrap(),
+    );
+    drop(
+        backend
+            .open_for_generation(&fixture.path, None, &[], &second)
+            .unwrap(),
+    );
+    assert_eq!(READ_OPENS.get(), 3);
+    backend.set_generation(None);
+    drop(backend);
+    for reader in &mut readers {
+        let batch = reader.next_batch(1, None).unwrap().unwrap();
+        assert!(matches!(&batch.columns[0], ColumnData::BigInt(ids) if ids == &[Some(1)]));
+    }
+}
+
+#[test]
 fn native_read_uses_typed_nullable_arrow_chunks_and_reaches_eof() {
     let fixture = Fixture::new();
-    let mut result = LadybugBackend
+    let mut result = LadybugBackend::default()
         .open(&fixture.path, None)
         .unwrap()
         .execute(
@@ -109,7 +162,7 @@ fn read_only_admission_rejects_mutations_and_non_graph_commands() {
         &copy,
     ] {
         ffi::reset_native_calls();
-        let error = LadybugBackend
+        let error = LadybugBackend::default()
             .open(&fixture.path, None)
             .unwrap()
             .execute(query)
@@ -120,7 +173,7 @@ fn read_only_admission_rejects_mutations_and_non_graph_commands() {
         assert!(matches!(error, Some(BackendError::Admission)), "{query}");
     }
     assert!(!export_path.exists());
-    let mut reader = LadybugBackend
+    let mut reader = LadybugBackend::default()
         .open(&fixture.path, None)
         .unwrap()
         .execute("MATCH (p:Person) RETURN p.name AS name ORDER BY p.id")
@@ -133,7 +186,7 @@ fn read_only_admission_rejects_mutations_and_non_graph_commands() {
 #[test]
 fn empty_graph_result_preserves_schema() {
     let fixture = Fixture::new();
-    let mut reader = LadybugBackend
+    let mut reader = LadybugBackend::default()
         .open(&fixture.path, None)
         .unwrap()
         .execute("MATCH (p:Person) WHERE p.id = 0 RETURN p.id AS id")
@@ -146,7 +199,7 @@ fn empty_graph_result_preserves_schema() {
 fn unsupported_nested_result_fails_during_schema_admission() {
     let fixture = Fixture::new();
     ffi::reset_native_calls();
-    let error = LadybugBackend
+    let error = LadybugBackend::default()
         .open(&fixture.path, None)
         .unwrap()
         .execute("MATCH (p:Person) RETURN p AS node")
@@ -177,7 +230,7 @@ fn lowered_gql_uses_the_real_prepare_and_execute_boundary_once() {
     .unwrap();
 
     ffi::reset_native_calls();
-    let mut reader = LadybugBackend
+    let mut reader = LadybugBackend::default()
         .open(&fixture.path, None)
         .unwrap()
         .execute(&cypher)
@@ -220,7 +273,7 @@ fn lowered_gql_cannot_dispatch_after_native_prepare_fails() {
     assert!(unsafe { ffi::qw_ladybug_is_graph_read(native_text.as_ptr()) });
 
     ffi::reset_native_calls();
-    let error = LadybugBackend
+    let error = LadybugBackend::default()
         .open(&fixture.path, None)
         .unwrap()
         .execute(&cypher)
@@ -241,7 +294,7 @@ fn lowered_gql_cannot_dispatch_after_native_prepare_fails() {
 fn native_batch_budget_counts_nullable_slots_and_owned_utf8() {
     let fixture = Fixture::new();
     let read = || {
-        LadybugBackend
+        LadybugBackend::default()
             .open(&fixture.path, None)
             .unwrap()
             .execute("MATCH (p:Person) WHERE p.id = 3 RETURN p.name AS name")
@@ -281,7 +334,7 @@ fn observed_query(
     timeout_ms: Option<u64>,
 ) -> Result<Box<dyn BatchReader>, BackendError> {
     ffi::reset_native_calls();
-    LadybugBackend
+    LadybugBackend::default()
         .open(&fixture.path, timeout_ms)?
         .execute(cypher)
 }

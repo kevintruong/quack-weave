@@ -67,6 +67,22 @@ pub trait ReadBackend: Send + Sync {
         compile_gql_query(&query, parser)
     }
 
+    /// Publish the active registration after its metadata is captured. Readers that
+    /// already own their sessions remain valid when the registration changes.
+    fn set_generation(&self, _generation: Option<u64>) {}
+
+    /// Open a scan for an admitted graph generation. Stateless backends can
+    /// keep implementing only `open_projected` or `open`.
+    fn open_for_generation(
+        &self,
+        path: &Path,
+        timeout_ms: Option<u64>,
+        schema: &[ColumnSpec],
+        _generation: &GraphGeneration,
+    ) -> std::result::Result<Box<dyn ReadSession>, BackendError> {
+        self.open_projected(path, timeout_ms, schema)
+    }
+
     fn open_projected(
         &self,
         path: &Path,
@@ -318,9 +334,58 @@ fn parse_config(text: &str) -> Result<ConfigInput> {
     Ok(config)
 }
 
+/// Identity captured together with read-only catalog metadata during registration.
+#[derive(Debug, PartialEq, Deserialize, Serialize)]
+pub struct GraphGeneration {
+    id: u64,
+    length: u64,
+    modified_ns: i128,
+    #[cfg(unix)]
+    device_inode: (u64, u64),
+}
+
+impl GraphGeneration {
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    pub fn capture(id: u64, path: &Path) -> Result<Self> {
+        let metadata = std::fs::metadata(path)
+            .map_err(|_| Error::invalid_input("QW_ACCESS: Graph file unavailable"))?;
+        let modified = metadata
+            .modified()
+            .map_err(|_| Error::invalid_input("QW_ACCESS: Graph timestamp unavailable"))?;
+        // SystemTime's serde encoding excludes pre-epoch files. Duration's u64
+        // seconds and nanoseconds fit in i128 on either side of the epoch.
+        let modified_ns = match modified.duration_since(std::time::UNIX_EPOCH) {
+            Ok(after) => after.as_nanos() as i128,
+            Err(before) => -(before.duration().as_nanos() as i128),
+        };
+        Ok(Self {
+            id,
+            length: metadata.len(),
+            modified_ns,
+            #[cfg(unix)]
+            device_inode: {
+                use std::os::unix::fs::MetadataExt;
+                (metadata.dev(), metadata.ino())
+            },
+        })
+    }
+
+    pub fn validate(&self, path: &Path) -> Result<()> {
+        if self != &Self::capture(self.id, path)? {
+            return Err(Error::invalid_input(
+                "QW_OPEN: Graph file changed; register it again",
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 struct ConfigSnapshot {
-    generation: u64,
+    generation: GraphGeneration,
     config: ConfigInput,
     #[serde(default)]
     catalog: Option<GraphCatalog>,
@@ -379,7 +444,9 @@ impl<B: ReadBackend + 'static> CustomOptionCallbacks for LadybugConfig<B> {
             ));
         }
         if is_reset {
-            return Option::<String>::None.value(context);
+            let value = Option::<String>::None.value(context)?;
+            self.0.set_generation(None);
+            return Ok(value);
         }
         let text = String::from_value(&value)?.ok_or_else(|| {
             Error::invalid_input(
@@ -393,16 +460,21 @@ impl<B: ReadBackend + 'static> CustomOptionCallbacks for LadybugConfig<B> {
                 value.checked_add(1)
             })
             .map_err(|_| Error::internal("QW_CONFIG: Configuration generation exhausted"))?;
-        let catalog = self.0.catalog(Path::new(&config.path));
+        let path = Path::new(&config.path);
+        let registered = GraphGeneration::capture(generation, path)?;
+        let catalog = self.0.catalog(path);
+        registered.validate(path)?;
         let serialized = serde_json::to_string(&ConfigSnapshot {
-            generation,
+            generation: registered,
             config,
             catalog,
         })
         .map_err(|_| {
             Error::internal("QW_CONFIG: Could not store the validated graph configuration")
         })?;
-        serialized.value(context)
+        let value = serialized.value(context)?;
+        self.0.set_generation(Some(generation));
+        Ok(value)
     }
 }
 
@@ -675,7 +747,7 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
             bound.config.config.max_batch_bytes,
             || {
                 let current = current_config(context)?;
-                if current.generation != bound.config.generation {
+                if current.generation.id != bound.config.generation.id {
                     return Err(Error::invalid_input(
                         "QW_CONFIG: Ladybug configuration changed after binding",
                     ));
@@ -686,13 +758,19 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
                         "QW_ACCESS: Configured Ladybug path changed after binding",
                     ));
                 }
-                self.backend
-                    .open_projected(
+                bound.config.generation.validate(Path::new(&path))?;
+                let session = self
+                    .backend
+                    .open_for_generation(
                         Path::new(&path),
                         bound.config.config.timeout_ms,
                         &bound.schema,
+                        &bound.config.generation,
                     )
-                    .and_then(|session| session.execute_with_params(&bound.cypher, &bound.params))
+                    .map_err(backend_error)?;
+                bound.config.generation.validate(Path::new(&path))?;
+                session
+                    .execute_with_params(&bound.cypher, &bound.params)
                     .map_err(backend_error)
             },
         )?

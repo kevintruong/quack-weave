@@ -6,7 +6,13 @@ test-env QW_EXT UNSET_QW_EXT
 
 test-env QW_AIR_ROUTES UNSET_QW_AIR_ROUTES
 
+test-env QW_ARCHIVED_ROUTES UNSET_QW_ARCHIVED_ROUTES
+
 test-env QW_ROOT UNSET_QW_ROOT
+
+test-env QW_GRAPH UNSET_QW_GRAPH
+
+test-env QW_GRAPH_REPLACEMENT UNSET_QW_GRAPH_REPLACEMENT
 
 # case: graph_metadata.setup Provision the route graph before binding its return shape
 statement ok
@@ -121,3 +127,51 @@ statement error
 EXECUTE saved_graph;
 ----
 QW_CONFIG
+
+# Both valid fixtures expose Document.id. Opening it under the previous
+# generation would pair its contents with metadata captured from another file.
+statement ok
+COPY (SELECT content FROM read_blob('{QW_GRAPH_REPLACEMENT}')) TO '{QW_ROOT}/cached_docs.lbdb' (FORMAT BLOB);
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"docs","path":"{QW_ROOT}/cached_docs.lbdb"}';
+
+query I
+SELECT count(*) FROM qw_graph_query('docs', 'cypher', $$MATCH (d:Document) RETURN d.id$$);
+----
+2
+
+statement ok
+COPY (SELECT content FROM read_blob('{QW_GRAPH}')) TO '{QW_ROOT}/cached_docs.lbdb' (FORMAT BLOB);
+
+statement error
+FROM qw_graph_query('docs', 'cypher', $$MATCH (d:Document) RETURN d.id$$);
+----
+QW_OPEN
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"docs","path":"{QW_ROOT}/cached_docs.lbdb"}';
+
+query I
+SELECT count(*) FROM qw_graph_query('docs', 'cypher', $$MATCH (d:Document) RETURN d.id$$);
+----
+4
+
+statement ok
+RESET GLOBAL qw_ladybug_config;
+
+statement error
+FROM qw_graph_query('docs', 'cypher', $$MATCH (d:Document) RETURN d.id$$);
+----
+QW_CONFIG
+
+
+# The archived fixture predates the Unix epoch. Its signed modification time
+# must survive both registration serialization and scan-time validation.
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"archive","path":"{QW_ARCHIVED_ROUTES}"}';
+
+query I
+SELECT count(*) FROM qw_graph_query('archive', 'cypher', $$MATCH (a:airport) RETURN a.code$$);
+----
+6
