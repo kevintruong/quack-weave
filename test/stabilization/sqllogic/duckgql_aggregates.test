@@ -1,0 +1,212 @@
+# name: test/stabilization/sqllogic/duckgql_aggregates.test
+# description: DuckGQL global aggregates over Ladybug edge orientations
+# group: [quack_weave]
+# DuckGQL revision b4421c5cb5e3a389f9658de591a0aa6d397da991. See ../duckgql-porting.md for attribution.
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_DUCKGQL_GRAPH UNSET_QW_DUCKGQL_GRAPH
+
+# case: duckgql.aggregates_setup Select the native Ladybug copy of the DuckGQL fixture
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"duckgql","path":"{QW_DUCKGQL_GRAPH}"}';
+
+statement ok
+CREATE TEMP VIEW directed AS SELECT * FROM
+qw_query('duckgql', 'gql', $$MATCH (a:AggregateNode)-[:WEIGHTED]->(b:AggregateNode)
+ RETURN a.id AS src, b.id AS dst, a.name AS source_name, b.name AS target_name, a.category AS category, a.score AS score$$, schema := 'src BIGINT, dst BIGINT, source_name VARCHAR, target_name VARCHAR, category VARCHAR, score BIGINT');
+
+statement ok
+CREATE TEMP VIEW orientations AS SELECT * FROM
+qw_query('duckgql', 'cypher', $$MATCH (a:AggregateNode)-[e:WEIGHTED]-(b:AggregateNode)
+ RETURN a.id AS src, b.id AS dst, a.name AS source_name, b.name AS target_name, a.category AS category, a.score AS score, e.id AS edge_id, e.weight AS weight$$, schema := 'src BIGINT, dst BIGINT, source_name VARCHAR, target_name VARCHAR, category VARCHAR, score BIGINT, edge_id BIGINT, weight BIGINT');
+
+# case: duckgql.aggregate_bag Counts, distinct values and arithmetic operate over both orientations
+# Source: gql_global_aggregates.test:23
+query I
+SELECT count(*) FROM orientations;
+----
+8
+
+# Source: gql_global_aggregates.test:28
+query IIIII
+SELECT count(*), count(score), count(DISTINCT score), count(DISTINCT src), count(DISTINCT edge_id) FROM orientations;
+----
+8	6	2	3	4
+
+# Source: gql_global_aggregates.test:34
+query RRII
+SELECT sum(weight), avg(weight), min(score), max(score) FROM orientations;
+----
+34.000	4.250	1	2
+
+# Source: gql_global_aggregates.test:40
+query IRR
+SELECT count(*), sum(weight), avg(weight) FROM orientations WHERE source_name = 'a';
+----
+3	14.000	4.667
+
+# Source: gql_global_aggregates.test:46
+query IRR
+SELECT count(DISTINCT score), sum(DISTINCT score), avg(DISTINCT score) FROM orientations;
+----
+2	3.000	1.500
+
+# Source: gql_global_aggregates.test:52
+query TI rowsort
+SELECT category, count(*) FROM orientations GROUP BY category;
+----
+A	6
+B	2
+
+# Source: gql_global_aggregates.test:58
+query II rowsort
+SELECT src, count(*) FROM orientations GROUP BY src;
+----
+1	3
+2	3
+3	2
+
+# Source: gql_global_aggregates.test:66
+query IR rowsort
+SELECT score, score + count(*) FROM orientations GROUP BY score;
+----
+1	4.000
+2	5.000
+NULL	NULL
+
+# Source: gql_global_aggregates.test:73
+query IR
+SELECT count(*) + 1, coalesce(avg(score), 0) FROM orientations;
+----
+9	1.500
+
+# Source: gql_global_aggregates.test:95
+query I
+SELECT count(*) FROM orientations WHERE source_name = 'a' AND target_name = 'c';
+----
+1
+
+# Source: gql_global_aggregates.test:142
+query II
+SELECT count(DISTINCT 1), sum(1) FROM orientations;
+----
+1	8
+
+# Source: gql_global_aggregates.test:172
+query II rowsort
+SELECT score, score * 2 + count(*) FROM orientations GROUP BY score;
+----
+1	5
+2	7
+NULL	NULL
+
+# Source: gql_global_aggregates.test:179
+query II rowsort
+SELECT score + 1, (score + 1) + count(*) FROM orientations GROUP BY score;
+----
+2	5
+3	6
+NULL	NULL
+
+# Source: gql_global_aggregates.test:186
+query TI rowsort
+SELECT upper(category), count(*) FROM orientations GROUP BY upper(category);
+----
+A	6
+B	2
+
+# case: duckgql.aggregate_empty Empty global inputs, empty groups and optional NULL members
+# Source: gql_global_aggregates.test:79
+query IIRRR
+SELECT count(*), count(DISTINCT score), sum(weight), avg(weight), min(weight) FROM orientations WHERE source_name = 'absent';
+----
+0	0	NULL	NULL	NULL
+
+# Source: gql_global_aggregates.test:85
+query TI
+SELECT category, count(*) FROM orientations WHERE source_name = 'absent' GROUP BY category;
+----
+
+# Source: gql_global_aggregates.test:89
+query I
+SELECT count(*) + 1 FROM orientations WHERE source_name = 'absent';
+----
+1
+
+# Source: gql_global_aggregates.test:147
+query II
+SELECT count(DISTINCT 1), sum(1) FROM orientations WHERE source_name = 'absent';
+----
+0	NULL
+
+# Source: gql_global_aggregates.test:101
+query III
+SELECT count(*), count(extra), count(DISTINCT src) FROM
+qw_query('duckgql', 'cypher', $$MATCH (a:AggregateNode)-[:WEIGHTED]-(b:AggregateNode)
+OPTIONAL MATCH (b)-[:EXTRA]->(c:AggregateNode) RETURN a.id AS src, c.id AS extra$$, schema := 'src BIGINT, extra BIGINT');
+----
+8	0	3
+
+# case: duckgql.aggregate_trail Undirected trail multiplicities exclude reused edges
+# Source: gql_global_aggregates.test:108
+query I
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (a:AggregateNode)-[:WEIGHTED* TRAIL 3..3]-(b:AggregateNode)
+WHERE a.id = b.id RETURN count(*) AS n$$, schema := 'n BIGINT');
+----
+12
+
+# Source: gql_global_aggregates.test:113
+query I
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (a:AggregateNode)-[:WEIGHTED* TRAIL 2..2]-(b:AggregateNode)
+WHERE a.id <> b.id RETURN count(*) AS n$$, schema := 'n BIGINT');
+----
+10
+
+# case: duckgql.aggregate_modifiers Global grouping followed by ordering, distinct and limits
+# Source: gql_global_aggregates.test:119
+query TI
+SELECT source_name, count(*) AS n FROM orientations GROUP BY source_name ORDER BY n DESC, source_name OFFSET 1 LIMIT 1;
+----
+b	3
+
+# Source: gql_global_aggregates.test:124
+query T
+SELECT source_name FROM orientations GROUP BY source_name ORDER BY count(*) DESC, source_name;
+----
+a
+b
+c
+
+# Source: gql_global_aggregates.test:131
+query I
+SELECT count(*) FROM orientations LIMIT 0;
+----
+
+# Source: gql_global_aggregates.test:135
+query TI
+SELECT DISTINCT category, count(*) FROM orientations GROUP BY category ORDER BY category;
+----
+A	6
+B	2
+
+# Source: gql_global_aggregates.test:154
+query II
+SELECT min(score), max(score) FROM orientations ORDER BY count(*);
+----
+1	2
+
+# Source: gql_global_aggregates.test:160
+query II
+SELECT min(score), max(score) FROM directed ORDER BY count(*);
+----
+1	2
+
+# Source: gql_global_aggregates.test:166
+query T
+SELECT source_name FROM orientations GROUP BY source_name ORDER BY count(*) DESC, source_name OFFSET 1 LIMIT 1;
+----
+b

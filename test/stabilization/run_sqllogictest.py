@@ -51,8 +51,13 @@ def report_artifact(path):
     print("[QW_ARTIFACT] " + json.dumps(identity), flush=True)
 
 
-def snapshot(binary, graph, target):
-    write_json(target, ladybug(binary, graph, SNAPSHOT, read_only=True))
+def snapshot(binary, graph, duckgql_graph, target):
+    with duckgql_graph.open("rb") as source:
+        duckgql_digest = hashlib.file_digest(source, "sha256").hexdigest()
+    write_json(target, {
+        "graph_rows": ladybug(binary, graph, SNAPSHOT, read_only=True),
+        "duckgql_fixture_sha256": duckgql_digest,
+    })
 
 
 def write_package_observations(package, export, target):
@@ -153,15 +158,22 @@ def main():
             run_cases(unittest, scratch, variables, [test_dir / "feature_off.test"])
             return
 
+        duckgql_graph = scratch / "duckgql.lbdb"
+        ladybug(lbug, duckgql_graph, (HERE / "fixtures/duckgql_reads.cypher").read_text(encoding="utf-8"))
+        variables["QW_DUCKGQL_GRAPH"] = duckgql_graph
+
         before = scratch / "before.json"
         after = scratch / "after.json"
         observations = scratch / "package.csv"
-        snapshot(lbug, graph, before)
+        snapshot(lbug, graph, duckgql_graph, before)
         run_cases(unittest, scratch, variables, [test_dir / name for name in (
-            "reads.test", "bind.test", "admission.test", "scan.test", "host_access.test", "limits.test",
+            "reads.test", "gql_compatibility.test", "bind.test", "admission.test", "scan.test",
+            "host_access.test", "limits.test",
             "timeout.test_slow", "artifact.test",
+            "duckgql_admission.test", "duckgql_aggregates.test", "duckgql_basic.test",
+            "duckgql_paths.test", "duckgql_reachability.test", "duckgql_scalars.test",
         )])
-        snapshot(lbug, graph, after)
+        snapshot(lbug, graph, duckgql_graph, after)
         write_package_observations(package, export, observations)
         run_cases(unittest, scratch, {"QW_BEFORE": before, "QW_AFTER": after, "QW_PACKAGE": observations},
                   [test_dir / "fixture_audit.test"])

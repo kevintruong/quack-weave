@@ -1,0 +1,150 @@
+# name: test/stabilization/sqllogic/gql_compatibility.test
+# description: DuckGQL-inspired result and read-only compatibility on a native Ladybug graph
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_GRAPH UNSET_QW_GRAPH
+
+# case: gql_compat.setup Load the pinned package and select the Ladybug fixture
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+# case: gql_compat.scalar_bag Project both endpoints, preserving duplicate edges, a self-loop and NULLs
+statement ok
+CREATE TEMP VIEW gql_links AS
+SELECT * FROM qw_query('kg', 'gql', $$
+    MATCH (a:Document)-[:LINKS_TO]->(b:Document)
+    RETURN a.id AS src, b.id AS dst, b.title AS title, b.active AS active, b.ratio AS ratio
+$$, schema := 'src BIGINT, dst BIGINT, title VARCHAR, active BOOLEAN, ratio DOUBLE');
+
+query IITTT
+SELECT src, dst, title, active::VARCHAR, ratio::VARCHAR FROM gql_links ORDER BY src, dst;
+----
+100	101	Linked, λ	true	1.25
+100	101	Linked, λ	true	1.25
+101	101	Linked, λ	true	1.25
+101	102	NULL	NULL	NULL
+101	103	O'Brien; λ	true	NULL
+
+query I
+WITH native_links AS (
+    SELECT * FROM qw_query('kg', 'cypher', $$
+        MATCH (a:Document)-[:LINKS_TO]->(b:Document)
+        RETURN a.id AS src, b.id AS dst, b.title AS title, b.active AS active, b.ratio AS ratio
+    $$, schema := 'src BIGINT, dst BIGINT, title VARCHAR, active BOOLEAN, ratio DOUBLE')
+)
+SELECT count(*) FROM (
+    (SELECT * FROM gql_links EXCEPT ALL SELECT * FROM native_links)
+    UNION ALL
+    (SELECT * FROM native_links EXCEPT ALL SELECT * FROM gql_links)
+);
+----
+0
+
+# case: gql_compat.endpoint_predicates Filter on either endpoint and preserve Ladybug NULL semantics
+query II rowsort
+SELECT * FROM qw_query('kg', 'gql', $$
+    MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.active = false
+    RETURN a.id AS src, b.id AS dst
+$$, schema := 'src BIGINT, dst BIGINT');
+----
+100	101
+100	101
+
+query II
+SELECT * FROM qw_query('kg', 'gql', $$
+    MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE b.title <> 'Linked, λ'
+    RETURN a.id AS src, b.id AS dst
+$$, schema := 'src BIGINT, dst BIGINT');
+----
+101	103
+
+query IT
+SELECT * FROM qw_query('kg', 'gql', $$
+    MATCH (a:Document)-[:LINKS_TO]->(b:Document) FILTER WHERE b.id = 102
+    RETURN b.id AS dst, b.title AS title
+$$, schema := 'dst BIGINT, title VARCHAR');
+----
+102	NULL
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$
+    MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 AND b.id = 101
+    RETURN b.id AS id
+$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+# case: gql_compat.typed_relationship Traverse between different Ladybug node tables using the selected edge type
+query II rowsort
+SELECT * FROM qw_query('kg', 'gql', $$
+    MATCH (a:Document)-[:HAS_SAMPLE]->(b:VectorRow) WHERE b.id <= 2
+    RETURN a.id AS src, b.id AS dst
+$$, schema := 'src BIGINT, dst BIGINT');
+----
+100	1
+100	2
+
+# case: gql_compat.host_result Shape rows in DuckDB SQL without expanding the GQL subset
+query IIII
+SELECT src, count(*), count(title), count(DISTINCT dst) FROM gql_links GROUP BY src ORDER BY src;
+----
+100	2	2	1
+101	3	2	3
+
+query I
+SELECT DISTINCT dst FROM gql_links ORDER BY dst LIMIT 1 OFFSET 1;
+----
+102
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$
+    MATCH (a:Document)-[:LINKS_TO]->(b:Document)
+    RETURN DISTINCT b.id AS id
+$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+# case: gql_compat.graph_patterns Reject reverse, undirected and quantified GQL edge patterns
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$
+    MATCH (a:Document)<-[:LINKS_TO]-(b:Document) RETURN b.id AS id
+$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$
+    MATCH (a:Document)~[:LINKS_TO]~(b:Document) RETURN b.id AS id
+$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$
+    MATCH (a:Document)-[:LINKS_TO]->{1,2}(b:Document) RETURN b.id AS id
+$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+# case: gql_compat.graph_scope_write Reject session graph selection and writes and re-read the fixture
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$SESSION SET GRAPH kg$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$
+    MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE b.id = 101 SET b.title = 'changed'
+$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+query TII
+SELECT min(title), count(DISTINCT title), count(*) FROM gql_links WHERE dst = 101;
+----
+Linked, λ	1	3

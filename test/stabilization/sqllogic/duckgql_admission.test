@@ -1,0 +1,132 @@
+# name: test/stabilization/sqllogic/duckgql_admission.test
+# description: DuckGQL parser and read-only behavior at the QuackWeave entry point
+# group: [quack_weave]
+# DuckGQL revision b4421c5cb5e3a389f9658de591a0aa6d397da991. See ../duckgql-porting.md for attribution.
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_DUCKGQL_GRAPH UNSET_QW_DUCKGQL_GRAPH
+
+# case: duckgql.admission_setup Select the native Ladybug copy of the DuckGQL fixture
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"duckgql","path":"{QW_DUCKGQL_GRAPH}"}';
+
+# case: duckgql.parser_trivia SQL coexistence, case folding, lexer trivia, and multiline error locations
+# Source: gql_parser.test:7
+query I
+SELECT 42;
+----
+42
+
+# Source: gql_parser.test:12
+query T
+SELECT * FROM qw_query('duckgql', 'gql', $$mAtCh /* comment */ (a:Person)-[:KNOWS]->(b:Person) WHERE a.id = 1 rEtUrN b.name AS name$$, schema := 'name VARCHAR');
+----
+Grace
+
+# Source: gql_parser.test:22
+statement error
+SELECT * FROM qw_query('duckgql', 'gql', $$MATCH (a:Person)-[:KNOWS]->(b:Person RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+QW_GQL_PARSE
+
+# Source: gql_parser.test:32
+statement error
+EXPLAIN SELECT * FROM qw_query('duckgql', 'gql', $$MATCH (a:Person)-[:KNOWS]->(b:Person)
+RETURN$$, schema := 'id BIGINT');
+----
+QW_GQL_PARSE: Invalid GQL syntax at line 2
+
+# Source: gql_parser.test:55
+statement error
+SELECT * FROM qw_query('duckgql', 'gql', $$OPTIONAL
+/* match keyword trivia */ MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN b.name AS name$$, schema := 'name VARCHAR');
+----
+QW_GQL_SUBSET
+
+# Source: gql_parser.test:62
+statement error
+SELECT * FROM qw_query('duckgql', 'gql', $$INSERT
+/* graph write */ (:Person {id: 99})$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+# Source: gql_parser.test:69
+query T rowsort
+SELECT * FROM qw_query('duckgql', 'gql', $$/* leading comment */
+MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN b.name AS name$$, schema := 'name VARCHAR');
+----
+Ada
+Grace
+
+# Source: gql_parser.test:75
+query T rowsort
+SELECT * FROM qw_query('duckgql', 'gql', $$// leading comment
+MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN b.name AS name$$, schema := 'name VARCHAR');
+----
+Ada
+Grace
+
+# case: duckgql.parser_delimited Delimited identifiers and multi-statement payloads respect the GQL subset
+# Source: gql_parser.test:99
+statement error
+SELECT * FROM qw_query('duckgql', 'gql', $$MATCH (a:`Person`)-[:KNOWS]->(b:Person) RETURN b.name AS name$$, schema := 'name VARCHAR');
+----
+QW_GQL_SUBSET
+
+# Source: gql_parser.test:104
+statement error
+SELECT * FROM qw_query('duckgql', 'gql', $$MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN b.`name` AS name$$, schema := 'name VARCHAR');
+----
+QW_GQL_SUBSET
+
+# Source: gql_parser.test:109
+statement error
+SELECT * FROM qw_query('duckgql', 'gql', $$MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN b.name AS "Display Name"$$, schema := 'name VARCHAR');
+----
+QW_GQL_SUBSET
+
+# Source: gql_parser.test:127
+statement error
+SELECT * FROM qw_query('duckgql', 'gql', $$SESSION SET GRAPH duckgql; MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN b.name AS name$$, schema := 'name VARCHAR');
+----
+QW_GQL_PARSE
+
+# case: duckgql.readonly Fixed and quantified reads succeed while both graph dialects reject insertion
+# Source: gql_read_only_database.test:26
+query I
+SELECT * FROM qw_query('duckgql', 'gql', $$MATCH (a:ReadNode)-[:READ_EDGE]->(b:ReadNode) RETURN b.score AS score$$, schema := 'score BIGINT');
+----
+20
+
+# Source: gql_read_only_database.test:34
+query I
+SELECT * FROM qw_query('duckgql', 'gql', $$MATCH (a:ReadNode)-[:READ_EDGE]->(b:ReadNode) WHERE a.id = 1 RETURN b.id AS neighbor_id$$, schema := 'neighbor_id BIGINT');
+----
+2
+
+# Source: gql_read_only_database.test:39
+query I
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (a:ReadNode)-[:READ_EDGE* TRAIL 1..5]->(b:ReadNode) RETURN b.score AS score$$, schema := 'score BIGINT');
+----
+20
+
+# Source: gql_read_only_database.test:44
+statement error
+SELECT * FROM qw_query('duckgql', 'gql', $$INSERT (:ReadNode {id: 3, score: 30})$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+SELECT * FROM qw_query('duckgql', 'cypher', $$CREATE (:ReadNode {id: 3, score: 30}) RETURN 3 AS id$$, schema := 'id BIGINT');
+----
+QW_ADMISSION
+
+query II
+SELECT id, score FROM qw_query('duckgql', 'cypher', $$MATCH (n:ReadNode) RETURN n.id AS id, n.score AS score$$, schema := 'id BIGINT, score BIGINT') ORDER BY id;
+----
+1	10
+2	20

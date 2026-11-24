@@ -1,0 +1,132 @@
+# name: test/stabilization/sqllogic/duckgql_scalars.test
+# description: DuckGQL numeric functions, casts and collection over native Ladybug rows
+# group: [quack_weave]
+# DuckGQL revision b4421c5cb5e3a389f9658de591a0aa6d397da991. See ../duckgql-porting.md for attribution.
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_DUCKGQL_GRAPH UNSET_QW_DUCKGQL_GRAPH
+
+# case: duckgql.scalars_setup Select the native Ladybug copy of the DuckGQL fixture
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"duckgql","path":"{QW_DUCKGQL_GRAPH}"}';
+
+statement ok
+CREATE TEMP VIEW sample_rows AS SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (s:Sample) RETURN s.id AS id, s.integer_value AS integer_value, s.double_value AS double_value, s.text_value AS text_value$$, schema := 'id BIGINT, integer_value BIGINT, double_value DOUBLE, text_value VARCHAR');
+
+statement ok
+CREATE TEMP VIEW birthdays AS SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (b:Birthday) RETURN b.id AS id, b.name AS name, b.birthday AS birthday$$, schema := 'id BIGINT, name VARCHAR, birthday VARCHAR');
+
+# case: duckgql.scalar_math Math functions over numeric and NULL bridge slots
+# Source: gql_exp_ln_functions.test:30
+query II
+SELECT exp(0) = 1.0, abs(exp(1.0) - 2.718281828459045) < 0.000000000001 FROM sample_rows WHERE id = 1;
+----
+true	true
+
+# Source: gql_exp_ln_functions.test:38
+query II
+SELECT ln(1.0) = 0.0, abs(ln(2.718281828459045) - 1.0) < 0.000000000001 FROM sample_rows WHERE id = 1;
+----
+true	true
+
+# Source: gql_exp_ln_functions.test:47
+query I
+SELECT abs(ln(exp(1e0)) - 1.0) < 0.000000000001 FROM sample_rows WHERE id = 1;
+----
+true
+
+# Source: gql_exp_ln_functions.test:54
+query II
+SELECT abs(exp(integer_value) - 2.718281828459045) < 0.000000000001,
+       abs(ln(double_value) - 1.0) < 0.000000000001 FROM sample_rows WHERE id = 1;
+----
+true	true
+
+# Source: gql_exp_ln_functions.test:62
+query RR
+SELECT exp(integer_value), ln(double_value) FROM sample_rows WHERE id = 2;
+----
+NULL	NULL
+
+# Source: gql_exp_ln_functions.test:82
+statement error
+SELECT exp(text_value) FROM sample_rows WHERE id = 1;
+----
+<REGEX>:.*exp.*VARCHAR.*
+
+# Source: gql_exp_ln_functions.test:88
+statement error
+SELECT ln(text_value) FROM sample_rows WHERE id = 1;
+----
+<REGEX>:.*ln.*VARCHAR.*
+
+# Source: gql_exp_ln_functions.test:95
+query IIIII
+SELECT abs(-2) = 2, mod(7, 3) = 1, sqrt(9.0) = 3.0, floor(2.9) = 2, ceil(2.1) = 3
+FROM sample_rows WHERE id = 1;
+----
+true	true	true	true	true
+
+# case: duckgql.scalar_collect Scalar casts and NULL-eliminating collection after the bridge
+# Source: gql_cast_collect.test:22
+query I
+SELECT CAST(right(left(birthday, 7), 2) AS INTEGER) FROM birthdays WHERE name = 'y';
+----
+1
+
+# Source: gql_cast_collect.test:28
+query T
+SELECT coalesce(list(DISTINCT name ORDER BY name) FILTER (WHERE name IS NOT NULL), [])
+FROM birthdays WHERE name = 'x';
+----
+[x]
+
+# Source: gql_cast_collect.test:33
+query IIRT
+SELECT count(*), CAST('12' AS INTEGER), CAST('1.5' AS FLOAT), CAST(NULL AS VARCHAR)
+FROM birthdays WHERE name = 'x';
+----
+2	12	1.5	NULL
+
+# Source: gql_cast_collect.test:38
+query T
+SELECT list(name ORDER BY id) FILTER (WHERE name IS NOT NULL) FROM birthdays WHERE name = 'x';
+----
+[x, x]
+
+# Source: gql_cast_collect.test:43
+query T
+SELECT coalesce(list(name) FILTER (WHERE name IS NOT NULL), []) FROM birthdays WHERE name IS NULL;
+----
+[]
+
+# Source: gql_cast_collect.test:48
+query T
+SELECT coalesce(list(name) FILTER (WHERE name IS NOT NULL), []) FROM birthdays WHERE name = 'absent';
+----
+[]
+
+# Source: gql_cast_collect.test:53
+query TTT rowsort
+SELECT birthday, name, list(DISTINCT name) FROM birthdays WHERE name IS NOT NULL
+GROUP BY id, birthday, name ORDER BY birthday;
+----
+2000-01-01	y	[y]
+2000-05-21	x	[x]
+2000-06-22	x	[x]
+
+# Source: gql_cast_collect.test:66
+statement error
+SELECT CAST('bad' AS INTEGER) FROM birthdays;
+----
+Could not convert
+
+# Source: gql_cast_collect.test:91
+statement error
+SELECT list(count(*)) FROM birthdays;
+----
+aggregate function calls cannot be nested

@@ -1,0 +1,351 @@
+# name: test/stabilization/sqllogic/duckgql_basic.test
+# description: DuckGQL basic reads on the original Person data
+# group: [quack_weave]
+# DuckGQL revision b4421c5cb5e3a389f9658de591a0aa6d397da991. See ../duckgql-porting.md for attribution.
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_DUCKGQL_GRAPH UNSET_QW_DUCKGQL_GRAPH
+
+# case: duckgql.basic_setup Select the native Ladybug copy of the DuckGQL fixture
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"duckgql","path":"{QW_DUCKGQL_GRAPH}"}';
+
+statement ok
+CREATE TEMP VIEW people AS SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (p:Person) RETURN p.id AS id, p.name AS name, p.age AS age, p.missing AS missing$$, schema := 'id BIGINT, name VARCHAR, age BIGINT, missing VARCHAR');
+
+statement ok
+CREATE TEMP VIEW knows AS
+SELECT * FROM qw_query('duckgql', 'gql', $$MATCH (a:Person)-[:KNOWS]->(b:Person)
+RETURN a.id AS src, b.id AS dst, a.name AS source_name, b.name AS target_name,
+       a.age AS source_age, b.age AS target_age$$, schema := 'src BIGINT, dst BIGINT, source_name VARCHAR, target_name VARCHAR, source_age BIGINT, target_age BIGINT');
+
+# case: duckgql.basic_projection Distinct results, delimited host aliases and projected graph identities
+# Source: gql_basic_query.test:37
+query T rowsort
+SELECT DISTINCT name FROM people;
+----
+Ada
+Grace
+
+# Source: gql_basic_query.test:46
+query T
+SELECT source_name AS "Person Name"
+FROM qw_query('duckgql', 'gql', $$MATCH (a:Person)-[:KNOWS]->(b:Person) WHERE a.age = 42 RETURN a.name AS source_name$$, schema := 'source_name VARCHAR');
+----
+Ada
+
+# Source: gql_basic_query.test:52
+query T
+SELECT source_name AS "Display Name"
+FROM qw_query('duckgql', 'gql', $$MATCH (a:Person)-[:KNOWS]->(b:Person) WHERE a.age = 42 RETURN a.name AS source_name$$, schema := 'source_name VARCHAR');
+----
+Ada
+
+# Source: gql_basic_query.test:58
+query T
+SELECT source_name AS "Person `Name"
+FROM qw_query('duckgql', 'gql', $$MATCH (a:Person)-[:KNOWS]->(b:Person) WHERE a.age = 42 RETURN a.name AS source_name$$, schema := 'source_name VARCHAR');
+----
+Ada
+
+# Source: gql_basic_query.test:64
+query T
+SELECT source_name AS "Display ""Name"
+FROM qw_query('duckgql', 'gql', $$MATCH (a:Person)-[:KNOWS]->(b:Person) WHERE a.age = 42 RETURN a.name AS source_name$$, schema := 'source_name VARCHAR');
+----
+Ada
+
+# Source: gql_basic_query.test:70
+query IIT
+SELECT id, age, name FROM people WHERE age = 42;
+----
+1	42	Ada
+
+# Source: gql_basic_query.test:76
+query III rowsort
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (a:Person)-[r:KNOWS]->(b:Person) RETURN r.id AS edge_id, a.id AS src, b.id AS dst$$, schema := 'edge_id BIGINT, src BIGINT, dst BIGINT');
+----
+1	1	2
+2	2	3
+
+# Source: gql_basic_query.test:130
+query TI
+SELECT name, id FROM people ORDER BY name DESC, id ASC OFFSET 1 LIMIT 1;
+----
+Ada	1
+
+# Source: gql_basic_query.test:140
+query T
+SELECT name FROM people ORDER BY age;
+----
+Ada
+Grace
+Ada
+
+# Source: gql_basic_query.test:149
+statement error
+SELECT * FROM qw_query('duckgql', 'gql', $$MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN DISTINCT b.name AS name ORDER BY b.age$$, schema := 'name VARCHAR');
+----
+QW_GQL_SUBSET
+
+# case: duckgql.basic_scalars String and nullable expressions over Ladybug results
+# Source: gql_basic_query.test:156
+query TTTTII rowsort
+SELECT lower(name), upper(name), left(name, 2), right(name, 2), length(name), mod(age, 10)
+FROM people WHERE name = 'Ada';
+----
+ada	ADA	Ad	da	3	0
+ada	ADA	Ad	da	3	2
+
+# Source: gql_basic_query.test:168
+query TT rowsort
+SELECT trim('  Ada  '), name || ' Lovelace' FROM people WHERE name = 'Ada';
+----
+Ada	Ada Lovelace
+Ada	Ada Lovelace
+
+# Source: gql_basic_query.test:175
+query TT rowsort
+SELECT name, coalesce(missing, name, 'unknown') FROM people;
+----
+Ada	Ada
+Ada	Ada
+Grace	Grace
+
+# Source: gql_basic_query.test:185
+query T
+SELECT COALESCE(NULL, 'unknown') FROM people WHERE age = 42;
+----
+unknown
+
+# Source: gql_basic_query.test:191
+query T
+SELECT COALESCE('known', NULL) FROM people WHERE age = 42;
+----
+known
+
+# Source: gql_basic_query.test:197
+query T
+SELECT COALESCE(NULL, name) FROM people WHERE age = 42;
+----
+Ada
+
+# Source: gql_basic_query.test:203
+query I
+SELECT COALESCE(NULL, NULL) FROM people WHERE age = 42;
+----
+NULL
+
+# case: duckgql.basic_optional Leading and correlated optional matches, predicate placement and NULL extension
+# Source: gql_basic_query.test:91
+query T
+SELECT * FROM qw_query('duckgql', 'cypher', $$OPTIONAL MATCH (p:Person) WHERE p.age > 100 RETURN p.name AS name$$, schema := 'name VARCHAR');
+----
+NULL
+
+# Source: gql_basic_query.test:97
+query T
+SELECT p.name FROM (VALUES (1)) AS seed(n) LEFT JOIN people p ON p.age > 100;
+----
+NULL
+
+# Source: gql_basic_query.test:209
+query T
+SELECT * FROM qw_query('duckgql', 'cypher', $$OPTIONAL MATCH (p:EmptyPerson) RETURN p.name AS name$$, schema := 'name VARCHAR');
+----
+NULL
+
+# Source: gql_basic_query.test:215
+query I
+SELECT * FROM qw_query('duckgql', 'cypher', $$OPTIONAL MATCH (p:EmptyPerson) RETURN p.id AS person_id$$, schema := 'person_id BIGINT');
+----
+NULL
+
+# Source: gql_basic_query.test:221
+query T rowsort
+SELECT * FROM qw_query('duckgql', 'cypher', $$OPTIONAL MATCH (p:Person) RETURN p.name AS name$$, schema := 'name VARCHAR');
+----
+Ada
+Ada
+Grace
+
+# Source: gql_basic_query.test:229
+query TT
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (a:Person {age: 42}) OPTIONAL MATCH (a)-[:KNOWS]->(m:Person)-[:KNOWS]->(b:Person)
+RETURN m.name AS middle_name, b.name AS destination_name$$, schema := 'middle_name VARCHAR, destination_name VARCHAR');
+----
+Grace	Ada
+
+# Source: gql_basic_query.test:236
+query TT
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (a:Person {age: 35}) OPTIONAL MATCH (a)-[:KNOWS]->(m:Person)-[:KNOWS]->(b:Person)
+RETURN m.name AS middle_name, b.name AS destination_name$$, schema := 'middle_name VARCHAR, destination_name VARCHAR');
+----
+NULL	NULL
+
+# Source: gql_basic_query.test:243
+query TT
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (a:Person {age: 42}) OPTIONAL MATCH (a)-[:KNOWS]->(m:Person), (m)-[:KNOWS]->(b:Person)
+RETURN m.name AS middle_name, b.name AS destination_name$$, schema := 'middle_name VARCHAR, destination_name VARCHAR');
+----
+Grace	Ada
+
+# Source: gql_basic_query.test:276
+query TTI
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (a:Person {age: 42}), (b:Person {age: 30})
+OPTIONAL MATCH (a)-[:KNOWS]->(m:Person)-[:KNOWS]->(b)
+RETURN a.name AS src, m.name AS middle, b.id AS dst$$, schema := 'src VARCHAR, middle VARCHAR, dst BIGINT');
+----
+Ada	Grace	3
+
+# Source: gql_basic_query.test:284
+query TT
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (a:Person {age: 42}) OPTIONAL MATCH (a)-[:KNOWS]->(m:Person)
+OPTIONAL MATCH (m)-[:KNOWS]->(b:Person) WHERE b.age > 100
+RETURN m.name AS middle_name, b.name AS destination_name$$, schema := 'middle_name VARCHAR, destination_name VARCHAR');
+----
+Grace	NULL
+
+# Source: gql_basic_query.test:294
+query TT
+SELECT missing.name, target.name
+FROM (VALUES (1)) seed(n)
+LEFT JOIN qw_query('duckgql', 'cypher', $$MATCH (p:EmptyPerson) RETURN p.name AS name$$, schema := 'name VARCHAR') missing ON true
+CROSS JOIN (SELECT name FROM people WHERE age = 42) target;
+----
+NULL	Ada
+
+# Source: gql_basic_query.test:303
+query TT
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (a:Person {age: 42}) OPTIONAL MATCH (a)-[:KNOWS]->(m:Person)
+MATCH (m)-[:KNOWS]->(b:Person) RETURN m.name AS middle_name, b.name AS destination_name$$, schema := 'middle_name VARCHAR, destination_name VARCHAR');
+----
+Grace	Ada
+
+# Source: gql_basic_query.test:313
+query T
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (a:Person {age: 35}) OPTIONAL MATCH (a)-[:KNOWS]->(m:Person) WHERE m.age > 100
+MATCH (m)-[:KNOWS]->(b:Person) RETURN b.name AS destination_name$$, schema := 'destination_name VARCHAR');
+----
+
+# Source: gql_basic_query.test:322
+query T
+SELECT p.name FROM people p LEFT JOIN people other ON p.id = other.id AND other.age > 100
+WHERE p.age = 42;
+----
+Ada
+
+# Source: gql_basic_query.test:332
+query T
+SELECT source_name FROM qw_query('duckgql', 'cypher', $$MATCH (a:Person {age: 42}) OPTIONAL MATCH (a)-[:KNOWS]->(b:Person)
+RETURN a.name AS source_name, b.age AS destination_age$$, schema := 'source_name VARCHAR, destination_age BIGINT')
+WHERE destination_age > 100;
+----
+
+# Source: gql_basic_query.test:407
+query TT
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (a:Person {age: 42}) OPTIONAL MATCH (a)-[:KNOWS]->(b:Person) WHERE b.age > 100
+RETURN a.name AS source_name, b.name AS destination_name$$, schema := 'source_name VARCHAR, destination_name VARCHAR');
+----
+Ada	NULL
+
+# Source: gql_basic_query.test:380
+query II
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (a:Person {age: 30}) OPTIONAL MATCH (a)-[:MISSING]->(b:Person)
+RETURN a.id AS src, b.id AS dst$$, schema := 'src BIGINT, dst BIGINT');
+----
+3	NULL
+
+# case: duckgql.basic_bindings Independent path bindings and both endpoint filter positions
+# Source: gql_basic_query.test:252
+query II rowsort
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (a:Person)-[r1:KNOWS]->(b:Person), (a)-[r2:KNOWS]->(b)
+RETURN r1.id AS first_id, r2.id AS second_id$$, schema := 'first_id BIGINT, second_id BIGINT');
+----
+1	1
+2	2
+
+# Source: gql_basic_query.test:260
+query II rowsort
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (a:Person)-[r1:KNOWS]->(b:Person)
+MATCH (a)-[r2:KNOWS]->(b)
+RETURN r1.id AS first_id, r2.id AS second_id$$, schema := 'first_id BIGINT, second_id BIGINT');
+----
+1	1
+2	2
+
+# Source: gql_basic_query.test:268
+query II rowsort
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (a:Person)-[r1:KNOWS]->(b:Person)
+OPTIONAL MATCH (a)-[r2:KNOWS]->(b)
+RETURN r1.id AS first_id, r2.id AS second_id$$, schema := 'first_id BIGINT, second_id BIGINT');
+----
+1	1
+2	2
+
+# Source: gql_basic_query.test:343
+query TT
+SELECT source_name, target_name FROM knows WHERE source_age = 42 AND target_age = 35;
+----
+Ada	Grace
+
+# Source: gql_basic_query.test:353
+query TT
+SELECT * FROM qw_query('duckgql', 'gql', $$MATCH (a:Person)-[:KNOWS]->(b:Person) FILTER a.age = 42
+RETURN a.name AS source_name, b.name AS target_name$$, schema := 'source_name VARCHAR, target_name VARCHAR');
+----
+Ada	Grace
+
+# Source: gql_basic_query.test:363
+query TT rowsort
+SELECT source_name, target_name FROM knows WHERE source_age > target_age;
+----
+Ada	Grace
+Grace	Ada
+
+# Source: gql_basic_query.test:416
+statement error
+SELECT * FROM qw_query('duckgql', 'gql', $$MATCH (a:Person)-[:KNOWS]->(b:Person) FILTER future.age = 35 RETURN b.name AS name$$, schema := 'name VARCHAR');
+----
+QW_GQL_SUBSET
+
+# Source: gql_basic_query.test:465
+statement error
+SELECT * FROM qw_query('duckgql', 'gql', $$MATCH a = (a:Person)-[:KNOWS]->(b:Person) RETURN b.name AS name$$, schema := 'name VARCHAR');
+----
+QW_GQL_SUBSET
+
+# case: duckgql.basic_result Grouping and pagination over scalar Ladybug rows
+# Source: gql_basic_query.test:424
+query I
+SELECT count(*) FROM people;
+----
+3
+
+# Source: gql_basic_query.test:430
+query I
+SELECT count(DISTINCT name) FROM people;
+----
+2
+
+# Source: gql_basic_query.test:436
+query IRII
+SELECT sum(age), avg(age), min(age), max(age) FROM people;
+----
+107	35.667	30	42
+
+# Source: gql_basic_query.test:445
+query TI rowsort
+SELECT name, count(*) FROM people GROUP BY name;
+----
+Ada	2
+Grace	1
+
+# Source: gql_basic_query.test:453
+query T
+SELECT * FROM qw_query('duckgql', 'cypher', $$OPTIONAL MATCH (a:EmptyPerson) RETURN a.name AS name$$, schema := 'name VARCHAR') LIMIT 0;
+----

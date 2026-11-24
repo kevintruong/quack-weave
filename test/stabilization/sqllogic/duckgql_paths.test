@@ -1,0 +1,187 @@
+# name: test/stabilization/sqllogic/duckgql_paths.test
+# description: DuckGQL fixed and quantified trail results through native Ladybug
+# group: [quack_weave]
+# DuckGQL revision b4421c5cb5e3a389f9658de591a0aa6d397da991. See ../duckgql-porting.md for attribution.
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_DUCKGQL_GRAPH UNSET_QW_DUCKGQL_GRAPH
+
+# case: duckgql.paths_setup Select the native Ladybug copy of the DuckGQL fixture
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"duckgql","path":"{QW_DUCKGQL_GRAPH}"}';
+
+# case: duckgql.path_chains Duplicate fixed chains and independently scoped trail uniqueness
+# Source: gql_fixed_chain_access.test:41
+query I rowsort
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (:ChainNode {id: 1})-[:STEP]->()-[:STEP]->()-[:EXIT_EDGE]->(d:ChainNode) RETURN d.id AS id$$, schema := 'id BIGINT');
+----
+4
+4
+
+# Source: gql_fixed_chain_access.test:53
+query I rowsort
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (d:ChainNode)<-[:EXIT_EDGE]-()<-[:STEP]-()<-[:STEP]-(:ChainNode {id: 1}) RETURN d.id AS id$$, schema := 'id BIGINT');
+----
+4
+4
+
+# Source: gql_fixed_chain_access.test:61
+query I
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (:ChainNode {id: 1})-[:STEP* TRAIL 4..4]->(:ChainNode) RETURN count(*) AS id$$, schema := 'id BIGINT');
+----
+2
+
+# Source: gql_fixed_chain_access.test:69
+query I
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (:ChainNode {id: 1})-[:STEP* TRAIL 5..5]->(:ChainNode) RETURN count(*) AS id$$, schema := 'id BIGINT');
+----
+0
+
+# Source: gql_fixed_chain_access.test:76
+query II
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (a:ChainNode {id: 4}) OPTIONAL MATCH (a)-[:STEP]->()-[:STEP]->(c:ChainNode)
+RETURN a.id AS src, c.id AS dst$$, schema := 'src BIGINT, dst BIGINT');
+----
+4	NULL
+
+# Source: gql_fixed_chain_access.test:84
+query I
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (:ChainNode {id: 1})-[:STEP* TRAIL 3..3]->(d:ChainNode)
+MATCH (d)-[:STEP* TRAIL 2..2]->(:ChainNode) RETURN count(*) AS id$$, schema := 'id BIGINT');
+----
+4
+
+# Source: gql_fixed_chain_access.test:94
+query II rowsort
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (a:ChainNode {id: 1}) OPTIONAL MATCH (a)-[:STEP]->()-[:STEP]->()-[:EXIT_EDGE]->(d:ChainNode)
+RETURN a.id AS src, d.id AS dst$$, schema := 'src BIGINT, dst BIGINT');
+----
+1	4
+1	4
+
+# Source: gql_fixed_chain_access.test:109
+query III rowsort
+SELECT seed.src, seed.dst, path.prior FROM
+qw_query('duckgql', 'cypher', $$MATCH (a:ChainNode {id: 1}), (d:ChainNode) WHERE d.id IN [3, 4] RETURN a.id AS src, d.id AS dst$$, schema := 'src BIGINT, dst BIGINT') seed
+LEFT JOIN qw_query('duckgql', 'cypher', $$MATCH (:ChainNode {id: 1})-[:STEP]->()-[:STEP]->(c:ChainNode)-[:EXIT_EDGE]->(d:ChainNode) RETURN d.id AS dst, c.id AS prior$$, schema := 'dst BIGINT, prior BIGINT') path USING (dst);
+----
+1	3	NULL
+1	4	3
+1	4	3
+
+# Source: gql_fixed_chain_access.test:119
+query I
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (a:ChainNode {id: 1}) OPTIONAL MATCH (a)-[:STEP* TRAIL 5..5]->(b:ChainNode)
+RETURN count(b.id) AS id$$, schema := 'id BIGINT');
+----
+0
+
+# case: duckgql.path_range Apply result modifiers to the complete bounded Ladybug trail result
+# Source: gql_finite_range_global_modifiers.test:40
+query T rowsort
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (:PathNode {id: 1})-[:HOP* TRAIL 1..2]->(b:PathNode) RETURN b.name AS name$$, schema := 'name VARCHAR');
+----
+b
+c
+c
+d
+
+# Source: gql_finite_range_global_modifiers.test:50
+query T
+SELECT DISTINCT name FROM qw_query('duckgql', 'cypher', $$MATCH (:PathNode {id: 1})-[:HOP* TRAIL 1..2]->(b:PathNode) RETURN b.name AS name$$, schema := 'name VARCHAR')
+ORDER BY name DESC LIMIT 2;
+----
+d
+c
+
+# Source: gql_finite_range_global_modifiers.test:60
+query T
+SELECT name FROM qw_query('duckgql', 'cypher', $$MATCH (:PathNode {id: 1})-[:HOP* TRAIL 1..2]->(b:PathNode) RETURN b.name AS name$$, schema := 'name VARCHAR')
+ORDER BY name OFFSET 1 LIMIT 2;
+----
+c
+c
+
+# Source: gql_finite_range_global_modifiers.test:75
+query T
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (:PathNode {id: 1})-[:HOP* TRAIL 1..2]->(b:PathNode)-[:HOP]->(c:PathNode) RETURN c.name AS name$$, schema := 'name VARCHAR');
+----
+c
+
+# Source: gql_finite_range_global_modifiers.test:84
+query T rowsort
+SELECT * FROM qw_query('duckgql', 'cypher', $$MATCH (:PathNode {id: 1})-[:HOP* TRAIL 0..3]->(b:PathNode)
+MATCH (b)-[:HOP]->(c:PathNode) RETURN c.name AS name$$, schema := 'name VARCHAR');
+----
+b
+c
+c
+d
+
+# case: duckgql.path_mixed Quantified segments next to fixed edges of other types
+# Source: gql_composed_quantified.test:29
+query T rowsort
+SELECT * FROM
+qw_query('duckgql', 'cypher', $$MATCH (a:ComposedRoot)-[:ROOT_STEP]->(b:ComposedMiddle)-[:MIDDLE_STEP]->(c:ComposedLeaf)-[:LEAF_STEP* TRAIL 1..3]->(d:ComposedLeaf) RETURN d.name AS name$$, schema := 'name VARCHAR');
+----
+c4
+c5
+
+# Source: gql_composed_quantified.test:45
+query TT rowsort
+SELECT * FROM
+qw_query('duckgql', 'cypher', $$MATCH (a:ComposedRoot)-[:ROOT_STEP]->(b:ComposedMiddle)-[:MIDDLE_STEP]->(c:ComposedLeaf)-[:LEAF_STEP* TRAIL 1..30]->(d:ComposedLeaf)
+WHERE a.name = 'a1' AND d.name = 'c5' RETURN c.name AS start_name, d.name AS end_name$$, schema := 'start_name VARCHAR, end_name VARCHAR');
+----
+c3	c5
+
+# Source: gql_composed_quantified.test:50
+query T rowsort
+SELECT * FROM
+qw_query('duckgql', 'cypher', $$MATCH (a:ComposedRoot)-[:ROOT_STEP* TRAIL 1..2]->(b:ComposedMiddle)-[:MIDDLE_STEP]->(c:ComposedLeaf) RETURN c.name AS name$$, schema := 'name VARCHAR');
+----
+c3
+c6
+
+# Source: gql_composed_quantified.test:56
+query T
+SELECT * FROM
+qw_query('duckgql', 'cypher', $$MATCH (a:ComposedRoot)-[:ROOT_STEP]->(b:ComposedMiddle)-[:MIDDLE_STEP* TRAIL 1..2]->(c:ComposedLeaf)-[:LEAF_STEP]->(d:ComposedLeaf) RETURN d.name AS name$$, schema := 'name VARCHAR');
+----
+c4
+
+# Source: gql_composed_quantified.test:61
+query T
+SELECT * FROM
+qw_query('duckgql', 'cypher', $$MATCH (x:ComposedLeaf)-[:LEAF_STEP* TRAIL 1..2]->(y:ComposedLeaf)<-[:MIDDLE_STEP]-(z:ComposedMiddle) RETURN x.name AS name$$, schema := 'name VARCHAR');
+----
+
+# Source: gql_composed_quantified.test:65
+query T
+SELECT * FROM
+qw_query('duckgql', 'cypher', $$MATCH (b:ComposedMiddle)-[:MIDDLE_STEP]->(c:ComposedLeaf)-[:LEAF_STEP* TRAIL 0..2]->(d:ComposedLeaf)
+WHERE d.name = 'c6' RETURN b.name AS name$$, schema := 'name VARCHAR');
+----
+b2
+
+# Source: gql_composed_quantified.test:70
+query T rowsort
+SELECT * FROM
+qw_query('duckgql', 'cypher', $$MATCH (b:ComposedMiddle)-[:MIDDLE_STEP]->(c:ComposedLeaf)-[:LEAF_STEP* TRAIL 1..2]->(d:ComposedLeaf) RETURN d.name AS name$$, schema := 'name VARCHAR');
+----
+c4
+c5
+
+# Source: gql_composed_quantified.test:77
+query TT rowsort
+SELECT * FROM
+qw_query('duckgql', 'cypher', $$MATCH (b:ComposedMiddle)-[:MIDDLE_STEP]->(c:ComposedLeaf)
+OPTIONAL MATCH (b)-[:MIDDLE_STEP]->(c)-[:LEAF_STEP* TRAIL 1..3]->(d:ComposedLeaf)
+WHERE d.name = 'c5' RETURN c.name AS start_name, d.name AS end_name$$, schema := 'start_name VARCHAR, end_name VARCHAR');
+----
+c3	c5
+c6	NULL

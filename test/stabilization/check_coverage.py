@@ -21,7 +21,8 @@ SUITE_SUFFIXES = {".test", ".test_slow"}
 CASE_ID = r"[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*"
 CASE_MARKER = re.compile(rf"# case:[ \t]+({CASE_ID})(?:[ \t]+.*)?")
 SQL_BLOCK = re.compile(r"(?:query [TIR]+|statement (?:ok|error))(?:[ \t]+.*)?")
-PROFILE_COUNTS = {"mvp2-debug": 41, "mvp2-release": 41, "cypher-only": 1, "observer": 7}
+CASE_COUNT = 82
+PROFILE_COUNTS = {"mvp2-debug": 74, "mvp2-release": 74, "cypher-only": 1, "observer": 7}
 PROFILE_FILES = {"feature_off.test": ("cypher-only",), "observer_audit.test": ("observer",)}
 PREAMBLE_BLOCKS = {"limits.test": 2, "observer_audit.test": 6}
 PIN_PROBE = "<stdin>"
@@ -65,8 +66,8 @@ def read_manifest():
             cases[case] = profiles
 
     profile_counts = Counter(profile for profiles in cases.values() for profile in profiles)
-    if len(cases) != 49 or profile_counts != PROFILE_COUNTS:
-        raise ValueError(f"manifest requires 49 cases and profile counts {PROFILE_COUNTS}")
+    if len(cases) != CASE_COUNT or profile_counts != PROFILE_COUNTS:
+        raise ValueError(f"manifest requires {CASE_COUNT} cases and profile counts {PROFILE_COUNTS}")
     return cases, files
 
 
