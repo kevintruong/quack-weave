@@ -1,0 +1,207 @@
+//! A table function with state: `rusty_quack(names)`.
+//!
+//! [`TableFunctionCallbacks`] is the lifecycle DuckDB runs for a table
+//! function. DuckDB calls back in this order:
+//!
+//! 1. `bind` runs once per call site in a query, reads the constant arguments
+//!    and the [`crate::options`] setting, and declares the result columns.
+//! 2. `init_global_state` runs once per scan and creates state shared by all
+//!    workers; here it hands out icons.
+//! 3. `init_local_state` runs once per worker; here it accumulates the names
+//!    a worker has seen.
+//! 4. `exec` runs repeatedly, possibly on several workers, until a call leaves
+//!    the output chunk empty.
+//!
+//! This is the template's original example; see [`crate::sequence`] for a
+//! function that emits more than one chunk.
+
+use std::sync::{
+    Mutex,
+    atomic::{AtomicU64, Ordering},
+};
+
+use duckdb_neo::{
+    DuckDBType, FromValue, Result,
+    bind_arguments::BindArguments,
+    connection::Context,
+    data_chunk::DataChunk,
+    error::Error,
+    extension::Extension,
+    signature::{FunctionDocumentationBuilder, FunctionParameter, SignatureBuilder},
+    table_function::{
+        BindFunctionHandle, ExecColumnInfo, InitColumnData, TableFunctionBuilder,
+        TableFunctionCallbacks,
+    },
+    types::List,
+};
+
+use crate::{CATEGORY, options::QUACK_EMOJIS};
+
+/// The registered implementation; `cap` limits how many of the configured icons rotate.
+struct EchoTable {
+    cap: usize,
+}
+
+/// Computed once per call site by `bind`.
+struct EchoBindData {
+    /// A `Mutex` because bind data is shared and `exec` pops from it.
+    names: Mutex<Vec<Option<String>>>,
+    icons: Vec<String>,
+}
+
+impl TableFunctionCallbacks for EchoTable {
+    /// Shared by every worker of one scan; here a counter that picks the next icon.
+    type GlobalState = AtomicU64;
+    /// Owned by one worker; here the names it has emitted so far, joined with `|`.
+    type LocalState = String;
+    /// Whatever `bind` computes once per call site; here the remaining names and the icons.
+    type BindData = EchoBindData;
+
+    /// Runs once per scan, after `bind`. Typical work:
+    /// - Create state every worker shares, such as a cursor or a counter.
+    /// - The worker count comes from `max_threads`, which defaults to one.
+    fn init_global_state(
+        &self,
+        _context: &Context,
+        _bind_data: &Self::BindData,
+        _column_data: InitColumnData<'_>,
+    ) -> Result<Option<Self::GlobalState>> {
+        Ok(Some(0.into()))
+    }
+
+    /// Runs once per worker, after `init_global_state`. Typical work:
+    /// - Create per-worker scratch space, such as buffers or a file handle.
+    /// - Return `None` when the worker needs nothing of its own.
+    fn init_local_state(
+        &self,
+        _context: &Context,
+        _bind_data: &Self::BindData,
+        _global_state: Option<&Self::GlobalState>,
+        _column_data: InitColumnData<'_>,
+    ) -> Result<Option<Self::LocalState>> {
+        Ok(Some("".into()))
+    }
+
+    /// Runs once when the query is bound. Typical work:
+    /// - Declare the result columns with `add_result_column`, in the order `exec` fills them.
+    /// - Validate the argument types and constant values, returning an error for what
+    ///   the function cannot handle.
+    /// - Return as `BindData` whatever the later callbacks need.
+    fn bind(
+        &self,
+        context: &Context,
+        arguments: BindArguments,
+        bind_handle: BindFunctionHandle<'_>,
+    ) -> Result<Self::BindData> {
+        bind_handle.add_result_column("name", &String::logical_type(context)?)?;
+        bind_handle.add_result_column("icon", &String::logical_type(context)?)?;
+        bind_handle.add_result_column("concat_name", &String::logical_type(context)?)?;
+        bind_handle.add_result_column("total_index", &u64::logical_type(context)?)?;
+
+        // Read at bind time so each query uses the setting that was active when it was planned.
+        let (emojis, _) = context.config()?.get_value(QUACK_EMOJIS)?;
+        let icons: Vec<String> = <List<String>>::from_value(&emojis)?
+            .ok_or_else(|| Error::api_error("The emojis must not be NULL"))?
+            .0
+            .into_iter()
+            .flatten()
+            .collect();
+        if icons.is_empty() {
+            return Err(Error::api_error("The emojis must not be empty"));
+        }
+
+        let items = arguments
+            .arg(0)?
+            .resolved_value::<List<String>>()?
+            .flatten()
+            .unwrap_or_default()
+            .0;
+
+        Ok(EchoBindData {
+            names: Mutex::new(items),
+            icons,
+        })
+    }
+
+    /// Runs until the output chunk stays empty. Typical work:
+    /// - Take the output vectors, narrow each to its declared type, and size them.
+    /// - Fill rows from the bind data and the states, `set_null` for NULL.
+    /// - Leave the chunk empty (or `set_size(0)`) once there is nothing left.
+    ///
+    /// Here one call emits every remaining name, so the second call ends the scan.
+    fn exec(
+        &self,
+        _context: &Context,
+        bind_data: &Self::BindData,
+        local_state: Option<&mut Self::LocalState>,
+        global_state: Option<&Self::GlobalState>,
+        output: &mut DataChunk,
+        _column_info: ExecColumnInfo<'_>,
+    ) -> Result<()> {
+        let [name, icon, concat_name, total_index] = output.get_vector_array_mut([0, 1, 2, 3])?;
+        let mut name = name.cast::<String>()?;
+        let mut icon = icon.cast::<String>()?;
+        let mut concat_name = concat_name.cast::<String>()?;
+        let mut total_index = total_index.cast::<u64>()?;
+
+        let bind_data_len = bind_data.names.lock().unwrap().len();
+
+        name.set_size(bind_data_len)?;
+        icon.set_size(bind_data_len)?;
+        concat_name.set_size(bind_data_len)?;
+        total_index.set_size(bind_data_len)?;
+
+        let mut name_writer = name.writer()?;
+        let mut icon_writer = icon.writer()?;
+        let mut concat_name_writer = concat_name.writer()?;
+        let mut total_index_writer = total_index.writer()?;
+
+        let mut index = 0;
+        let local_concat = local_state.unwrap();
+
+        let icon_count = bind_data.icons.len().min(self.cap) as u64;
+
+        while let Some(name) = bind_data.names.lock().unwrap().pop() {
+            match name {
+                None => {
+                    name_writer.set_null(index)?;
+                    icon_writer.set_null(index)?;
+                    concat_name_writer.set_null(index)?;
+                    total_index_writer.set_null(index)?;
+                }
+                Some(name) => {
+                    let icon_index = global_state.unwrap().fetch_add(1, Ordering::AcqRel);
+
+                    let icon = &bind_data.icons[(icon_index % icon_count) as usize];
+
+                    local_concat.push_str(&name);
+                    local_concat.push('|');
+
+                    name_writer.set(index, &name)?;
+                    icon_writer.set(index, icon)?;
+                    concat_name_writer.set(index, local_concat)?;
+                    total_index_writer.set(index, &(index as u64))?;
+                }
+            }
+            index += 1;
+        }
+
+        Ok(())
+    }
+}
+
+pub fn register(extension: &Extension) -> Result<()> {
+    TableFunctionBuilder::new(
+        "rusty_quack",
+        SignatureBuilder::new()
+            .param(FunctionParameter::new::<List<String>>("names"))
+            .documentation(
+                FunctionDocumentationBuilder::new()
+                    .description("One row per name, last name first, with a rotating icon and the names seen so far.")
+                    .add_example("Four names", "SELECT * FROM rusty_quack(['Jane', 'Doe', 'Loves', 'Ducks'])")
+                    .add_category(CATEGORY),
+            ),
+        EchoTable { cap: 3 },
+    )
+    .register(extension)
+}
