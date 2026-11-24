@@ -12,6 +12,8 @@ class DatabaseInstance;
 unique_ptr<ParsedExpression> QwWatchlistPredicate(const SelectNode &graph, const TableAlias &graph_alias,
                                                   const JoinRef &join, idx_t max_keys);
 
+const ParsedExpression *QwTableWatchKey(const SelectNode &graph, const TableAlias &alias, const JoinRef &join);
+void QwRegisterRuntimeWatchlist(DatabaseInstance &db);
 void QwRegisterWatchlistGuard(DatabaseInstance &db);
 unique_ptr<ParsedExpression> QwGuardWatchlistQuery(const string &base, const string &candidate);
 

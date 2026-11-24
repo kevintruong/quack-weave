@@ -189,7 +189,7 @@ def main():
         run_cases(unittest, scratch, variables, [test_dir / name for name in (
             "reads.test", "gql_compatibility.test", "usage_relations.test", "usage_binding.test",
             "usage_boundary.test", "air_routes_fixture.test", "graph_metadata.test",
-            "graph_entry.test", "graph_table.test", "graph_aggregate_pushdown.test", "hybrid_public.test",
+            "graph_entry.test", "graph_table.test", "graph_aggregate_pushdown.test", "table_watchlist.test", "hybrid_public.test",
             "graph_parameters.test", "graph_values.test",
             "bind.test", "admission.test", "scan.test", "host_access.test", "limits.test",
             "timeout.test_slow", "artifact.test",

@@ -1,0 +1,148 @@
+# name: test/stabilization/sqllogic/table_watchlist.test
+# description: Runtime DuckDB watchlist keys in a Ladybug graph scan
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_AIR_ROUTES UNSET_QW_AIR_ROUTES
+
+# case: hybrid.table_watchlist DuckDB retains transaction visibility and bag semantics.
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"air_routes","path":"{QW_AIR_ROUTES}"}';
+
+statement ok
+CREATE TEMP TABLE watch(id BIGINT);
+
+statement ok
+INSERT INTO watch VALUES (101),(104),(101),(NULL),(-1);
+
+query II
+SELECT g.id, count(*) FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS id)) AS g JOIN watch AS w ON w.id=g.id GROUP BY g.id ORDER BY g.id;
+----
+101	2
+104	1
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT g.id FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS id)) AS g JOIN watch AS w ON w.id=g.id;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 2,[^{}]*"name": "QW_GRAPH_QUERY_WATCH".*
+
+statement ok
+PREPARE read_watch AS SELECT count(*) FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS id)) AS g JOIN watch AS w ON g.id=w.id;
+
+statement ok
+BEGIN;
+
+statement ok
+DELETE FROM watch;
+
+query I
+EXECUTE read_watch;
+----
+0
+
+statement ok
+INSERT INTO watch VALUES (NULL),(NULL);
+
+query I
+EXECUTE read_watch;
+----
+0
+
+statement ok
+INSERT INTO watch VALUES (102),(104);
+
+query I
+EXECUTE read_watch;
+----
+2
+
+statement ok
+ROLLBACK;
+
+query I
+EXECUTE read_watch;
+----
+3
+
+statement ok
+INSERT INTO watch SELECT * FROM range(-200,-100);
+
+query I
+EXECUTE read_watch;
+----
+3
+
+query I
+WITH watch AS (SELECT 102::BIGINT AS id) SELECT g.id FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS id)) AS g JOIN watch AS w ON g.id=w.id;
+----
+102
+
+# A large table keeps its entire input domain. The graph contains five edges.
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT g.id FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS id)) AS g JOIN watch AS w ON g.id=w.id;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 5,[^{}]*"name": "QW_GRAPH_QUERY_WATCH".*
+
+query I
+SELECT count(*) FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS id)) AS g LEFT JOIN watch AS w ON w.id=g.id;
+----
+6
+
+# Mismatched internal hints cannot filter a different projected property.
+query II
+SELECT qw_col0, count(*) FROM system.main.qw_graph_query_watch('air_routes','cypher',
+'MATCH (o:airport)-[e:route]->(d:airport) RETURN e.rid AS qw_col0','route','dist','e','qw_col0') g
+JOIN watch w ON g.qw_col0=w.id GROUP BY qw_col0 ORDER BY qw_col0;
+----
+101	2
+104	1
+
+statement ok
+CREATE TABLE shared_watch(id BIGINT);
+
+statement ok
+INSERT INTO shared_watch VALUES (101);
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT g.id FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS id)) g JOIN shared_watch w ON g.id=w.id;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 1,[^{}]*"name": "QW_GRAPH_QUERY_WATCH".*
+
+statement ok
+PREPARE shared_count AS SELECT count(*) FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS id)) g JOIN shared_watch w ON g.id=w.id;
+
+statement ok
+BEGIN;
+
+query I
+EXECUTE shared_count;
+----
+1
+
+statement ok writer
+INSERT INTO shared_watch VALUES (104);
+
+query I
+EXECUTE shared_count;
+----
+1
+
+statement ok
+INSERT INTO shared_watch VALUES (101);
+
+query I
+EXECUTE shared_count;
+----
+2
+
+statement ok
+ROLLBACK;
+
+query I
+EXECUTE shared_count;
+----
+2

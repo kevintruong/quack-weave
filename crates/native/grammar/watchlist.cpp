@@ -69,6 +69,27 @@ const Literal *IntegerOrNull(const ParsedExpression &expr, bool &negated) {
 
 } // namespace
 
+const ParsedExpression *QwTableWatchKey(const SelectNode &graph, const TableAlias &alias, const JoinRef &join) {
+	if (join.type != JoinType::INNER || join.ref_type != JoinRefType::REGULAR || !join.condition ||
+	    join.right->type != TableReferenceType::BASE_TABLE || graph.where_clause || alias.name.empty() ||
+	    join.condition->GetExpressionType() != ExpressionType::COMPARE_EQUAL ||
+	    join.condition->GetExpressionClass() != ExpressionClass::COMPARISON) {
+		return nullptr;
+	}
+	const auto &on = join.condition->Cast<ComparisonExpression>();
+	if (on.Left().GetExpressionClass() != ExpressionClass::COLUMN_REF ||
+	    on.Right().GetExpressionClass() != ExpressionClass::COLUMN_REF) {
+		return nullptr;
+	}
+	for (const auto *expr : {&on.Left(), &on.Right()}) {
+		const auto &names = expr->Cast<ColumnRefExpression>().ColumnNames();
+		if (names.size() == 2 && names[0] == alias.name) {
+			return DirectProperty(graph, alias, names[1]);
+		}
+	}
+	return nullptr;
+}
+
 unique_ptr<ParsedExpression> QwWatchlistPredicate(const SelectNode &graph, const TableAlias &graph_alias,
                                                   const JoinRef &join, idx_t max_keys) {
 	if (join.type != JoinType::INNER || join.ref_type != JoinRefType::REGULAR || !join.condition ||
@@ -177,6 +198,7 @@ unique_ptr<Expression> BoundWatchlistPayload(FunctionBindExpressionInput &input)
 } // namespace
 
 void QwRegisterWatchlistGuard(DatabaseInstance &db) {
+	QwRegisterRuntimeWatchlist(db);
 	ScalarFunction guard("qw_watchlist_payload", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::ANY},
 	                     LogicalType::VARCHAR, nullptr, BindWatchlistPayload);
 	guard.SetBindExpressionCallback(BoundWatchlistPayload);

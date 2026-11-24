@@ -147,7 +147,9 @@ JOIN (VALUES (101::BIGINT), (104::BIGINT), (101::BIGINT)) AS w(id)
 ORDER BY g.route_id;
 ```
 
-This optimization recognizes a graph on the left of an inner equality join to a single-column literal `VALUES` list of up to 64 rows. Use qualified keys and project graph properties directly. A graph-local predicate takes precedence. Computed graph projections, table-backed watchlists, and graph-preserving outer joins keep their ordinary DuckDB plans. The [SF1 benchmark](benchmarks/lsqb_sf1/watchlist.py) compares result groups with direct Ladybug and checks the executed graph scan's row count.
+For a literal watchlist, use a graph on the left of an inner equality join, qualified keys, direct graph property projections and at most 64 `VALUES` rows. A graph-local predicate takes precedence. [SF1 literal watchlist benchmark](benchmarks/lsqb_sf1/watchlist.py)
+
+For a DuckDB table, use the same join, for example `JOIN watch AS w ON w.id = g.route_id`. When DuckDB builds a hash table on the watchlist and supplies a supported exact key filter, QuackWeave sends up to 64 `BIGINT` keys to Ladybug. DuckDB still performs the join, including duplicate matches, within the executing transaction. When the optimizer cannot supply an eligible filter, DuckDB joins the ordinary graph scan. `EXPLAIN (ANALYZE, FORMAT JSON)` shows how many rows the graph scan returned on that execution. [Table watchlist SQLLogic examples](test/stabilization/sqllogic/table_watchlist.test)
 
 To reuse an existing GQL or Cypher query verbatim, execute it on a graph-enabled connection and ingest its Arrow result into the SQL consumer. This example uses two ADBC cursors. A limit inside `graph_statement` applies before the directory join.
 

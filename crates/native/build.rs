@@ -105,12 +105,18 @@ fn build_graph_grammar(manifest: &Path, out: &Path) {
         "cargo:rerun-if-changed={}",
         sources.join("graph_table.hpp").display()
     );
+    let mut objects = Vec::new();
     println!(
         "cargo:rerun-if-changed={}",
         sources.join("aggregate_pushdown.hpp").display()
     );
-    let mut objects = Vec::new();
-    for unit in ["standalone", "graph_table", "watchlist", "aggregate_pushdown"] {
+    for unit in [
+        "standalone",
+        "graph_table",
+        "watchlist",
+        "runtime_watchlist",
+        "aggregate_pushdown",
+    ] {
         let grammar = sources.join(format!("{unit}.cpp"));
         let object = out.join(format!("{unit}.o"));
         println!("cargo:rerun-if-changed={}", grammar.display());

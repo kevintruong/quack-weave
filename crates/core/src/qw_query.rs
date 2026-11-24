@@ -37,6 +37,8 @@ mod gql;
 mod graph_value;
 pub use graph_value::{GraphColumn, GraphValue};
 mod parameters;
+mod runtime_watch;
+use runtime_watch::{MAX_KEYS, RuntimeWatch};
 
 pub use parameters::GraphParameter;
 
@@ -66,6 +68,11 @@ pub trait ReadBackend: Send + Sync {
 
     fn native_gql(&self, query: String, parser: Option<GqlParser>) -> Result<String> {
         compile_gql_query(&query, parser)
+    }
+
+    /// Optional exact integer key filter issued by DuckDB's completed hash join.
+    fn runtime_watch_keys(&self, _column: usize) -> Vec<i64> {
+        Vec::new()
     }
 
     /// Publish the active registration after its metadata is captured. Readers that
@@ -510,6 +517,7 @@ pub fn validate_graph_alias(context: &Context, alias: &str) -> Result<()> {
 }
 
 struct BoundRead {
+    watch: Option<RuntimeWatch>,
     params: Vec<(String, GraphParameter)>,
     config: ConfigSnapshot,
     cypher: String,
@@ -594,6 +602,7 @@ enum GraphQueryKind {
     InferredSchema,
     Parameterized,
     Filtered,
+    RuntimeWatch,
 }
 
 struct GraphQuery<B> {
@@ -604,7 +613,7 @@ struct GraphQuery<B> {
 
 impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
     type BindData = BoundRead;
-    type LocalState = Scan;
+    type LocalState = (Scan, Option<String>);
     type GlobalState = ();
 
     fn bind(
@@ -651,7 +660,11 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
                 "QW_CONFIG: Unknown Ladybug graph alias",
             ));
         }
-        if self.kind == GraphQueryKind::Filtered {
+        let mut watch = None;
+        if matches!(
+            self.kind,
+            GraphQueryKind::Filtered | GraphQueryKind::RuntimeWatch
+        ) {
             let label = required(3)?;
             let property = required(4)?;
             if config
@@ -664,7 +677,18 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
                         .any(|(name, ty)| name == &property && ty == "INT64")
                 })
             {
-                query = required(5)?;
+                if self.kind == GraphQueryKind::RuntimeWatch {
+                    let var = required(5)?;
+                    let column = required(6)?;
+                    watch = RuntimeWatch::from_scan(&query, &label, &property, &var, &column);
+                    if watch.is_some() {
+                        // The default estimate is one row. Give bounded watchlists an
+                        // opportunity to build the hash table when graph size is unknown.
+                        handle.set_cardinality(MAX_KEYS + 1, false)?;
+                    }
+                } else {
+                    query = required(5)?;
+                }
             }
         }
         let cypher = match language {
@@ -704,6 +728,7 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
             Vec::new()
         };
         Ok(BoundRead {
+            watch,
             params,
             config,
             cypher,
@@ -714,11 +739,15 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
     fn init_local_state(
         &self,
         _: &Context,
-        _: &BoundRead,
+        bound: &BoundRead,
         _: Option<&()>,
         _: InitColumnData<'_>,
-    ) -> Result<Option<Scan>> {
-        Ok(Some(Scan::Dormant))
+    ) -> Result<Option<Self::LocalState>> {
+        let filtered = bound
+            .watch
+            .as_ref()
+            .and_then(|watch| watch.query(&self.backend.runtime_watch_keys(watch.column)));
+        Ok(Some((Scan::Dormant, filtered)))
     }
 
     fn max_threads(
@@ -735,12 +764,13 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
         &self,
         context: &Context,
         bound: &BoundRead,
-        scan: Option<&mut Scan>,
+        scan: Option<&mut Self::LocalState>,
         _: Option<&()>,
         output: &mut DataChunk<'_>,
         _: ExecColumnInfo<'_>,
     ) -> Result<()> {
-        let scan = scan.ok_or_else(|| Error::internal("qw_query: missing scan state"))?;
+        let (scan, filtered) =
+            scan.ok_or_else(|| Error::internal("qw_query: missing scan state"))?;
         let capacity = output.capacity()?;
         let Some(batch) = scan.next(
             &bound.schema,
@@ -771,7 +801,10 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
                     .map_err(backend_error)?;
                 bound.config.generation.validate(Path::new(&path))?;
                 session
-                    .execute_with_params(&bound.cypher, &bound.params)
+                    .execute_with_params(
+                        filtered.as_deref().unwrap_or(&bound.cypher),
+                        &bound.params,
+                    )
                     .map_err(backend_error)
             },
         )?
@@ -847,6 +880,7 @@ fn register_query(
         ("qw_graph_query", GraphQueryKind::InferredSchema),
         ("qw_graph_query_params", GraphQueryKind::Parameterized),
         ("qw_graph_query_filtered", GraphQueryKind::Filtered),
+        ("qw_graph_query_watch", GraphQueryKind::RuntimeWatch),
     ] {
         let mut signature = SignatureBuilder::new()
             .param(FunctionParameter::new::<String>("alias"))
@@ -854,6 +888,11 @@ fn register_query(
             .param(FunctionParameter::new::<String>("query"));
         if kind == GraphQueryKind::Filtered {
             for arg in ["label", "property", "candidate"] {
+                signature = signature.param(FunctionParameter::new::<String>(arg));
+            }
+        }
+        if kind == GraphQueryKind::RuntimeWatch {
+            for arg in ["label", "property", "variable", "column"] {
                 signature = signature.param(FunctionParameter::new::<String>(arg));
             }
         }
