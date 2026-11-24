@@ -29,6 +29,10 @@ use duckdb_neo::{
 };
 use serde::{Deserialize, Serialize};
 
+mod gql;
+
+pub use gql::{GqlParser, compile_gql_query};
+
 const CONFIG: &str = "qw_ladybug_config";
 static CONFIG_GENERATION: AtomicU64 = AtomicU64::new(0);
 
@@ -411,7 +415,36 @@ impl Scan {
     }
 }
 
-struct GraphQuery<B>(B);
+enum GraphLanguage {
+    Cypher,
+    Gql,
+}
+
+impl GraphLanguage {
+    fn parse(dialect: &str) -> Result<Self> {
+        if dialect.eq_ignore_ascii_case("cypher") {
+            Ok(Self::Cypher)
+        } else if dialect.eq_ignore_ascii_case("gql") {
+            Ok(Self::Gql)
+        } else {
+            Err(Error::invalid_input(
+                "QW_ARGUMENT: Use the cypher or gql dialect",
+            ))
+        }
+    }
+
+    fn compile(self, query: String, parser: Option<GqlParser>) -> Result<String> {
+        match self {
+            Self::Cypher => Ok(query),
+            Self::Gql => compile_gql_query(&query, parser),
+        }
+    }
+}
+
+struct GraphQuery<B> {
+    backend: B,
+    gql_parser: Option<GqlParser>,
+}
 
 impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
     type BindData = BoundRead;
@@ -428,24 +461,26 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
             args.arg(index)?.resolved_value::<String>()?.flatten()
                 .filter(|text| !text.trim().is_empty() && !text.contains('\0'))
                 .ok_or_else(|| Error::invalid_input(
-                    "QW_ARGUMENT: qw_query requires constant alias, cypher dialect, query and schema values",
+                    "QW_ARGUMENT: qw_query requires constant alias, dialect, query and schema values",
                 ))
         };
         let alias = required(0)?;
         let dialect = required(1)?;
-        let cypher = required(2)?;
+        let query = required(2)?;
         let schema = parse_schema(&required(3)?)?;
-        if !is_identifier(&alias) || !dialect.eq_ignore_ascii_case("cypher") {
+        if !is_identifier(&alias) {
             return Err(Error::invalid_input(
-                "QW_ARGUMENT: Use a configured graph alias and the cypher dialect",
+                "QW_ARGUMENT: Use a configured graph alias",
             ));
         }
+        let language = GraphLanguage::parse(&dialect)?;
         let config = current_config(context)?;
         if !config.config.alias.eq_ignore_ascii_case(&alias) {
             return Err(Error::invalid_input(
                 "QW_CONFIG: Unknown Ladybug graph alias",
             ));
         }
+        let cypher = language.compile(query, self.gql_parser)?;
         for column in &schema {
             handle.add_result_column(&column.name, &column.data_type.logical_type(context)?)?;
         }
@@ -504,7 +539,7 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
                         "QW_ACCESS: Configured Ladybug path changed after binding",
                     ));
                 }
-                self.0
+                self.backend
                     .open(Path::new(&path), bound.config.config.timeout_ms)
                     .and_then(|session| session.execute(&bound.cypher))
                     .map_err(backend_error)
@@ -523,8 +558,25 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
     }
 }
 
-/// Register the native graph query and its instance configuration.
+/// Register the native graph query and its instance configuration for Cypher.
 pub fn register(extension: &Extension, backend: impl ReadBackend + 'static) -> Result<()> {
+    register_query(extension, backend, None)
+}
+
+/// Register the native graph query with a GQL parser in addition to Cypher.
+pub fn register_with_gql(
+    extension: &Extension,
+    backend: impl ReadBackend + 'static,
+    parser: GqlParser,
+) -> Result<()> {
+    register_query(extension, backend, Some(parser))
+}
+
+fn register_query(
+    extension: &Extension,
+    backend: impl ReadBackend + 'static,
+    gql_parser: Option<GqlParser>,
+) -> Result<()> {
     CustomOptionBuilder::new(
         CONFIG,
         "JSON configuration for the embedded read-only Ladybug graph",
@@ -535,6 +587,11 @@ pub fn register(extension: &Extension, backend: impl ReadBackend + 'static) -> R
     .default_scope(SettingScope::Global)
     .register(extension)?;
 
+    let description = if gql_parser.is_some() {
+        "Read typed rows from an embedded Ladybug graph using read-only Cypher or a supported GQL subset."
+    } else {
+        "Read typed rows from one read-only Cypher query against an embedded Ladybug graph."
+    };
     TableFunctionBuilder::new(
         "qw_query",
         SignatureBuilder::new()
@@ -542,10 +599,15 @@ pub fn register(extension: &Extension, backend: impl ReadBackend + 'static) -> R
             .param(FunctionParameter::new::<String>("dialect"))
             .param(FunctionParameter::new::<String>("query"))
             .param(FunctionParameter::new::<String>("schema").kind(FunctionParameterKind::Named))
-            .documentation(FunctionDocumentationBuilder::new()
-                .description("Read typed rows from one read-only Cypher query against an embedded Ladybug graph.")
-                .add_category("quack_weave")),
-        GraphQuery(backend),
+            .documentation(
+                FunctionDocumentationBuilder::new()
+                    .description(description)
+                    .add_category("quack_weave"),
+            ),
+        GraphQuery {
+            backend,
+            gql_parser,
+        },
     )
     .register(extension)
 }
