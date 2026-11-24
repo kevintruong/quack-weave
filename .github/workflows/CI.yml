@@ -94,10 +94,8 @@ jobs:
 
       - name: Build pinned DuckDB native test runner
         run: |
-          source="$RUNNER_TEMP/duckdb-v2.0.1-source"
+          source="$GITHUB_WORKSPACE/build/deps/duckdb-8d78114e90a53823803660bf821f6073ac87da8c"
           build="$RUNNER_TEMP/duckdb-v2.0.1-build"
-          git -c advice.detachedHead=false clone --depth 1 --branch v2.0.1 \
-            https://github.com/duckdb/duckdb.git "$source"
           test "$(git -C "$source" rev-parse HEAD)" = 8d78114e90a53823803660bf821f6073ac87da8c
           env -u MACOSX_DEPLOYMENT_TARGET cmake -S "$source" -B "$build" \
             -DCMAKE_BUILD_TYPE=Release -DDUCKDB_EXPLICIT_VERSION=v2.0.1 \
@@ -112,6 +110,12 @@ jobs:
 
       - name: Verify package profiles and native observations
         run: env -u MACOSX_DEPLOYMENT_TARGET make mvp2-stabilization-test
+
+      - name: Verify public graph results through Apache Arrow ADBC
+        run: |
+          python3 -m venv "$RUNNER_TEMP/graph-client"
+          "$RUNNER_TEMP/graph-client/bin/pip" install --only-binary=:all: adbc-driver-manager==1.9.0 pyarrow==23.0.1
+          env -u MACOSX_DEPLOYMENT_TARGET make public-client-test PYTHON_BIN="$RUNNER_TEMP/graph-client/bin/python"
 
       - name: Save stabilization evidence
         if: always()

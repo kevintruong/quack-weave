@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := mvp1
 
 .PHONY: clean clean_all mvp1 mvp1-release mvp1-deps mvp1-test mvp2-deps
-.PHONY: mvp2 mvp2-release mvp2-test mvp2-stabilization-test
+.PHONY: mvp2 mvp2-release mvp2-test mvp2-stabilization-test public-client-test
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -110,6 +110,9 @@ mvp2-release:
 mvp2-test: mvp2 mvp2-release
 	$(call check_mvp2,$(MVP2_DEBUG_ARTIFACT))
 	$(call check_mvp2,$(MVP2_RELEASE_ARTIFACT))
+
+public-client-test: mvp2-release
+	$(PYTHON_BIN) -B test/public_client/run.py --duckdb-unittest '$(DUCKDB_UNITTEST)' --duckdb-library '$(DUCKDB_LIB)' --lbug '$(LBUG)' --extension '$(MVP2_RELEASE_ARTIFACT)'
 
 stabilization_slt = $(PYTHON_BIN) -B test/stabilization/run_sqllogictest.py --duckdb-unittest '$(DUCKDB_UNITTEST)' --lbug '$(LBUG)'
 stabilization_observer = $(PYTHON_BIN) -B test/stabilization/run_observer_audit.py --duckdb-unittest '$(DUCKDB_UNITTEST)' --duckdb-library '$(DUCKDB_LIB)' --lbug '$(LBUG)' --extension '$(MVP2_RELEASE_ARTIFACT)' --report-dir '$(STABILIZATION_REPORT_DIR)/observer'

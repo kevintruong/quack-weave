@@ -65,7 +65,7 @@ FROM qw_query(
 );
 ```
 
-The GQL subset supports one fixed, directed `MATCH` with named, labeled nodes and a relationship type. Use unquoted ASCII identifiers and omit the trailing semicolon inside the GQL payload. Return aliased scalar properties and optionally filter with one property-to-literal comparison using `WHERE`, `FILTER`, or `FILTER WHERE`. The literals are Boolean, signed integers, or strings.
+The explicit-schema GQL function supports one fixed, directed `MATCH` with named, labeled nodes and a relationship type. Use unquoted ASCII identifiers and omit the trailing semicolon inside the GQL payload. Return aliased scalar properties and optionally filter with one property-to-literal comparison using `WHERE`, `FILTER`, or `FILTER WHERE`. The literals are Boolean, signed integers, or strings.
 
 The `schema` option and Ladybug timeout and batch limit settings apply to both dialects. Syntax errors use `QW_GQL_PARSE`, and valid syntax outside this subset uses `QW_GQL_SUBSET`. A Cypher-only MVP1 build reports `QW_GQL_UNAVAILABLE` for a GQL call.
 
@@ -78,6 +78,8 @@ make mvp2-test DUCKDB=/path/to/duckdb-v2.0.1 LBUG=/path/to/lbug-v0.22.3
 The default build remains MVP1 and its Cypher-only artifact stays under `build/debug` or `build/release`.
 
 ### Standalone graph queries
+
+The usage notebook runs the same air-routes query in GQL and Cypher and shows where to place a SQL join and a row limit. [Usage patterns and executable example](quack-weave-hybrid-usage-spec.ipynb)
 
 Register an existing Ladybug file once per DuckDB instance, then select the graph on each connection that will issue standalone queries. Registration captures the schema used to bind projected properties, including empty results.
 
@@ -92,6 +94,19 @@ LIMIT 10;
 ```
 
 The default standalone language is GQL. Use `SET SESSION qw_graph_dialect = 'cypher'` to select the Cypher read path. The loading connection and newly opened connections have the graph grammar enabled. On a connection opened before another connection loaded QuackWeave, run DuckDB's `CALL add_grammar_extension('quack_weave')` before selecting the graph. Parallel edges can produce duplicate rows and nullable properties can return SQL `NULL`. Supported features are a subset of the GQL and openCypher languages. [Standalone SQLLogic tests](test/stabilization/sqllogic/graph_entry.test)
+
+Use named parameters for values in the graph predicate. DuckDB passes scalar values separately to Ladybug's prepared statement.
+
+```sql
+PREPARE flights AS
+MATCH (o:airport)-[e:route]->(d:airport)
+WHERE o.code = $origin
+RETURN d.code AS destination, e.dist AS miles;
+
+EXECUTE flights(origin := 'ATL');
+```
+
+Individual nodes and relationships retain Ladybug's identity and property fields as typed DuckDB structs. Relationship fields include `_ID`, `_SRC` and `_DST`. A supported named path projects ordered `_NODES` and `_RELS` lists. [Graph-value cases](test/stabilization/sqllogic/graph_values.test) · [Prepared graph statements](test/stabilization/sqllogic/graph_parameters.test)
 
 ### Hybrid SQL queries
 
@@ -112,6 +127,20 @@ FETCH FIRST 2 ROWS ONLY;
 ```
 
 The SQL/PGQ read surface supports named, labeled vertices and named, typed edges in fixed forward patterns. `COLUMNS` exposes the projected columns to SQL. Use a view or CTE to reuse them in subqueries, set operations or aggregates. DuckDB evaluates the outer join, ordering and row limit. [Hybrid fixture and SQLLogic examples](test/stabilization/sqllogic/hybrid_public.test)
+
+To reuse an existing GQL or Cypher query verbatim, execute it on a graph-enabled connection and ingest its Arrow result into the SQL consumer. This example uses two ADBC cursors. A limit inside `graph_statement` applies before the directory join.
+
+```python
+source.execute(graph_statement)
+sink.adbc_ingest("route_result", source.fetch_arrow_table())
+sink.execute("""
+    SELECT r.destination, a.city, r.miles
+    FROM route_result AS r
+    JOIN airport_directory AS a ON a.code = r.destination
+""")
+```
+
+The client acceptance target uses `adbc-driver-manager==1.9.0` and `pyarrow==23.0.1`. With those installed, run `make public-client-test` using the same `DUCKDB_LIB`, `DUCKDB_UNITTEST` and `LBUG` settings as the stabilization gate. [Executable ADBC example](test/public_client/run.py) · [SQLLogic result assertions](test/public_client/results.test)
 
 ### Explicit-schema bridge
 
@@ -135,7 +164,7 @@ WHERE document_id = $1;
 EXECUTE count_linked(101);
 ```
 
-Host macros can apply an argument to a SQL filter in the same way. DuckDB can also resolve placeholders for the complete graph payload and schema during `EXECUTE`. Those placeholders supply table-function arguments. Graph-language value parameters and row-correlated graph payloads are outside the current interface.
+Host macros can apply an argument to a SQL filter in the same way. For an explicit-schema call, DuckDB can bind the complete graph payload and schema as table-function arguments during `EXECUTE`. Use a standalone statement to bind a value within a graph predicate.
 
 Views store the SQL definition and resolve the current alias when DuckDB binds them. Repointing an alias can change the graph read by a view, including a prepared query through it. The generation check rejects an already-bound graph scan with `QW_CONFIG` if its configuration changes before the scan opens. A prepared call that binds its graph payload at `EXECUTE` can resolve the replacement graph. [Binding SQLLogicTests](test/stabilization/sqllogic/usage_binding.test)
 

@@ -1,0 +1,73 @@
+# name: test/public_client/results.test
+# description: Results exported by standalone graph statements and ingested via ADBC
+# group: [quack_weave]
+
+test-env QW_CLIENT_DB UNSET_QW_CLIENT_DB
+
+statement ok
+ATTACH '{QW_CLIENT_DB}' AS client (READ_ONLY);
+
+query TTI rowsort
+SELECT origin, destination, miles FROM client.gql_routes;
+----
+ATL	BOS	946
+ATL	BOS	946
+ATL	LAX	1946
+ATL	PDX	2172
+ATL	SEA	NULL
+
+query I
+SELECT count(*) FROM (
+    (TABLE client.gql_routes EXCEPT ALL TABLE client.cypher_routes)
+    UNION ALL
+    (TABLE client.cypher_routes EXCEPT ALL TABLE client.gql_routes)
+) AS differences;
+----
+0
+
+query TT
+SELECT column_name, data_type FROM information_schema.columns
+WHERE table_catalog = 'client' AND table_name = 'empty_routes' ORDER BY ordinal_position;
+----
+origin	VARCHAR
+destination	VARCHAR
+miles	BIGINT
+
+query I
+SELECT count(*) FROM client.empty_routes;
+----
+0
+
+query II
+SELECT (SELECT count(*) FROM client.bound_atl WHERE origin = 'ATL'),
+       (SELECT count(*) FROM client.bound_quoted);
+----
+5	0
+
+statement ok
+CREATE TEMP TABLE airport_directory(code VARCHAR PRIMARY KEY, city VARCHAR);
+
+statement ok
+INSERT INTO airport_directory VALUES ('BOS','Boston'), ('LAX','Los Angeles'), ('SEA','Seattle'), ('ORD','Chicago');
+
+query TTI rowsort
+SELECT r.destination, a.city, r.miles
+FROM client.gql_routes AS r JOIN airport_directory AS a ON a.code = r.destination;
+----
+BOS	Boston	946
+BOS	Boston	946
+LAX	Los Angeles	1946
+SEA	Seattle	NULL
+
+query III
+SELECT count(*), count(DISTINCT edge._ID), count(DISTINCT edge._DST)
+FROM client.graph_edges;
+----
+5	5	4
+
+query II
+SELECT count(*) FILTER (WHERE edge.rid IN (101, 102) AND edge.dist = 946),
+       count(*) FILTER (WHERE edge.rid = 105 AND edge.dist IS NULL)
+FROM client.graph_edges;
+----
+2	1
