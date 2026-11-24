@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := mvp1
 
 .PHONY: clean clean_all mvp1 mvp1-release mvp1-deps mvp1-test mvp2-deps
-.PHONY: mvp2 mvp2-release mvp2-test
+.PHONY: mvp2 mvp2-release mvp2-test mvp2-stabilization-test
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -56,6 +56,9 @@ MVP2_RELEASE_ARTIFACT := build/mvp2/release/extension/quack_weave/quack_weave.du
 PYTHON_BIN ?= python3
 DUCKDB ?= duckdb
 LBUG ?= lbug
+DUCKDB_UNITTEST ?= build/duckdb-v2.0.1/test/unittest
+DUCKDB_LIB ?= build/duckdb-v2.0.1/src/libduckdb.dylib
+STABILIZATION_REPORT_DIR ?= build/stabilization-reports
 
 mvp1-deps:
 	$(PYTHON_BIN) scripts/prepare_mvp1_deps.py
@@ -107,3 +110,18 @@ mvp2-release:
 mvp2-test: mvp2 mvp2-release
 	$(call check_mvp2,$(MVP2_DEBUG_ARTIFACT))
 	$(call check_mvp2,$(MVP2_RELEASE_ARTIFACT))
+
+stabilization_slt = $(PYTHON_BIN) -B test/stabilization/run_sqllogictest.py --duckdb-unittest '$(DUCKDB_UNITTEST)' --lbug '$(LBUG)'
+stabilization_observer = $(PYTHON_BIN) -B test/stabilization/run_observer_audit.py --duckdb-unittest '$(DUCKDB_UNITTEST)' --duckdb-library '$(DUCKDB_LIB)' --lbug '$(LBUG)' --extension '$(MVP2_RELEASE_ARTIFACT)' --report-dir '$(STABILIZATION_REPORT_DIR)/observer'
+
+define record_stabilization
+	$(2) > '$(STABILIZATION_REPORT_DIR)/$(1).log' 2>&1 || { qw_gate_exit=$$?; cat '$(STABILIZATION_REPORT_DIR)/$(1).log' >&2; exit $$qw_gate_exit; }
+	@cat '$(STABILIZATION_REPORT_DIR)/$(1).log'
+endef
+
+mvp2-stabilization-test: mvp2 mvp2-release mvp1
+	mkdir -p '$(STABILIZATION_REPORT_DIR)'
+	$(call record_stabilization,mvp2-debug,$(stabilization_slt) --extension '$(MVP2_DEBUG_ARTIFACT)')
+	$(call record_stabilization,mvp2-release,$(stabilization_slt) --extension '$(MVP2_RELEASE_ARTIFACT)')
+	$(call record_stabilization,cypher-only,$(stabilization_slt) --extension '$(MVP1_DEBUG_ARTIFACT)' --without-gql)
+	$(call record_stabilization,observer,$(stabilization_observer))

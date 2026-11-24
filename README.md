@@ -77,6 +77,20 @@ make mvp2-test DUCKDB=/path/to/duckdb-v2.0.1 LBUG=/path/to/lbug-v0.22.3
 
 The default build remains MVP1 and its Cypher-only artifact stays under `build/debug` or `build/release`.
 
+### Native stabilization
+
+The macOS arm64 CI gate runs the pinned native DuckDB SQLLogicTest runner against the MVP2 debug and release packages and the Cypher-only MVP1 package. It also runs the native observer audit against MVP2 release. The DuckDB CLI serves other test targets, while this gate requires the `unittest` executable and `libduckdb.dylib` from the same DuckDB `v2.0.1` build at commit `8d78114e90a53823803660bf821f6073ac87da8c`. When configuring that checkout with CMake, use `-DDUCKDB_EXPLICIT_VERSION=v2.0.1 -DBUILD_UNITTESTS=ON`.
+
+```sh
+make mvp2-deps
+make mvp2-stabilization-test \
+  DUCKDB_UNITTEST=/path/to/duckdb-build/test/unittest \
+  DUCKDB_LIB=/path/to/duckdb-build/src/libduckdb.dylib \
+  LBUG=/path/to/lbug-v0.22.3
+```
+
+The gate writes profile logs and raw observer evidence under `build/stabilization-reports/`. Set `STABILIZATION_REPORT_DIR` to choose a different destination.
+
 ## Rust extension template reference
 This is an template for Rust based extensions based on the V2 C API of DuckDB. This repository will become a stable basis for pure-Rust DuckDB extensions that can be submitted to the Community extensions repository. 
 
