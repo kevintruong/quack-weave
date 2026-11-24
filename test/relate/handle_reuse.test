@@ -1,0 +1,82 @@
+# name: test/relate/handle_reuse.test
+# description: Independent read sessions, reset, and replacement on the same frozen RelateDB bundle
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_RELATE UNSET_QW_RELATE
+
+test-env QW_LADYBUG UNSET_QW_LADYBUG
+
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"shared_routes","path":"{QW_RELATE}"}';
+
+query I con1
+FROM qw_query('shared_routes','cypher','MATCH (a:airport) RETURN count(*) AS n',schema := 'n BIGINT');
+----
+4
+
+query I con2
+FROM qw_query('shared_routes','cypher','MATCH (a:airport)-[:route]->(b:airport) RETURN count(*) AS n',schema := 'n BIGINT');
+----
+3
+
+concurrentforeach language cypher gql
+
+onlyif language=cypher
+query I
+FROM qw_query('shared_routes','cypher','MATCH (a:airport) RETURN count(*) AS n',schema := 'n BIGINT');
+----
+4
+
+onlyif language=gql
+query I
+SELECT count(*) FROM qw_query('shared_routes','gql',
+ 'MATCH (a:airport)-[:route]->(b:airport) RETURN b.code AS code',schema := 'code VARCHAR');
+----
+3
+
+endloop
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"taken","path":"{QW_LADYBUG}"}';
+
+statement error con2
+SET GLOBAL qw_relate_config = '{"alias":"taken","path":"{QW_RELATE}"}';
+----
+QW_CONFIG: Graph alias must be unique
+
+query I con1
+FROM qw_query('shared_routes','cypher','MATCH (a:airport) RETURN count(*) AS n',schema := 'n BIGINT');
+----
+4
+
+statement ok con2
+RESET GLOBAL qw_relate_config;
+
+statement error con1
+FROM qw_query('shared_routes','cypher','MATCH (a:airport) RETURN count(*) AS n',schema := 'n BIGINT');
+----
+QW_CONFIG
+
+statement ok con2
+SET GLOBAL qw_relate_config = '{"alias":"new_routes","path":"{QW_RELATE}","catalog":{"airport":{"code":"VARCHAR"}}}';
+
+query T con1
+FROM qw_query('new_routes','cypher','MATCH (a:airport) RETURN a.code AS code',schema := 'code VARCHAR') ORDER BY code;
+----
+AMS
+BOS
+OSL
+RIX
+
+statement ok
+SET enable_external_access = false;
+
+statement error con1
+FROM qw_query('new_routes','cypher','MATCH (a:airport) RETURN a.code AS code',schema := 'code VARCHAR');
+----
+QW_ACCESS

@@ -1,10 +1,11 @@
 //! Read-only scalar graph scans over a single Relate bundle.
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use relate::{Connection, Database, Value};
 use rusty_quack_core::qw_query::{
-    BackendError, Batch, BatchReader, ColumnData, ColumnSpec, GraphCatalog, GraphParameter,
-    ReadBackend, ReadSession, ScalarType,
+    BackendError, Batch, BatchReader, ColumnData, ColumnSpec, GraphCatalog, GraphGeneration,
+    GraphParameter, PreparedRegistration, ReadBackend, ReadSession, ScalarType,
 };
 
 mod admission;
@@ -16,28 +17,61 @@ use admission::admit;
 mod tests;
 
 #[derive(Default)]
-pub(crate) struct RelateBackend;
+pub(crate) struct RelateBackend {
+    registered: Mutex<Option<RegisteredDatabase>>,
+}
 
-fn connect(path: &Path) -> Result<Connection, BackendError> {
+struct RegisteredDatabase {
+    generation: u64,
+    path: PathBuf,
+    database: Database,
+}
+
+fn open_database(path: &Path) -> Result<Database, BackendError> {
     if !path.is_file() || path.extension().is_none_or(|ext| ext != "rl") {
         return Err(BackendError::Open);
     }
+    #[cfg(test)]
+    tests::READ_OPENS.set(tests::READ_OPENS.get() + 1);
     Database::open_read_only(path.to_str().ok_or(BackendError::Open)?)
-        .and_then(|database| database.connect())
         .map_err(|_| BackendError::Open)
 }
 
 impl ReadBackend for RelateBackend {
-    fn registration_catalog(
-        &self,
+    fn prepare_registration<'a>(
+        &'a self,
         path: &Path,
         declared: Option<&GraphCatalog>,
-    ) -> Result<Option<GraphCatalog>, BackendError> {
-        let mut connection = connect(path)?;
-        if declared.is_some() {
-            return Ok(None);
-        }
-        catalog::discover(&mut connection).map(Some)
+        generation: u64,
+    ) -> Result<PreparedRegistration<'a>, BackendError> {
+        let database = open_database(path)?;
+        let mut connection = database.connect().map_err(|_| BackendError::Open)?;
+        let catalog = if declared.is_none() {
+            Some(catalog::discover(&mut connection)?)
+        } else {
+            None
+        };
+        let registered = RegisteredDatabase {
+            generation,
+            path: path.into(),
+            database,
+        };
+        Ok(PreparedRegistration {
+            catalog,
+            activate: Box::new(move || {
+                *self
+                    .registered
+                    .lock()
+                    .unwrap_or_else(|err| err.into_inner()) = Some(registered);
+            }),
+        })
+    }
+
+    fn set_generation(&self, _: Option<u64>) {
+        self.registered
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .take();
     }
 
     fn projection(
@@ -70,13 +104,52 @@ impl ReadBackend for RelateBackend {
         timeout_ms: Option<u64>,
         schema: &[ColumnSpec],
     ) -> Result<Box<dyn ReadSession>, BackendError> {
+        self.session(path, timeout_ms, schema, None)
+    }
+
+    fn open_for_generation(
+        &self,
+        path: &Path,
+        timeout_ms: Option<u64>,
+        schema: &[ColumnSpec],
+        generation: &GraphGeneration,
+    ) -> Result<Box<dyn ReadSession>, BackendError> {
+        self.session(path, timeout_ms, schema, Some(generation.id()))
+    }
+}
+
+impl RelateBackend {
+    fn connection(&self, path: &Path, generation: Option<u64>) -> Result<Connection, BackendError> {
+        if let Some(id) = generation {
+            let active = self.registered.lock().map_err(|_| BackendError::Open)?;
+            if let Some(db) = active
+                .as_ref()
+                .filter(|db| db.generation == id && db.path == path)
+            {
+                // The connection retains the frozen store after the lock is released.
+                return db.database.connect().map_err(|_| BackendError::Open);
+            }
+        }
+        // A scan admitted just before SET/RESET must not replace the new generation.
+        open_database(path)?
+            .connect()
+            .map_err(|_| BackendError::Open)
+    }
+
+    fn session(
+        &self,
+        path: &Path,
+        timeout_ms: Option<u64>,
+        schema: &[ColumnSpec],
+        generation: Option<u64>,
+    ) -> Result<Box<dyn ReadSession>, BackendError> {
         if timeout_ms.is_some() {
             return Err(BackendError::Timeout);
         }
         for column in schema {
             slot_size(&column.data_type)?;
         }
-        let mut connection = connect(path)?;
+        let mut connection = self.connection(path, generation)?;
         let fallback_catalog = if schema.is_empty() {
             Some(catalog::discover(&mut connection)?)
         } else {

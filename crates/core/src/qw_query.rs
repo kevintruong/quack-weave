@@ -47,6 +47,13 @@ static CONFIG_GENERATION: AtomicU64 = AtomicU64::new(0);
 /// Label and property names with their graph logical types, captured at registration.
 pub type GraphCatalog = BTreeMap<String, Vec<(String, String)>>;
 
+/// Resources prepared for a registration are published only after every
+/// configuration, file identity and alias check succeeds.
+pub struct PreparedRegistration<'a> {
+    pub catalog: Option<GraphCatalog>,
+    pub activate: Box<dyn FnOnce() + 'a>,
+}
+
 /// A backend that exclusively opens read-only database handles.
 pub trait ReadBackend: Send + Sync {
     /// Read only catalog metadata while registering a graph generation.
@@ -61,6 +68,18 @@ pub trait ReadBackend: Send + Sync {
         _declared: Option<&GraphCatalog>,
     ) -> std::result::Result<Option<GraphCatalog>, BackendError> {
         Ok(self.catalog(path))
+    }
+
+    fn prepare_registration<'a>(
+        &'a self,
+        path: &Path,
+        declared: Option<&GraphCatalog>,
+        generation: u64,
+    ) -> std::result::Result<PreparedRegistration<'a>, BackendError> {
+        Ok(PreparedRegistration {
+            catalog: self.registration_catalog(path, declared)?,
+            activate: Box::new(move || self.set_generation(Some(generation))),
+        })
     }
 
     /// Resolve the projection using the saved metadata, without opening the graph.

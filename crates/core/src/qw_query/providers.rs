@@ -234,14 +234,14 @@ impl CustomOptionCallbacks for GraphConfig {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_add(1))
             .map_err(|_| Error::internal("QW_CONFIG: Configuration generation exhausted"))?;
         let registered = GraphGeneration::capture(generation, path)?;
-        let discovered = backend
-            .registration_catalog(path, declared.as_ref())
+        let prepared = backend
+            .prepare_registration(path, declared.as_ref(), generation)
             .map_err(backend_error)?;
         registered.validate(path)?;
         let snapshot = ConfigSnapshot {
             generation: registered,
             config,
-            catalog: declared.or(discovered),
+            catalog: declared.or(prepared.catalog),
         };
         let json = serde_json::to_string(&snapshot).map_err(|_| {
             Error::internal("QW_CONFIG: Could not store the validated graph configuration")
@@ -250,7 +250,7 @@ impl CustomOptionCallbacks for GraphConfig {
         if let Some(aliases) = &self.aliases {
             aliases.update(context, kind, Some(&snapshot))?;
         }
-        backend.set_generation(Some(generation));
+        (prepared.activate)();
         Ok(value)
     }
 }

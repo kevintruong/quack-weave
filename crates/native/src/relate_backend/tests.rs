@@ -1,5 +1,103 @@
 use super::*;
 
+thread_local! {
+    pub(super) static READ_OPENS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[test]
+fn registration_and_reads_share_one_open_per_generation() {
+    use rusty_quack_core::qw_query::GraphGeneration;
+    struct Fixture(std::path::PathBuf);
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let fixture =
+        Fixture(std::env::temp_dir().join(format!("qw-relate-reuse-{}", std::process::id())));
+    std::fs::create_dir(&fixture.0).unwrap();
+    let path = fixture.0.join("small.rl");
+    let writer = Database::open(path.to_str().unwrap()).unwrap();
+    writer
+        .connect()
+        .unwrap()
+        .execute("CREATE (:Item {id: 42})")
+        .unwrap();
+    writer.checkpoint().unwrap();
+    drop(writer);
+    let gen1 = GraphGeneration::capture(10, &path).unwrap();
+    let gen2 = GraphGeneration::capture(11, &path).unwrap();
+    let backend = RelateBackend::default();
+    let schema = [ColumnSpec {
+        name: "id".into(),
+        data_type: ScalarType::BigInt,
+    }];
+    READ_OPENS.set(0);
+    {
+        let prepared = backend
+            .prepare_registration(&path, None, gen1.id())
+            .unwrap();
+        assert!(prepared.catalog.is_some());
+        (prepared.activate)();
+    }
+    let first = backend
+        .open_for_generation(&path, None, &schema, &gen1)
+        .unwrap();
+    let second = backend
+        .open_for_generation(&path, None, &schema, &gen1)
+        .unwrap();
+    assert_eq!(
+        READ_OPENS.get(),
+        1,
+        "registration and two separate read sessions"
+    );
+    let other_path = path.with_file_name("missing.rl");
+    assert!(matches!(
+        backend.open_for_generation(&other_path, None, &schema, &gen1),
+        Err(BackendError::Open)
+    ));
+    {
+        let prepared = backend
+            .prepare_registration(&path, Some(&GraphCatalog::new()), gen2.id())
+            .unwrap();
+        assert!(prepared.catalog.is_none());
+        (prepared.activate)();
+    }
+    drop(
+        backend
+            .open_for_generation(&path, None, &schema, &gen2)
+            .unwrap(),
+    );
+    assert_eq!(READ_OPENS.get(), 2);
+    // A rejected registration drops its candidate without touching the live cache.
+    drop(backend.prepare_registration(&path, None, 12).unwrap());
+    drop(
+        backend
+            .open_for_generation(&path, None, &schema, &gen2)
+            .unwrap(),
+    );
+    assert_eq!(READ_OPENS.get(), 3);
+    // A delayed scan may open independently but cannot overwrite the current cache.
+    drop(
+        backend
+            .open_for_generation(&path, None, &schema, &gen1)
+            .unwrap(),
+    );
+    drop(
+        backend
+            .open_for_generation(&path, None, &schema, &gen2)
+            .unwrap(),
+    );
+    assert_eq!(READ_OPENS.get(), 4);
+    backend.set_generation(None);
+    drop(backend);
+    for session in [first, second] {
+        let mut reader = session.execute("MATCH (n:Item) RETURN n.id AS id").unwrap();
+        let batch = reader.next_batch(1, None).unwrap().unwrap();
+        assert!(matches!(&batch.columns[..], [ColumnData::BigInt(v)] if v == &[Some(42)]));
+    }
+}
+
 #[test]
 fn admits_only_graph_reads_including_nested_expressions() {
     assert!(
@@ -72,7 +170,7 @@ fn discovered_projection_uses_exact_keys_and_rejects_mixed_properties() {
         )
         .unwrap();
     let graph = catalog::discover(&mut connection).unwrap();
-    let backend = RelateBackend;
+    let backend = RelateBackend::default();
     let columns = backend
         .projection(
             &graph,
@@ -107,7 +205,7 @@ fn same_named_node_and_edge_types_have_independent_catalogs() {
         )
         .unwrap();
     let graph = catalog::discover(&mut connection).unwrap();
-    let backend = RelateBackend;
+    let backend = RelateBackend::default();
     let query = |items: &str| format!("MATCH (a:Route)-[r:Route]->(b:Route) RETURN {items}");
     let columns = backend
         .projection(
@@ -134,7 +232,7 @@ fn same_named_node_and_edge_types_have_independent_catalogs() {
 
 #[test]
 fn count_all_binds_a_bigint_even_for_an_empty_match() {
-    let cols = RelateBackend
+    let cols = RelateBackend::default()
         .projection(&GraphCatalog::new(), "MATCH (n) RETURN count(*) AS total")
         .unwrap();
     assert_eq!(
