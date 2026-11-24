@@ -1,0 +1,147 @@
+# name: test/stabilization/sqllogic/hybrid_public.test
+# description: Read-only airline routes composed through the public SQL/PGQ syntax
+# group: [quack_weave]
+
+require parquet
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_AIR_ROUTES UNSET_QW_AIR_ROUTES
+
+test-env QW_ROOT UNSET_QW_ROOT
+
+# case: hybrid.catalog Register Ladybug and create the named SQL view
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"air_routes","path":"{QW_AIR_ROUTES}"}';
+
+statement ok
+CREATE VIEW atl_routes AS SELECT g.* FROM GRAPH_TABLE (
+    air_routes MATCH (o:airport)-[e:route]->(d:airport)
+    WHERE o.code = 'ATL'
+    COLUMNS (e.rid AS route_id, o.code AS origin, d.code AS destination, e.dist AS miles)
+) AS g;
+
+statement ok
+COPY (SELECT * FROM (VALUES ('BOS','Boston'),('LAX','Los Angeles'),('SEA','Seattle'),('ORD','Chicago'))
+    AS a(code,city)) TO '{QW_ROOT}/airport_directory.parquet' (FORMAT PARQUET);
+
+statement ok
+CREATE VIEW airport_directory AS SELECT * FROM read_parquet('{QW_ROOT}/airport_directory.parquet');
+
+# case: hybrid.paging The missing PDX directory entry distinguishes the two limit placements
+query TTTI
+SELECT r.origin, r.destination, a.city, r.miles
+FROM atl_routes AS r JOIN airport_directory AS a ON r.destination = a.code
+ORDER BY r.miles DESC NULLS LAST, r.route_id FETCH FIRST 2 ROWS ONLY;
+----
+ATL	LAX	Los Angeles	1946
+ATL	BOS	Boston	946
+
+query TT
+WITH top_routes AS (
+    SELECT * FROM atl_routes ORDER BY miles DESC NULLS LAST, route_id FETCH FIRST 2 ROWS ONLY
+)
+SELECT r.origin, r.destination FROM top_routes AS r JOIN airport_directory AS a ON r.destination = a.code;
+----
+ATL	LAX
+
+# case: hybrid.keys Parallel edges and nullable or missing directory data
+query TII
+SELECT l.destination, l.route_id, r.route_id FROM atl_routes l JOIN atl_routes r
+ON l.destination = r.destination AND l.route_id < r.route_id;
+----
+BOS	101	102
+
+query TTI
+SELECT r.destination, a.city, r.miles FROM atl_routes r LEFT JOIN airport_directory a
+ON r.destination = a.code ORDER BY r.route_id;
+----
+BOS	Boston	946
+BOS	Boston	946
+LAX	Los Angeles	1946
+PDX	NULL	2172
+SEA	Seattle	NULL
+
+query I
+WITH directory AS (SELECT * FROM airport_directory UNION ALL SELECT 'BOS', 'Extra Boston row')
+SELECT COUNT(*) FROM atl_routes r JOIN directory a ON a.code = r.destination;
+----
+6
+
+# case: hybrid.sets Membership, bags, distinct sets and aggregates over the projected columns
+query T
+SELECT a.code FROM airport_directory a WHERE EXISTS
+    (SELECT 1 FROM atl_routes r WHERE r.destination = a.code)
+ORDER BY a.code;
+----
+BOS
+LAX
+SEA
+
+query II
+SELECT (SELECT COUNT(*) FROM (SELECT destination FROM atl_routes UNION SELECT code FROM airport_directory)),
+       (SELECT COUNT(*) FROM (SELECT destination FROM atl_routes UNION ALL SELECT code FROM airport_directory));
+----
+5	9
+
+query III
+SELECT COUNT(*), COUNT(miles), COUNT(DISTINCT destination) FROM atl_routes;
+----
+5	4	4
+
+# case: hybrid.parameters Host bound values, including a quote, reuse the SQL view
+statement ok
+PREPARE count_routes AS SELECT COUNT(*) FROM atl_routes WHERE destination = $1;
+
+query I
+EXECUTE count_routes('BOS');
+----
+2
+
+query I
+EXECUTE count_routes('ORD');
+----
+0
+
+query I
+EXECUTE count_routes('B''OS');
+----
+0
+
+# case: hybrid.read_only The native statement uses the same read-only provider as a hybrid view
+statement ok
+SESSION SET GRAPH air_routes;
+
+statement ok
+SET SESSION qw_graph_dialect = 'cypher';
+
+statement error
+MATCH (o:airport) WHERE o.code = 'ATL' SET o.code = 'OTHER' RETURN o.code;
+----
+QW_ADMISSION
+
+query I
+SELECT COUNT(*) FROM atl_routes;
+----
+5
+
+# case: hybrid.explain Bind from the registered metadata and open the file only for execution
+statement ok
+COPY (SELECT content FROM read_blob('{QW_AIR_ROUTES}')) TO '{QW_ROOT}/hybrid_plan.lbdb' (FORMAT BLOB);
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"air_routes","path":"{QW_ROOT}/hybrid_plan.lbdb"}';
+
+statement ok
+COPY (SELECT 'corrupt storage after graph registration'::BLOB) TO '{QW_ROOT}/hybrid_plan.lbdb' (FORMAT BLOB);
+
+statement ok
+EXPLAIN SELECT * FROM atl_routes;
+
+statement error
+EXPLAIN ANALYZE SELECT * FROM atl_routes;
+----
+QW_OPEN

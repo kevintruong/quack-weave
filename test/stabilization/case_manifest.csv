@@ -119,3 +119,10 @@ pgq.view,graph_table.test,mvp2-debug|mvp2-release,2
 pgq.join,graph_table.test,mvp2-debug|mvp2-release,2
 pgq.context,graph_table.test,mvp2-debug|mvp2-release,10
 pgq.parameters,graph_table.test,mvp2-debug|mvp2-release,4
+hybrid.catalog,hybrid_public.test,mvp2-debug|mvp2-release,5
+hybrid.paging,hybrid_public.test,mvp2-debug|mvp2-release,2
+hybrid.keys,hybrid_public.test,mvp2-debug|mvp2-release,3
+hybrid.sets,hybrid_public.test,mvp2-debug|mvp2-release,3
+hybrid.parameters,hybrid_public.test,mvp2-debug|mvp2-release,4
+hybrid.read_only,hybrid_public.test,mvp2-debug|mvp2-release,4
+hybrid.explain,hybrid_public.test,mvp2-debug|mvp2-release,5

@@ -1,6 +1,6 @@
 # QuackWeave
 
-QuackWeave is a native DuckDB extension for a single read-only query against an existing local Ladybug graph. `qw_query` returns typed rows for regular DuckDB queries, including joins and aggregates. MVP1 supports Cypher. MVP2 also supports a bounded GQL read dialect.
+QuackWeave is a native DuckDB extension for reading an existing local Ladybug graph. The MVP2 package supports standalone graph reads and SQL/PGQ graph table expressions. DuckDB can join their typed columns to its own tables and Parquet files. The explicit-schema `qw_query` interface is also available.
 
 ## Build and use MVP1
 
@@ -77,7 +77,43 @@ make mvp2-test DUCKDB=/path/to/duckdb-v2.0.1 LBUG=/path/to/lbug-v0.22.3
 
 The default build remains MVP1 and its Cypher-only artifact stays under `build/debug` or `build/release`.
 
-### Hybrid queries
+### Standalone graph queries
+
+Register an existing Ladybug file once per DuckDB instance, then select the graph on each connection that will issue standalone queries. Registration captures the schema used to bind projected properties, including empty results.
+
+```sql
+SET GLOBAL qw_ladybug_config = '{"alias":"air_routes","path":"/absolute/path/to/air_routes.lbdb"}';
+SESSION SET GRAPH air_routes;
+
+MATCH (origin:airport)-[route:route]->(destination:airport)
+WHERE origin.code = 'ATL'
+RETURN origin.code AS origin, destination.code AS destination, route.dist AS miles
+LIMIT 10;
+```
+
+The default standalone language is GQL. Use `SET SESSION qw_graph_dialect = 'cypher'` to select the Cypher read path. The loading connection and newly opened connections have the graph grammar enabled. On a connection opened before another connection loaded QuackWeave, run DuckDB's `CALL add_grammar_extension('quack_weave')` before selecting the graph. Parallel edges can produce duplicate rows and nullable properties can return SQL `NULL`. Supported features are a subset of the GQL and openCypher languages. [Standalone SQLLogic tests](test/stabilization/sqllogic/graph_entry.test)
+
+### Hybrid SQL queries
+
+Name the registered graph in `GRAPH_TABLE` and project the properties used by SQL. The following query ranks routes after matching destinations to a Parquet directory. The airport with the longest flight might have no directory row.
+
+```sql
+SELECT r.origin, r.destination, a.city, r.miles
+FROM GRAPH_TABLE (
+    air_routes
+    MATCH (o:airport)-[e:route]->(d:airport)
+    WHERE o.code = 'ATL'
+    COLUMNS (e.rid AS route_id, o.code AS origin,
+             d.code AS destination, e.dist AS miles)
+) AS r
+JOIN read_parquet('airport_directory.parquet') AS a ON a.code = r.destination
+ORDER BY r.miles DESC NULLS LAST, r.route_id
+FETCH FIRST 2 ROWS ONLY;
+```
+
+The SQL/PGQ read surface supports named, labeled vertices and named, typed edges in fixed forward patterns. `COLUMNS` exposes the projected columns to SQL. Use a view or CTE to reuse them in subqueries, set operations or aggregates. DuckDB evaluates the outer join, ordering and row limit. [Hybrid fixture and SQLLogic examples](test/stabilization/sqllogic/hybrid_public.test)
+
+### Explicit-schema bridge
 
 Use `qw_query` in a DuckDB `FROM` clause. Its declared `schema` supplies column names and types. Use `AS related(document_id)` to rename a column in SQL.
 
@@ -119,7 +155,7 @@ make mvp2-stabilization-test \
   LBUG=/path/to/lbug-v0.22.3
 ```
 
-The gate writes profile logs, raw observer evidence, and `stabilization-coverage.json` under `build/stabilization-reports/`. The coverage check requires all 103 named cases across their assigned profiles and verifies the SQL source hashes against the checked-out files. Set `STABILIZATION_REPORT_DIR` to choose a different destination.
+The gate writes profile logs, raw observer evidence, and `stabilization-coverage.json` under `build/stabilization-reports/`. The coverage check requires every manifest case across its assigned profiles and verifies the SQL source hashes against the checked-out files. Set `STABILIZATION_REPORT_DIR` to choose a different destination.
 
 The [Ladybug GQL compatibility bench](test/stabilization/sqllogic/gql_compatibility.test) checks scalar results, row-bag equality with native Cypher, and the read-only GQL boundary. Both MVP2 profiles also run the [DuckGQL SQLLogicTest ports](test/stabilization/duckgql-porting.md) against a separate native Ladybug fixture. The runner compares the Ladybug fixtures before and after the suite.
 
