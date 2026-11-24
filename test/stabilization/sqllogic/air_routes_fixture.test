@@ -1,0 +1,34 @@
+# name: test/stabilization/sqllogic/air_routes_fixture.test
+# description: Verify the flight graph used by the public language tests
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_AIR_ROUTES UNSET_QW_AIR_ROUTES
+
+# case: routes.fixture Ground the graph independently of the new language entry points
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"air_routes","path":"{QW_AIR_ROUTES}"}';
+
+query ITTI
+SELECT * FROM qw_query('air_routes', 'cypher',
+    $$MATCH (o:airport)-[e:route]->(d:airport)
+      RETURN e.rid AS rid, o.code AS origin, d.code AS destination, e.dist AS miles$$,
+    schema := 'rid BIGINT, origin VARCHAR, destination VARCHAR, miles BIGINT')
+ORDER BY rid;
+----
+101	ATL	BOS	946
+102	ATL	BOS	946
+103	ATL	LAX	1946
+104	ATL	PDX	2172
+105	ATL	SEA	NULL
+
+query T
+SELECT code FROM qw_query('air_routes', 'cypher',
+    $$MATCH (o:airport) WHERE o.code = 'ORD' RETURN o.code AS code$$,
+    schema := 'code VARCHAR');
+----
+ORD
