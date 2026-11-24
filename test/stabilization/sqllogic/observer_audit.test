@@ -1,0 +1,292 @@
+# name: test/stabilization/sqllogic/observer_audit.test
+# description: Assert raw parser, Ladybug, and DuckDB scan observations
+# group: [quack_weave]
+
+test-env QW_OBSERVATIONS UNSET_QW_OBSERVATIONS
+
+statement ok
+CREATE TEMP TABLE observations AS SELECT * FROM read_csv('{QW_OBSERVATIONS}',
+  header = true, nullstr = '__QW_NULL__',
+  columns = {'fixture_version': 'INTEGER', 'case_id': 'VARCHAR', 'invocation_id': 'VARCHAR',
+             'sequence': 'INTEGER', 'event': 'VARCHAR', 'outcome': 'VARCHAR', 'value': 'VARCHAR'});
+
+query T
+SELECT DISTINCT case_id FROM observations ORDER BY case_id;
+----
+observer.admission
+observer.failure
+observer.lifecycle
+observer.parser
+observer.policy
+observer.quota
+observer.schema
+
+query I
+SELECT count(*) FROM observations
+WHERE fixture_version IS DISTINCT FROM 1 OR case_id IS NULL OR case_id = ''
+   OR invocation_id IS NULL OR invocation_id = '' OR sequence IS NULL
+   OR event IS NULL OR event = '' OR outcome IS NULL OR outcome = '' OR value IS NULL;
+----
+0
+
+query I
+SELECT count(*) FROM (
+  SELECT case_id, invocation_id FROM observations GROUP BY case_id, invocation_id
+  HAVING min(sequence) <> 0 OR max(sequence) <> count(*) - 1
+      OR count(DISTINCT sequence) <> count(*)
+      OR count(*) FILTER (WHERE event = 'start') <> 1
+      OR count(*) FILTER (WHERE event = 'end') <> 1
+      OR min(sequence) FILTER (WHERE event = 'start') <> 0
+      OR max(sequence) FILTER (WHERE event = 'end') <> max(sequence)
+);
+----
+0
+
+
+statement ok
+CREATE TEMP TABLE required_invocations AS SELECT * FROM (VALUES
+  ('observer.admission', 'admitted'), ('observer.admission', 'ast_rejected'),
+  ('observer.admission', 'prepare_rejected'),
+  ('observer.schema', 'nested'),
+  ('observer.quota', 'at_budget'), ('observer.quota', 'below_budget'),
+  ('observer.failure', 'arrow_after_batch'), ('observer.failure', 'execution'),
+  ('observer.failure', 'timeout'),
+  ('observer.parser', 'boolean'), ('observer.parser', 'integer'),
+  ('observer.parser', 'invalid_unicode'), ('observer.parser', 'unicode'),
+  ('observer.lifecycle', 'batch_error'), ('observer.lifecycle', 'early_close'),
+  ('observer.lifecycle', 'eof'), ('observer.lifecycle', 'late_batch_error'),
+  ('observer.lifecycle', 'zero'),
+  ('observer.lifecycle', 'schema_mismatch'),
+  ('observer.lifecycle', 'host_valid'), ('observer.lifecycle', 'host_first_batch_error'),
+  ('observer.policy', 'corrupt_control'), ('observer.policy', 'path_swap')
+) AS expected(case_id, invocation_id);
+
+query I
+WITH actual AS (SELECT DISTINCT case_id, invocation_id FROM observations)
+SELECT count(*) FROM (
+  (SELECT * FROM required_invocations EXCEPT SELECT * FROM actual)
+  UNION ALL
+  (SELECT * FROM actual EXCEPT SELECT * FROM required_invocations)
+);
+----
+0
+
+# case: observer.admission Admission, prepare and read-only checks precede a single actual native dispatch
+query TIIIIIIII
+SELECT invocation_id,
+  count(*) FILTER (WHERE event = 'open' AND outcome = 'ok' AND value = 'read_only'),
+  count(*) FILTER (WHERE event = 'ast_admitted'),
+  count(*) FILTER (WHERE event = 'ast_rejected'),
+  count(*) FILTER (WHERE event = 'prepare'),
+  count(*) FILTER (WHERE event = 'prepared_read_only' AND outcome = 'ok'),
+  count(*) FILTER (WHERE event = 'execute'),
+  count(*) FILTER (WHERE event = 'arrow_pull'),
+  count(*) FILTER (WHERE event = 'release')
+FROM observations WHERE case_id = 'observer.admission' GROUP BY invocation_id ORDER BY invocation_id;
+----
+admitted	1	1	0	1	1	1	1	1
+ast_rejected	1	0	1	0	0	0	0	1
+prepare_rejected	1	1	0	1	0	0	0	1
+
+query I
+WITH order_seen AS (
+  SELECT
+    min(sequence) FILTER (WHERE event = 'open') AS opened,
+    min(sequence) FILTER (WHERE event = 'ast_admitted') AS ast,
+    min(sequence) FILTER (WHERE event = 'prepare') AS prepared,
+    min(sequence) FILTER (WHERE event = 'prepared_read_only') AS readonly,
+    min(sequence) FILTER (WHERE event = 'execute') AS executed,
+    min(sequence) FILTER (WHERE event = 'schema_accepted') AS schema_ready,
+    min(sequence) FILTER (WHERE event = 'arrow_pull') AS pulled,
+    min(sequence) FILTER (WHERE event = 'release') AS released
+  FROM observations WHERE case_id = 'observer.admission' AND invocation_id = 'admitted'
+)
+SELECT count(*) FROM order_seen
+WHERE opened < ast AND ast < prepared AND prepared < readonly AND readonly < executed
+  AND executed < schema_ready AND schema_ready < pulled AND pulled < released;
+----
+1
+
+query TTT
+SELECT invocation_id, outcome, value FROM observations
+WHERE case_id = 'observer.admission' AND event = 'result' ORDER BY invocation_id;
+----
+admitted	ok	1
+ast_rejected	error	Admission
+prepare_rejected	error	Admission
+
+# case: observer.schema Rejected native Arrow schema causes one execute, zero pulls and release
+query IIIII
+SELECT
+  count(*) FILTER (WHERE event = 'execute'),
+  count(*) FILTER (WHERE event = 'schema_rejected'),
+  count(*) FILTER (WHERE event = 'arrow_pull'),
+  count(*) FILTER (WHERE event = 'result' AND outcome = 'error' AND value = 'Schema'),
+  count(*) FILTER (WHERE event = 'release')
+FROM observations WHERE case_id = 'observer.schema';
+----
+1	1	0	1	1
+
+# case: observer.quota Measured Rust byte threshold accepts its boundary and rejects one below
+query I
+WITH threshold AS (
+  SELECT invocation_id,
+    max(CASE WHEN event = 'threshold' THEN CAST(value AS BIGINT) END) AS required,
+    max(CASE WHEN event = 'budget' THEN CAST(value AS BIGINT) END) AS cap
+  FROM observations WHERE case_id = 'observer.quota' GROUP BY invocation_id
+)
+SELECT count(*) FROM threshold
+WHERE required > 1 AND ((invocation_id = 'at_budget' AND cap = required)
+                     OR (invocation_id = 'below_budget' AND cap + 1 = required));
+----
+2
+
+query TTT
+SELECT invocation_id, outcome, value FROM observations
+WHERE case_id = 'observer.quota' AND event = 'result' ORDER BY invocation_id;
+----
+at_budget	ok	1
+below_budget	error	BatchBudget
+
+# case: observer.failure Observed native fault returns the exact error and releases its connection
+query TTT
+SELECT invocation_id, outcome, value FROM observations
+WHERE case_id = 'observer.failure' AND event = 'fault' ORDER BY invocation_id;
+----
+arrow_after_batch	injected	arrow
+execution	injected	execution
+timeout	injected	timeout
+
+query TTT
+SELECT invocation_id, outcome, value FROM observations
+WHERE case_id = 'observer.failure' AND event = 'result' ORDER BY invocation_id, sequence;
+----
+arrow_after_batch	ok	1
+arrow_after_batch	error	Arrow
+execution	error	Execution
+timeout	error	Timeout
+
+query TIIII
+SELECT invocation_id,
+  count(*) FILTER (WHERE event = 'execute'),
+  count(*) FILTER (WHERE event = 'execute' AND outcome = 'ok'),
+  count(*) FILTER (WHERE event = 'release'),
+  count(*) FILTER (WHERE event = 'arrow_pull')
+FROM observations WHERE case_id = 'observer.failure' GROUP BY invocation_id ORDER BY invocation_id;
+----
+arrow_after_batch	1	1	1	2
+execution	1	1	1	0
+timeout	1	1	1	0
+
+query I
+WITH fault_order AS (
+  SELECT invocation_id,
+    min(sequence) FILTER (WHERE event = 'execute') AS executed,
+    min(sequence) FILTER (WHERE event = 'result' AND outcome = 'ok') AS first_batch,
+    max(sequence) FILTER (WHERE event = 'arrow_pull') AS last_pull,
+    min(sequence) FILTER (WHERE event = 'fault') AS injected,
+    min(sequence) FILTER (WHERE event = 'result' AND outcome = 'error') AS rejected
+  FROM observations WHERE case_id = 'observer.failure' GROUP BY invocation_id
+)
+SELECT count(*) FROM fault_order WHERE executed < injected AND injected < rejected
+AND (invocation_id <> 'arrow_after_batch'
+     OR executed < first_batch AND first_batch < last_pull AND last_pull < injected);
+----
+3
+
+
+# case: observer.parser Typed parser values, Unicode byte spans and syntax locations
+query TTT
+SELECT invocation_id, outcome, value FROM observations
+WHERE case_id = 'observer.parser' AND event = 'literal' ORDER BY invocation_id;
+----
+boolean	boolean	true
+integer	integer	-9223372036854775808
+unicode	string	5a6fc3ab3b204f27427269656e5c70617468f09f92a9
+
+query TTT
+SELECT invocation_id, event, value FROM observations
+WHERE case_id = 'observer.parser' AND event IN ('span_before', 'span_after')
+ORDER BY invocation_id, sequence;
+----
+boolean	span_before	30:31:1:30:61
+boolean	span_after	61:63:1:61:6964
+integer	span_before	30:31:1:30:61
+integer	span_after	73:75:1:73:6964
+unicode	span_before	31:32:1:31:61
+unicode	span_after	86:88:1:85:6964
+
+query I
+WITH inputs AS (
+  SELECT invocation_id, value AS input_hex FROM observations
+  WHERE case_id = 'observer.parser' AND event = 'input'
+), spans AS (
+  SELECT invocation_id,
+    TRY_CAST(split_part(value, ':', 1) AS INTEGER) AS first_byte,
+    TRY_CAST(split_part(value, ':', 2) AS INTEGER) AS end_byte,
+    TRY_CAST(split_part(value, ':', 4) AS INTEGER) AS codepoint_column,
+    split_part(value, ':', 5) AS slice_hex
+  FROM observations WHERE case_id = 'observer.parser' AND event IN ('span_before', 'span_after')
+)
+SELECT count(*) FROM spans JOIN inputs USING (invocation_id)
+WHERE first_byte >= 0 AND end_byte > first_byte
+  AND end_byte * 2 <= length(input_hex)
+  AND substr(input_hex, first_byte * 2 + 1, (end_byte - first_byte) * 2) = slice_hex
+  AND length(decode(unhex(substr(input_hex, 1, first_byte * 2)))) = codepoint_column;
+----
+6
+
+query TTT
+SELECT invocation_id, outcome, value FROM observations
+WHERE case_id = 'observer.parser' AND event = 'diagnostic';
+----
+invalid_unicode	Syntax	2:31
+
+# case: observer.lifecycle Core cursors finish once, while the real DuckDB client sees only validated rows
+query TT
+SELECT invocation_id, string_agg(event || ':' || outcome || ':' || value, '|' ORDER BY sequence)
+FROM observations WHERE case_id = 'observer.lifecycle' AND invocation_id NOT LIKE 'host_%'
+GROUP BY invocation_id ORDER BY invocation_id;
+----
+batch_error	start:ok:|launch:ok:|schema:read:|pull:error:QW_ARROW|release:ok:|scan_result:error:QW_ARROW|scan_result:eof:|end:ok:
+early_close	start:ok:|launch:ok:|schema:read:|pull:batch:1|batch_ready:ok:1|release:ok:|end:ok:
+eof	start:ok:|launch:ok:|schema:read:|pull:batch:1|batch_ready:ok:1|pull:batch:1|batch_ready:ok:1|pull:eof:|release:ok:|scan_result:eof:|scan_result:eof:|end:ok:
+late_batch_error	start:ok:|launch:ok:|schema:read:|pull:batch:1|batch_ready:ok:1|pull:error:QW_ARROW|release:ok:|scan_result:error:QW_ARROW|scan_result:eof:|end:ok:
+schema_mismatch	start:ok:|launch:ok:|schema:read:|release:ok:|scan_result:error:QW_SCHEMA|scan_result:eof:|end:ok:
+zero	start:ok:|launch:ok:|schema:read:|pull:eof:|release:ok:|scan_result:eof:|scan_result:eof:|end:ok:
+
+query TT
+SELECT invocation_id, string_agg(event || ':' || outcome || ':' || value, '|' ORDER BY sequence)
+FROM observations WHERE case_id = 'observer.lifecycle' AND invocation_id LIKE 'host_%'
+GROUP BY invocation_id ORDER BY invocation_id;
+----
+host_first_batch_error	start:ok:|prepare:ok:|execute:ok:|result_mode:streaming:|result:error:QW_BATCH_BUDGET|delivery:rows:0|end:ok:
+host_valid	start:ok:|prepare:ok:|execute:ok:|result_mode:streaming:|chunk:rows:2|result:ok:|delivery:rows:2|end:ok:
+
+# case: observer.policy Reject a graph path swap after bind and reuse the prepared statement after restoring it
+query T
+SELECT string_agg(event || ':' || outcome || ':' || value, '|' ORDER BY sequence) FROM observations
+WHERE case_id = 'observer.policy' AND invocation_id = 'path_swap' AND event <> 'fixture_hash';
+----
+start:ok:|prepare:ok:|path:changed:|execute:ok:|result_mode:streaming:|result:error:QW_ACCESS|delivery:rows:0|path_diagnostic:observed:Configured Ladybug path changed after binding|path:restored:|execute:ok:|result_mode:streaming:|chunk:rows:2|result:ok:|delivery:rows:2|fixture:unchanged:|end:ok:
+
+query T
+SELECT string_agg(event || ':' || outcome || ':' || value, '|' ORDER BY sequence) FROM observations
+WHERE case_id = 'observer.policy' AND invocation_id = 'corrupt_control';
+----
+start:ok:|prepare:ok:|execute:ok:|result_mode:streaming:|result:error:QW_OPEN|delivery:rows:0|end:ok:
+
+query I
+WITH hashes AS (
+  SELECT count(*) AS n,
+    count(*) FILTER (WHERE regexp_full_match(value, '[0-9a-f]{64}')) AS valid,
+    max(value) FILTER (WHERE outcome = 'held_before') AS held_before,
+    max(value) FILTER (WHERE outcome = 'held_after') AS held_after,
+    max(value) FILTER (WHERE outcome = 'replacement_before') AS replacement_before,
+    max(value) FILTER (WHERE outcome = 'replacement_after') AS replacement_after
+  FROM observations WHERE case_id = 'observer.policy' AND event = 'fixture_hash'
+)
+SELECT count(*) FROM hashes
+WHERE n = 4 AND valid = 4 AND held_before = held_after AND replacement_before = replacement_after;
+----
+1
