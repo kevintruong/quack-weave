@@ -21,3 +21,8 @@ relate-parser = { version = "=1.2.0", optional = true }
 name = "relate_fixture"
 path = "examples/relate_fixture.rs"
 required-features = ["relate-provider"]
+
+[[example]]
+name = "relate_bench_load"
+path = "examples/relate_bench_load.rs"
+required-features = ["relate-provider"]
