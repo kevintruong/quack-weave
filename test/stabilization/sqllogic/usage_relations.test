@@ -1,0 +1,155 @@
+# name: test/stabilization/sqllogic/usage_relations.test
+# description: Compose typed graph results with DuckDB relational operators
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_GRAPH UNSET_QW_GRAPH
+
+# case: usage.rel_setup Load the package and provision the read fixture
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+# case: usage.cte Both CTE forms deliver the same bag through different plans
+query TT
+EXPLAIN (FORMAT JSON)
+WITH related AS MATERIALIZED (
+    SELECT id
+    FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document)
+        WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT')
+)
+SELECT count(*) FROM related AS a JOIN related AS b USING (id);
+----
+physical_plan	<REGEX>:(?s).*"name": "CTE".*"name": "QW_QUERY".*"name": "CTE_SCAN".*"name": "CTE_SCAN".*
+
+query TT
+EXPLAIN (FORMAT JSON)
+WITH related AS NOT MATERIALIZED (
+    SELECT id
+    FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document)
+        WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT')
+)
+SELECT count(*) FROM related AS a JOIN related AS b USING (id);
+----
+physical_plan	<REGEX>:(?s).*"name": "QW_QUERY".*"name": "QW_QUERY".*
+
+query TI
+WITH cached AS MATERIALIZED (
+    SELECT id
+    FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document)
+        WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT')
+), expanded AS NOT MATERIALIZED (
+    SELECT id
+    FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document)
+        WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT')
+)
+SELECT 'cached' AS cte_form, count(*) FROM cached AS a JOIN cached AS b USING (id)
+UNION ALL
+SELECT 'expanded', count(*) FROM expanded AS a JOIN expanded AS b USING (id)
+ORDER BY cte_form;
+----
+cached	4
+expanded	4
+
+# case: usage.host_join Duplicate parents multiply matches and a left join retains a graph orphan
+query I
+WITH parents(id) AS (VALUES (101::BIGINT), (101::BIGINT), (999::BIGINT))
+SELECT count(*)
+FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document)
+    WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT') AS related
+JOIN parents USING (id);
+----
+4
+
+query II
+WITH parents(id) AS (VALUES (101::BIGINT), (101::BIGINT), (102::BIGINT))
+SELECT related.id, parents.id
+FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document)
+    WHERE a.id = 101 RETURN b.id AS id$$, schema := 'id BIGINT') AS related
+LEFT JOIN parents USING (id)
+ORDER BY related.id, parents.id;
+----
+101	101
+101	101
+102	102
+103	NULL
+
+# case: usage.scalar_subquery Zero rows yield NULL and duplicate rows still cause a cardinality error
+query II
+WITH related AS (
+    SELECT document_id
+    FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document)
+        WHERE a.id = 101 RETURN b.id AS id$$, schema := 'id BIGINT') AS r(document_id)
+)
+SELECT (SELECT document_id FROM related WHERE document_id = 999),
+       (SELECT document_id FROM related WHERE document_id = 102);
+----
+NULL	102
+
+statement error
+SELECT (SELECT id
+        FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document)
+            WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT'));
+----
+More than one row returned by a subquery used as an expression
+
+# case: usage.membership IN models unknown and EXISTS correlates through the host predicate
+query ITT
+WITH related AS (
+    SELECT CASE WHEN active IS NOT NULL THEN id END AS match_id
+    FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document)
+        WHERE a.id = 101 RETURN b.id AS id, b.active AS active$$, schema := 'id BIGINT, active BOOLEAN')
+), candidates(id) AS (VALUES (101::BIGINT), (102::BIGINT), (999::BIGINT), (NULL::BIGINT))
+SELECT c.id,
+       CAST(c.id IN (SELECT match_id FROM related) AS VARCHAR),
+       CAST(EXISTS (SELECT 1 FROM related AS r WHERE r.match_id = c.id) AS VARCHAR)
+FROM candidates AS c
+ORDER BY c.id NULLS LAST;
+----
+101	true	true
+102	NULL	false
+999	NULL	false
+NULL	NULL	false
+
+# case: usage.set_operations UNION ALL retains duplicates and UNION removes them
+query IT
+WITH combined AS (
+    SELECT id FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document)
+        WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT')
+    UNION ALL
+    SELECT 101::INTEGER
+)
+SELECT id, typeof(id) FROM combined ORDER BY id;
+----
+101	BIGINT
+101	BIGINT
+101	BIGINT
+
+query I
+SELECT id FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document)
+    WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT')
+UNION
+SELECT 101::INTEGER
+ORDER BY id;
+----
+101
+
+# case: usage.ordinality WITH ORDINALITY assigns consecutive ordinals to delivered duplicates
+query II
+SELECT id, ordinality
+FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document)
+    WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT') WITH ORDINALITY
+ORDER BY ordinality;
+----
+101	1
+101	2
+
+# case: usage.table_position A table function must appear in a relation position
+statement error
+SELECT qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document)
+    WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+is a table function but it was used as a scalar function

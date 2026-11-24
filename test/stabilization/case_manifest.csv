@@ -81,3 +81,11 @@ scan.schema,scan.test,mvp2-debug|mvp2-release,4
 scan.multibatch,scan.test,mvp2-debug|mvp2-release,3
 scan.budget,scan.test,mvp2-debug|mvp2-release,5
 scan.timeout,timeout.test_slow,mvp2-debug|mvp2-release,5
+usage.rel_setup,usage_relations.test,mvp2-debug|mvp2-release,2
+usage.cte,usage_relations.test,mvp2-debug|mvp2-release,3
+usage.host_join,usage_relations.test,mvp2-debug|mvp2-release,2
+usage.scalar_subquery,usage_relations.test,mvp2-debug|mvp2-release,2
+usage.membership,usage_relations.test,mvp2-debug|mvp2-release,1
+usage.set_operations,usage_relations.test,mvp2-debug|mvp2-release,2
+usage.ordinality,usage_relations.test,mvp2-debug|mvp2-release,1
+usage.table_position,usage_relations.test,mvp2-debug|mvp2-release,1

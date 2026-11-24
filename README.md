@@ -77,6 +77,14 @@ make mvp2-test DUCKDB=/path/to/duckdb-v2.0.1 LBUG=/path/to/lbug-v0.22.3
 
 The default build remains MVP1 and its Cypher-only artifact stays under `build/debug` or `build/release`.
 
+### Hybrid queries
+
+Use `qw_query` in a DuckDB `FROM` clause. Its declared `schema` supplies column names and types. Use `AS related(document_id)` to rename a column in SQL.
+
+Graph results follow DuckDB's relational semantics. Joins can multiply duplicate graph or SQL rows, and `UNION ALL` preserves duplicates. A scalar subquery returns `NULL` for zero rows and raises the default DuckDB error for multiple rows. `IN` follows SQL's three-valued logic, while `EXISTS` can correlate through a SQL predicate on graph-derived columns.
+
+Use `AS MATERIALIZED` when a CTE should share a graph result across references. Inlining can produce separate graph scans. `WITH ORDINALITY` numbers rows in one scan's output. Use an outer `ORDER BY` with stable keys for reproducible ordering. [Relational SQLLogicTests](test/stabilization/sqllogic/usage_relations.test)
+
 ### Native stabilization
 
 The macOS arm64 CI gate runs the pinned native DuckDB SQLLogicTest runner against the MVP2 debug and release packages and the Cypher-only MVP1 package. It also runs the native observer audit against MVP2 release. The DuckDB CLI serves other test targets, while this gate requires the `unittest` executable and `libduckdb.dylib` from the same DuckDB `v2.0.1` build at commit `8d78114e90a53823803660bf821f6073ac87da8c`. When configuring that checkout with CMake, use `-DDUCKDB_EXPLICIT_VERSION=v2.0.1 -DBUILD_UNITTESTS=ON`.
@@ -89,7 +97,7 @@ make mvp2-stabilization-test \
   LBUG=/path/to/lbug-v0.22.3
 ```
 
-The gate writes profile logs, raw observer evidence, and `stabilization-coverage.json` under `build/stabilization-reports/`. The coverage check requires all 82 named cases across their assigned profiles and verifies the SQL source hashes against the checked-out files. Set `STABILIZATION_REPORT_DIR` to choose a different destination.
+The gate writes profile logs, raw observer evidence, and `stabilization-coverage.json` under `build/stabilization-reports/`. The coverage check requires all 90 named cases across their assigned profiles and verifies the SQL source hashes against the checked-out files. Set `STABILIZATION_REPORT_DIR` to choose a different destination.
 
 The [Ladybug GQL compatibility bench](test/stabilization/sqllogic/gql_compatibility.test) checks scalar results, row-bag equality with native Cypher, and the read-only GQL boundary. Both MVP2 profiles also run the [DuckGQL SQLLogicTest ports](test/stabilization/duckgql-porting.md) against a separate native Ladybug fixture. The runner compares the Ladybug fixtures before and after the suite.
 
