@@ -1,0 +1,36 @@
+# name: test/stabilization/sqllogic/artifact.test
+# description: Relocated MVP2 package identity, feature independence and both dialects
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_GRAPH UNSET_QW_GRAPH
+
+# case: artifact.load Load relocated artifact with the exact version and no external GQL extension
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+query T
+SELECT extension_version FROM duckdb_extensions() WHERE extension_name='quack_weave' AND loaded;
+----
+v0.2.0
+
+query I
+SELECT count(*) FROM duckdb_extensions() WHERE loaded AND extension_name IN ('gql','duckgql','duckdb_gql');
+----
+0
+
+query I rowsort
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+101
+101
+
+query I rowsort
+SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+101
+101

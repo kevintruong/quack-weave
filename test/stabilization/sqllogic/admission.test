@@ -1,0 +1,113 @@
+# name: test/stabilization/sqllogic/admission.test
+# description: Native read-only admission and graph integrity after denied statements
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_GRAPH UNSET_QW_GRAPH
+
+test-env QW_EXPORT UNSET_QW_EXPORT
+
+# case: admission.setup Open packaged extension against scratch clone
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+# case: admission.cypher Invalid syntax, writes, multiple statements, routines and export are refused
+statement ok
+EXPLAIN SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:Document) RETURN$$, schema := 'id BIGINT');
+
+statement error
+EXPLAIN ANALYZE SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:Document) RETURN$$, schema := 'id BIGINT');
+----
+QW_ADMISSION
+
+statement error
+SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:Document) RETURN$$, schema := 'id BIGINT');
+----
+QW_ADMISSION
+
+statement error
+SELECT * FROM qw_query('kg', 'cypher', $$CREATE (:Document {id: 999}) RETURN 999 AS id$$, schema := 'id BIGINT');
+----
+QW_ADMISSION
+
+statement error
+SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id; CREATE (:Document {id: 999})$$, schema := 'id BIGINT');
+----
+QW_ADMISSION
+
+statement error
+SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id; MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+QW_ADMISSION
+
+statement error
+SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:Document {id: 100}) SET a.title = 'changed' RETURN a.id AS id$$, schema := 'id BIGINT');
+----
+QW_ADMISSION
+
+statement error
+SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:Document {id: 102}) DETACH DELETE a$$, schema := 'id BIGINT');
+----
+QW_ADMISSION
+
+statement error
+SELECT * FROM qw_query('kg', 'cypher', $$CREATE NODE TABLE Unexpected(id INT64 PRIMARY KEY)$$, schema := 'id BIGINT');
+----
+QW_ADMISSION
+
+statement error
+SELECT * FROM qw_query('kg', 'cypher', $$CALL threads=1$$, schema := 'id BIGINT');
+----
+QW_ADMISSION
+
+statement error
+SELECT * FROM qw_query('kg', 'cypher', $$COPY (MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id) TO '{QW_EXPORT}'$$, schema := 'id BIGINT');
+----
+QW_ADMISSION
+
+statement error
+SELECT * FROM qw_query('kg', 'cypher', $$CALL show_tables() RETURN name AS title$$, schema := 'title VARCHAR');
+----
+QW_ADMISSION
+
+# case: admission.empty_controls Reject a comment-only graph program and a native LOAD command
+statement error
+SELECT * FROM qw_query('kg', 'cypher', $$/* no graph statement */$$, schema := 'id BIGINT');
+----
+QW_ADMISSION
+
+statement error
+SELECT * FROM qw_query('kg', 'cypher', $$LOAD EXTENSION algo$$, schema := 'id BIGINT');
+----
+QW_ADMISSION
+
+# case: admission.prepare Valid lowered GQL with missing source property fails native prepare
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) RETURN b.unknown_property AS id$$, schema := 'id BIGINT');
+----
+QW_ADMISSION
+
+# case: admission.guard Sentinel node and edge bags survive rejects on same graph
+query I
+SELECT count(*) FROM qw_query('kg', 'cypher', $$MATCH (a:Document) WHERE a.id = 999 RETURN a.id AS id$$, schema := 'id BIGINT');
+----
+0
+
+query I
+SELECT count(*) FROM qw_query('kg', 'cypher', $$MATCH (a:Document {id: 100}) RETURN a.id AS id$$, schema := 'id BIGINT');
+----
+1
+
+query T
+SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:Document {id: 100}) RETURN a.title AS title$$, schema := 'title VARCHAR');
+----
+Source
+
+query I
+SELECT count(*) FROM qw_query('kg', 'cypher', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+5

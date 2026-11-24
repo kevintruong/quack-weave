@@ -1,0 +1,68 @@
+# name: test/stabilization/sqllogic/limits.test
+# description: Exercise the three GQL parser envelopes and typed literal boundaries
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_GRAPH UNSET_QW_GRAPH
+
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+# case: limits.bytes Exactly 16 KiB reaches bind and 16 KiB plus one is rejected
+statement ok
+EXPLAIN SELECT * FROM qw_query('kg', 'gql', rpad($$MATCH (a:Document)-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$, 16384, ' '), schema := 'id BIGINT');
+
+statement error
+EXPLAIN SELECT * FROM qw_query('kg', 'gql', rpad($$MATCH (a:Document)-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$, 16385, ' '), schema := 'id BIGINT');
+----
+QW_GQL_PARSE: GQL input exceeds parser limits
+
+# case: limits.tokens At 256 visible tokens parses and a 257th triggers the token envelope
+statement ok
+EXPLAIN SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = +42 RETURN b.id AS c0, b.id AS c1, b.id AS c2, b.id AS c3, b.id AS c4, b.id AS c5, b.id AS c6, b.id AS c7, b.id AS c8, b.id AS c9, b.id AS c10, b.id AS c11, b.id AS c12, b.id AS c13, b.id AS c14, b.id AS c15, b.id AS c16, b.id AS c17, b.id AS c18, b.id AS c19, b.id AS c20, b.id AS c21, b.id AS c22, b.id AS c23, b.id AS c24, b.id AS c25, b.id AS c26, b.id AS c27, b.id AS c28, b.id AS c29, b.id AS c30, b.id AS c31, b.id AS c32, b.id AS c33, b.id AS c34, b.id AS c35, b.id AS c36, b.id AS c37, b.id AS c38$$, schema := 'c0 BIGINT, c1 BIGINT, c2 BIGINT, c3 BIGINT, c4 BIGINT, c5 BIGINT, c6 BIGINT, c7 BIGINT, c8 BIGINT, c9 BIGINT, c10 BIGINT, c11 BIGINT, c12 BIGINT, c13 BIGINT, c14 BIGINT, c15 BIGINT, c16 BIGINT, c17 BIGINT, c18 BIGINT, c19 BIGINT, c20 BIGINT, c21 BIGINT, c22 BIGINT, c23 BIGINT, c24 BIGINT, c25 BIGINT, c26 BIGINT, c27 BIGINT, c28 BIGINT, c29 BIGINT, c30 BIGINT, c31 BIGINT, c32 BIGINT, c33 BIGINT, c34 BIGINT, c35 BIGINT, c36 BIGINT, c37 BIGINT, c38 BIGINT');
+
+statement error
+EXPLAIN SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = +42 RETURN DISTINCT b.id AS c0, b.id AS c1, b.id AS c2, b.id AS c3, b.id AS c4, b.id AS c5, b.id AS c6, b.id AS c7, b.id AS c8, b.id AS c9, b.id AS c10, b.id AS c11, b.id AS c12, b.id AS c13, b.id AS c14, b.id AS c15, b.id AS c16, b.id AS c17, b.id AS c18, b.id AS c19, b.id AS c20, b.id AS c21, b.id AS c22, b.id AS c23, b.id AS c24, b.id AS c25, b.id AS c26, b.id AS c27, b.id AS c28, b.id AS c29, b.id AS c30, b.id AS c31, b.id AS c32, b.id AS c33, b.id AS c34, b.id AS c35, b.id AS c36, b.id AS c37, b.id AS c38$$, schema := 'c0 BIGINT, c1 BIGINT, c2 BIGINT, c3 BIGINT, c4 BIGINT, c5 BIGINT, c6 BIGINT, c7 BIGINT, c8 BIGINT, c9 BIGINT, c10 BIGINT, c11 BIGINT, c12 BIGINT, c13 BIGINT, c14 BIGINT, c15 BIGINT, c16 BIGINT, c17 BIGINT, c18 BIGINT, c19 BIGINT, c20 BIGINT, c21 BIGINT, c22 BIGINT, c23 BIGINT, c24 BIGINT, c25 BIGINT, c26 BIGINT, c27 BIGINT, c28 BIGINT, c29 BIGINT, c30 BIGINT, c31 BIGINT, c32 BIGINT, c33 BIGINT, c34 BIGINT, c35 BIGINT, c36 BIGINT, c37 BIGINT, c38 BIGINT');
+----
+QW_GQL_PARSE: GQL input exceeds parser limits
+
+# case: limits.depth Sixteen delimiters reach subset admission and seventeen hit the parser limit
+statement error
+EXPLAIN SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) RETURN ((((((((((((((((b.id)))))))))))))))) AS id$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+EXPLAIN SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) RETURN (((((((((((((((((b.id))))))))))))))))) AS id$$, schema := 'id BIGINT');
+----
+QW_GQL_PARSE: GQL input exceeds parser limits
+
+# case: limits.literal Signed integer bounds and invalid string escape scalars
+query I
+SELECT count(*) FROM (SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = - 9223372036854775808 RETURN b.id AS id$$, schema := 'id BIGINT'));
+----
+0
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 9223372036854775808 RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.title = '\u0000' RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.title = '\uD800' RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.title = '\U110000' RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET

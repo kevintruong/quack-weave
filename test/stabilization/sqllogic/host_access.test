@@ -1,0 +1,22 @@
+# name: test/stabilization/sqllogic/host_access.test
+# description: Reject disabled host file access after the extension and graph are configured
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_GRAPH UNSET_QW_GRAPH
+
+# case: host.disable Recheck host file access during execution
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+statement ok
+SET enable_external_access = false;
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+QW_ACCESS

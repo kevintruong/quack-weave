@@ -1,0 +1,266 @@
+# name: test/stabilization/sqllogic/bind.test
+# description: GQL and Cypher bind, configuration, preparation and error categories
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_GRAPH UNSET_QW_GRAPH
+
+test-env QW_CORRUPT UNSET_QW_CORRUPT
+
+test-env QW_ROOT UNSET_QW_ROOT
+
+# case: bind.config Unset/reset, invalid alias, dialect and schema, and nonconstant bind
+statement ok
+LOAD '{QW_EXT}';
+
+statement error
+SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+QW_CONFIG
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+statement error
+SELECT * FROM qw_query('missing', 'cypher', $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+QW_CONFIG
+
+statement error
+SELECT * FROM qw_query('kg', 'sql', $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+QW_ARGUMENT
+
+statement error
+SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$, schema := '');
+----
+QW_ARGUMENT
+
+statement error
+SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$, schema := 'x BIGINT, X BIGINT');
+----
+QW_ARGUMENT
+
+statement error
+SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$, schema := 'x INTEGER');
+----
+QW_ARGUMENT
+
+statement error
+SELECT * FROM (VALUES ('kg')) t(k), LATERAL qw_query(k, 'cypher', $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+Binder Error
+
+statement ok
+RESET qw_ladybug_config;
+
+statement error
+SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+QW_CONFIG
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+# case: bind.config_reject Reject malformed configuration, invalid limit and path inputs
+statement error
+SET GLOBAL qw_ladybug_config = 'not JSON';
+----
+QW_CONFIG
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"bad-alias","path":"{QW_GRAPH}"}';
+----
+QW_CONFIG
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}","unexpected":true}';
+----
+QW_CONFIG
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}","timeout_ms":0}';
+----
+QW_CONFIG
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}","max_batch_bytes":0}';
+----
+QW_CONFIG
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"relative.lbdb"}';
+----
+QW_ACCESS
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"s3://test.invalid/graph.lbdb"}';
+----
+QW_ACCESS
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_ROOT}"}';
+----
+QW_ACCESS
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_ROOT}/does-not-exist.lbdb"}';
+----
+QW_ACCESS
+
+# case: bind.generation Changing the graph config invalidates a stale prepared read
+statement ok con1
+PREPARE old_read AS SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$, schema := 'id BIGINT');
+
+statement ok con2
+SET GLOBAL qw_ladybug_config = '{"alias":"other","path":"{QW_GRAPH}"}';
+
+statement error con1
+EXECUTE old_read;
+----
+QW_CONFIG
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+# case: bind.parse Malformed GQL fails during plain EXPLAIN with source location
+statement error
+EXPLAIN SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document)
+RETURN$$, schema := 'id BIGINT');
+----
+QW_GQL_PARSE: Invalid GQL syntax at line 2
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS id; INSERT (:Document)$$, schema := 'id BIGINT');
+----
+QW_GQL_PARSE
+
+# case: bind.subset Valid unsupported syntax and Cypher-only pattern never fall back
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$INSERT (:Document)$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$OPTIONAL MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) RETURN b AS id$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) RETURN b.id AS id ORDER BY id$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) RETURN b.id AS id NEXT RETURN id$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+# case: bind.shape Reject unpromoted patterns, nested or compound programs and result forms
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:A)-[:E]->(b:B) DELETE b$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:A)-[:E]->(b:B) RETURN b.id AS id NEXT INSERT (:A)$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $${ MATCH (a:A)-[:E]->(b:B) RETURN b.id AS id }$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:A)-[:E]->(b:B) MATCH (b:B)-[:E]->(c:C) RETURN c.id AS id$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (:A)-[:E]->(b:B) RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a)-[:E]->(b:B) RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:A)-[e:E]->(b:B) RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:A)-[:E]->(b:B) RETURN b.a.id AS id$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:A)-[:E]->(b:B) RETURN count(b.id) AS id$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:A)-[:E]->(b:B) RETURN b.id AS `id`$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+# case: bind.scope Unbound property, case-fold collision and duplicate alias are bind errors
+statement error
+EXPLAIN SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) RETURN c.id AS id$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+EXPLAIN SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE c.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+EXPLAIN SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(A:Document) RETURN A.id AS id$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+statement error
+EXPLAIN SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) RETURN b.id AS id, a.id AS ID$$, schema := 'id BIGINT');
+----
+QW_GQL_SUBSET
+
+# case: bind.plan Plain EXPLAIN and PREPARE can plan against corrupt graph while analyzed execution opens it
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_CORRUPT}"}';
+
+statement ok
+PREPARE on_corrupt AS SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT');
+
+statement ok
+EXPLAIN SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT');
+
+statement error
+EXPLAIN ANALYZE SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+QW_OPEN
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+QW_OPEN
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+statement ok
+EXPLAIN ANALYZE SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT');

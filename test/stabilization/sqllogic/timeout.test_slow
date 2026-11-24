@@ -1,0 +1,28 @@
+# name: test/stabilization/sqllogic/timeout.test_slow
+# description: Native timeout and recovery on the same connection
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_GRAPH UNSET_QW_GRAPH
+
+# case: scan.timeout Expected native timeout and same-connection recovery under pinned fixture
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok con1
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}","timeout_ms":1}';
+
+statement error con1
+SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:VectorRow), (b:VectorRow) RETURN sum(a.id * b.id) AS id$$, schema := 'id BIGINT');
+----
+QW_TIMEOUT
+
+statement ok con1
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+query I con1
+SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+101
+101

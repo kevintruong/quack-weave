@@ -1,0 +1,15 @@
+CREATE NODE TABLE Document(id INT64 PRIMARY KEY, title STRING, active BOOL, ratio DOUBLE);
+CREATE REL TABLE LINKS_TO(FROM Document TO Document);
+CREATE NODE TABLE VectorRow(id INT64 PRIMARY KEY);
+CREATE REL TABLE HAS_SAMPLE(FROM Document TO VectorRow);
+CREATE (:Document {id: 100, title: 'Source', active: false, ratio: 0.0});
+CREATE (:Document {id: 101, title: 'Linked, λ', active: true, ratio: 1.25});
+CREATE (:Document {id: 102});
+CREATE (:Document {id: 103, title: 'O\'Brien; λ', active: true});
+MATCH (a:Document {id: 100}), (b:Document {id: 101}) CREATE (a)-[:LINKS_TO]->(b);
+MATCH (a:Document {id: 100}), (b:Document {id: 101}) CREATE (a)-[:LINKS_TO]->(b);
+MATCH (a:Document {id: 101}), (b:Document {id: 102}) CREATE (a)-[:LINKS_TO]->(b);
+MATCH (a:Document {id: 101}), (b:Document {id: 103}) CREATE (a)-[:LINKS_TO]->(b);
+MATCH (a:Document {id: 101}) CREATE (a)-[:LINKS_TO]->(a);
+UNWIND range(1, 5001) AS id CREATE (:VectorRow {id: id});
+MATCH (a:Document {id: 100}), (s:VectorRow) CREATE (a)-[:HAS_SAMPLE]->(s);

@@ -1,0 +1,57 @@
+# name: test/stabilization/sqllogic/fixture_audit.test
+# description: Verify independent graph and package observations
+# group: [quack_weave]
+
+test-env QW_BEFORE UNSET_QW_BEFORE
+
+test-env QW_AFTER UNSET_QW_AFTER
+
+test-env QW_PACKAGE UNSET_QW_PACKAGE
+
+# case: fixture.setup Load raw observation rows with the built-in CSV reader
+statement ok
+CREATE TEMP TABLE package AS SELECT * FROM read_csv('{QW_PACKAGE}', header = true, all_varchar = true);
+
+# case: fixture.graph Graph nodes, relationships and catalog did not change
+query I
+SELECT count(*) FROM read_text('{QW_BEFORE}') a, read_text('{QW_AFTER}') b
+WHERE a.content = b.content AND a.size > 2;
+----
+1
+
+# case: fixture.export The denied write created no export file
+query I
+SELECT CAST(observed AS INTEGER) FROM package WHERE kind = 'filesystem' AND name = 'export_exists';
+----
+0
+
+# case: fixture.footer The native artifact declares the exact target and extension version
+query TTTTT
+SELECT max(observed) FILTER (WHERE name = 'abi'), max(observed) FILTER (WHERE name = 'extension_version'),
+       max(observed) FILTER (WHERE name = 'duckdb_version'), max(observed) FILTER (WHERE name = 'platform'),
+       max(observed) FILTER (WHERE name = 'metadata_format') FROM package WHERE kind = 'footer';
+----
+C_STRUCT_UNSTABLE	v0.2.0	v2.0.1	osx_arm64	4
+
+# case: fixture.exports The package exposes one initializer and only system runtime dependencies
+query T
+SELECT observed FROM package WHERE kind = 'export';
+----
+_quack_weave_init_c_api_v2
+
+query I
+SELECT count(*) FROM package WHERE kind = 'import'
+AND NOT (starts_with(observed, '/usr/lib/') OR starts_with(observed, '/System/Library/'));
+----
+0
+
+query I
+SELECT CAST(count(*) > 0 AS INTEGER) FROM package WHERE kind = 'import';
+----
+1
+
+# case: fixture.notices Each GQL notice has the pinned file digest
+query I
+SELECT count(*) FROM package WHERE kind = 'notice' AND observed = expected;
+----
+3

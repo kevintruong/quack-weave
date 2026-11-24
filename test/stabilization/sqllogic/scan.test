@@ -1,0 +1,73 @@
+# name: test/stabilization/sqllogic/scan.test
+# description: Arrow schema validation, batching, budget and early close
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_GRAPH UNSET_QW_GRAPH
+
+# case: scan.setup Load native package and bind the sample graph
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+# case: scan.schema Wrong Arrow names, type, order and unsupported native graph-valued output
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS id$$, schema := 'wrong BIGINT');
+----
+QW_SCHEMA
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id DOUBLE');
+----
+QW_SCHEMA
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) RETURN b.id AS id, b.title AS title$$, schema := 'title VARCHAR, id BIGINT');
+----
+QW_SCHEMA
+
+statement error
+SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:Document) RETURN a AS node$$, schema := 'node VARCHAR');
+----
+QW_SCHEMA
+
+# case: scan.multibatch Checksum over 5,001 graph values and early close followed by same connection reuse
+query IIII
+SELECT count(*), sum(id), min(id), max(id) FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:HAS_SAMPLE]->(s:VectorRow) WHERE a.id = 100 RETURN s.id AS id$$, schema := 'id BIGINT');
+----
+5001	12507501	1	5001
+
+query I con1
+SELECT 42 FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:HAS_SAMPLE]->(s:VectorRow) WHERE a.id = 100 RETURN s.id AS id$$, schema := 'id BIGINT') LIMIT 1;
+----
+42
+
+query I con1
+SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+101
+101
+
+# case: scan.budget Enforce Arrow copy quota and recover after RESET
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}","max_batch_bytes":1}';
+
+statement error
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+QW_BATCH_BUDGET
+
+statement ok
+RESET qw_ladybug_config;
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+query I rowsort
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+101
+101

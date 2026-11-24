@@ -1,0 +1,162 @@
+# name: test/stabilization/sqllogic/reads.test
+# description: Cypher and GQL row semantics on one deterministic Ladybug graph
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_GRAPH UNSET_QW_GRAPH
+
+# case: read.setup Load exact packaged extension and configure graph
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+# case: read.cypher Cypher fixed and variable-length traversal
+query I rowsort
+SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+101
+101
+
+query I rowsort
+SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:Document {id: 100})-[:LINKS_TO*1..2]->(b:Document) RETURN DISTINCT b.id AS id$$, schema := 'id BIGINT');
+----
+101
+102
+103
+
+# case: read.gql Explicit case-insensitive alias and dialect with multiplicity
+query I rowsort
+SELECT * FROM qw_query('KG', 'GqL', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+101
+101
+
+# case: read.parity Equal row bags including NULLs and typed schema
+query ITTT
+SELECT id, title, typeof(id), typeof(title) FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 101 RETURN b.id AS id, b.title AS title$$, schema := 'id BIGINT, title VARCHAR') ORDER BY id;
+----
+101	Linked, λ	BIGINT	VARCHAR
+102	NULL	BIGINT	VARCHAR
+103	O'Brien; λ	BIGINT	VARCHAR
+
+query I
+WITH g AS (SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT')), c AS (SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$, schema := 'id BIGINT')) SELECT count(*) FROM ((SELECT * FROM g EXCEPT ALL SELECT * FROM c) UNION ALL (SELECT * FROM c EXCEPT ALL SELECT * FROM g));
+----
+0
+
+# case: read.filter FILTER and FILTER WHERE agree with native WHERE for text, integer and Boolean
+query I
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) FILTER b.title = "O'Brien; λ" RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+103
+
+query I rowsort
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) FILTER a.id = +100 RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+101
+101
+
+query I rowsort
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) FILTER a.id = 101 RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+101
+102
+103
+
+query I
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) FILTER WHERE b.title = "O'Brien; λ" RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+103
+
+query I rowsort
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) FILTER WHERE a.id = +100 RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+101
+101
+
+query I rowsort
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) FILTER WHERE a.id = 101 RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+101
+102
+103
+
+query I rowsort
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) FILTER b.active <> false RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+101
+101
+101
+103
+
+# case: read.comparison All ordered comparison operators preserve their result bags
+query I rowsort
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id < 101 RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+101
+101
+
+query I rowsort
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id <= 100 RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+101
+101
+
+query I rowsort
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id > 100 RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+101
+102
+103
+
+query I rowsort
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id >= 101 RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+101
+102
+103
+
+# case: read.self Repeated exact variable matches only its self-loop
+query I
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(a:Document) RETURN a.id AS id$$, schema := 'id BIGINT');
+----
+101
+
+# case: read.scalar All supported scalar outputs, nulls and host types
+query ITTTTTT
+SELECT id, title, active::VARCHAR, ratio::VARCHAR, typeof(title), typeof(active), typeof(ratio) FROM qw_query('kg', 'cypher', $$MATCH (a:Document) RETURN a.id AS id, a.title AS title, a.active AS active, a.ratio AS ratio$$, schema := 'id BIGINT, title VARCHAR, active BOOLEAN, ratio DOUBLE') WHERE id IN (101,102) ORDER BY id;
+----
+101	Linked, λ	true	1.25	VARCHAR	BOOLEAN	DOUBLE
+102	NULL	NULL	NULL	VARCHAR	BOOLEAN	DOUBLE
+
+# case: read.join DuckDB inner and left joins preserve multiplicity
+query TI
+SELECT d.label, count(g.id) FROM (VALUES (101,'Found'),(999,'Absent')) AS d(id,label) LEFT JOIN qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT') AS g ON d.id = g.id GROUP BY d.label ORDER BY d.label;
+----
+Absent	0
+Found	2
+
+# case: read.empty Zero-row graph result retains declared type
+query I
+SELECT count(*) FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = -1 RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+0
+
+query TTTTTT
+DESCRIBE SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = -1 RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+id	BIGINT	YES	NULL	NULL	NULL
+
+# case: read.literal Semicolon and escaped Unicode and quote payloads remain literal data
+query T
+SELECT * FROM qw_query('kg', 'cypher', $$MATCH (a:Document {id: 100}) RETURN 'semi;colon' AS title$$, schema := 'title VARCHAR');
+----
+semi;colon
+
+query I
+SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE b.title = 'O\'Brien; \u03bb' RETURN b.id AS id$$, schema := 'id BIGINT');
+----
+103
