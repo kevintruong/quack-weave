@@ -1,6 +1,6 @@
 # QuackWeave
 
-QuackWeave MVP1 is a native DuckDB extension that runs a single read-only Cypher query against an existing local Ladybug graph. `qw_query` returns typed rows for regular DuckDB queries, including joins and aggregates.
+QuackWeave is a native DuckDB extension for a single read-only query against an existing local Ladybug graph. `qw_query` returns typed rows for regular DuckDB queries, including joins and aggregates. MVP1 supports Cypher. MVP2 also supports a bounded GQL read dialect.
 
 ## Build and use MVP1
 
@@ -36,6 +36,46 @@ Run the native acceptance suite with version-matched DuckDB and Ladybug CLI bina
 ```sh
 make mvp1-test DUCKDB=/path/to/duckdb-v2.0.1 LBUG=/path/to/lbug-v0.22.3
 ```
+
+## Build and use MVP2
+
+MVP2 adds a pinned DuckGQL parser and ANTLR C++ runtime to the macOS arm64 build for DuckDB `v2.0.1` and Ladybug `v0.22.3`. Install CMake in addition to the MVP1 build prerequisites.
+
+```sh
+make mvp2-deps
+make mvp2
+make mvp2-release
+```
+
+The artifacts are `build/mvp2/debug/extension/quack_weave/quack_weave.duckdb_extension` and `build/mvp2/release/extension/quack_weave/quack_weave.duckdb_extension`. The accompanying `licenses/` directory contains the GQL frontend notices for DuckGQL at revision `b4421c5cb5e3a389f9658de591a0aa6d397da991`, the openGQL grammar vendored at that revision, and ANTLR `4.13.2`. [DuckGQL](https://github.com/rahul-iyer/duckdb-gql/tree/b4421c5cb5e3a389f9658de591a0aa6d397da991) · [openGQL grammar](https://github.com/rahul-iyer/duckdb-gql/tree/b4421c5cb5e3a389f9658de591a0aa6d397da991/third_party/opengql) · [ANTLR](https://github.com/antlr/antlr4/tree/4.13.2)
+
+Load the MVP2 artifact in DuckDB `v2.0.1` started with `-unsigned`, then configure the existing Ladybug graph as in MVP1.
+
+```sql
+LOAD '/absolute/path/to/quack-weave/build/mvp2/release/extension/quack_weave/quack_weave.duckdb_extension';
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"/absolute/path/to/documents.lbdb"}';
+
+SELECT document_id
+FROM qw_query(
+    'kg', 'gql',
+    $$MATCH (src:Document)-[:LINKS_TO]->(doc:Document)
+      FILTER src.id = 100
+      RETURN doc.id AS document_id$$,
+    schema := 'document_id BIGINT'
+);
+```
+
+The GQL subset supports one fixed, directed `MATCH` with named, labeled nodes and a relationship type. Use unquoted ASCII identifiers and omit the trailing semicolon inside the GQL payload. Return aliased scalar properties and optionally filter with one property-to-literal comparison using `WHERE`, `FILTER`, or `FILTER WHERE`. The literals are Boolean, signed integers, or strings.
+
+The `schema` option and Ladybug timeout and batch limit settings apply to both dialects. Syntax errors use `QW_GQL_PARSE`, and valid syntax outside this subset uses `QW_GQL_SUBSET`. A Cypher-only MVP1 build reports `QW_GQL_UNAVAILABLE` for a GQL call.
+
+Run package and runtime checks for both MVP2 artifacts with the pinned CLIs.
+
+```sh
+make mvp2-test DUCKDB=/path/to/duckdb-v2.0.1 LBUG=/path/to/lbug-v0.22.3
+```
+
+The default build remains MVP1 and its Cypher-only artifact stays under `build/debug` or `build/release`.
 
 ## Rust extension template reference
 This is an template for Rust based extensions based on the V2 C API of DuckDB. This repository will become a stable basis for pure-Rust DuckDB extensions that can be submitted to the Community extensions repository. 

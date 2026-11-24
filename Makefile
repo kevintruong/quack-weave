@@ -1,6 +1,7 @@
 .DEFAULT_GOAL := mvp1
 
 .PHONY: clean clean_all mvp1 mvp1-release mvp1-deps mvp1-test mvp2-deps
+.PHONY: mvp2 mvp2-release mvp2-test
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -47,6 +48,10 @@ MVP1_TARGET := aarch64-apple-darwin
 MVP1_CARGO_DIR := $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),target)
 MVP1_DEBUG_ARTIFACT := build/debug/extension/quack_weave/quack_weave.duckdb_extension
 MVP1_RELEASE_ARTIFACT := build/release/extension/quack_weave/quack_weave.duckdb_extension
+MVP2_EXTENSION_VERSION := v0.2.0
+MVP2_CARGO_DIR := $(MVP1_CARGO_DIR)/mvp2
+MVP2_DEBUG_ARTIFACT := build/mvp2/debug/extension/quack_weave/quack_weave.duckdb_extension
+MVP2_RELEASE_ARTIFACT := build/mvp2/release/extension/quack_weave/quack_weave.duckdb_extension
 
 PYTHON_BIN ?= python3
 DUCKDB ?= duckdb
@@ -58,10 +63,30 @@ mvp1-deps:
 mvp2-deps: mvp1-deps
 	$(PYTHON_BIN) -B scripts/prepare_gql_deps.py
 
-define make_mvp1
-	@test "$$(uname -s):$$(uname -m)" = "Darwin:arm64" || { echo 'MVP1 builds on macOS arm64.' >&2; exit 1; }
+define build_native
+	@test "$$(uname -s):$$(uname -m)" = "Darwin:arm64" || { echo 'Native QuackWeave builds on macOS arm64.' >&2; exit 1; }
 	cargo build --locked --package rusty_quack --target $(MVP1_TARGET) $(1)
+endef
+
+define make_mvp1
+	$(call build_native,$(1))
 	$(PYTHON_BIN) scripts/package_mvp1.py '$(MVP1_CARGO_DIR)/$(MVP1_TARGET)/$(2)/librusty_quack.dylib' '$(3)' $(MVP1_DUCKDB_VERSION) osx_arm64 $(MVP1_EXTENSION_VERSION)
+endef
+
+define make_mvp2
+	$(call build_native,$(1) --features gql --target-dir '$(MVP2_CARGO_DIR)')
+	$(PYTHON_BIN) -B scripts/package_mvp2.py '$(MVP2_CARGO_DIR)/$(MVP1_TARGET)/$(2)/librusty_quack.dylib' '$(3)' $(MVP1_DUCKDB_VERSION) osx_arm64 $(MVP2_EXTENSION_VERSION)
+endef
+
+define check_native
+	QUACK_WEAVE_TEST_ARTIFACT='$(1)' $(PYTHON_BIN) test/native_package_test.py
+	$(PYTHON_BIN) test/mvp1_acceptance.py --duckdb '$(DUCKDB)' --lbug '$(LBUG)' --extension '$(1)'
+endef
+
+define check_mvp2
+	$(call check_native,$(1))
+	$(PYTHON_BIN) -B test/mvp2_bind_test.py --duckdb '$(DUCKDB)' --lbug '$(LBUG)' --extension '$(1)'
+	$(PYTHON_BIN) -B test/mvp2_acceptance.py --duckdb '$(DUCKDB)' --lbug '$(LBUG)' --extension '$(1)'
 endef
 
 mvp1:
@@ -71,5 +96,14 @@ mvp1-release:
 	$(call make_mvp1,--release,release,$(MVP1_RELEASE_ARTIFACT))
 
 mvp1-test: mvp1
-	QUACK_WEAVE_TEST_ARTIFACT='$(MVP1_DEBUG_ARTIFACT)' $(PYTHON_BIN) test/native_package_test.py
-	$(PYTHON_BIN) test/mvp1_acceptance.py --duckdb '$(DUCKDB)' --lbug '$(LBUG)' --extension '$(MVP1_DEBUG_ARTIFACT)'
+	$(call check_native,$(MVP1_DEBUG_ARTIFACT))
+
+mvp2:
+	$(call make_mvp2,,debug,$(MVP2_DEBUG_ARTIFACT))
+
+mvp2-release:
+	$(call make_mvp2,--release,release,$(MVP2_RELEASE_ARTIFACT))
+
+mvp2-test: mvp2 mvp2-release
+	$(call check_mvp2,$(MVP2_DEBUG_ARTIFACT))
+	$(call check_mvp2,$(MVP2_RELEASE_ARTIFACT))
