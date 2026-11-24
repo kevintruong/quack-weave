@@ -137,3 +137,4 @@ values.identity,graph_values.test,mvp2-debug|mvp2-release,4
 values.empty,graph_values.test,mvp2-debug|mvp2-release,4
 values.path_shapes,graph_values.test,mvp2-debug|mvp2-release,3
 values.budget,graph_values.test,mvp2-debug|mvp2-release,6
+hybrid.aggregate_pushdown,graph_aggregate_pushdown.test,mvp2-debug|mvp2-release,23

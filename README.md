@@ -130,6 +130,8 @@ FETCH FIRST 2 ROWS ONLY;
 
 The SQL/PGQ read surface supports named, labeled vertices and named, typed edges in fixed forward patterns. `COLUMNS` exposes the projected columns to SQL. Use a view or CTE to reuse them in subqueries, set operations or aggregates. DuckDB evaluates the outer join, ordering and row limit. [Hybrid fixture and SQLLogic examples](test/stabilization/sqllogic/hybrid_public.test)
 
+For an unfiltered traversal, DuckDB can delegate a scalar `COUNT(*)` and `SUM` over a projected `BIGINT` to Ladybug. For example, `SELECT count(*), sum(route_id % 1000003) FROM routes` can fetch one aggregate row when `routes` is a view projecting the graph properties directly. The sum retains DuckDB's `HUGEINT` result type and returns `NULL` for empty or all-null input. [Aggregate SQLLogic examples](test/stabilization/sqllogic/graph_aggregate_pushdown.test)
+
 For a selective graph scan, write the predicate inside `GRAPH_TABLE`, for example `WHERE e.rid = 101` or `WHERE e.rid IN (101, 104)`. QuackWeave sends these predicates to Ladybug when the property is registered as `INT64` and the list contains at most 64 signed integer literals. DuckDB evaluates the original SQL predicate on the returned rows. Expressions, parameter values, and lists containing NULL use the ordinary DuckDB filter.
 
 You can also supply the keys once in an SQL watchlist. In this example Ladybug reads matches for route IDs 101 and 104. DuckDB joins those matches to the original watchlist, so the two entries for 101 produce two result rows.

@@ -172,11 +172,15 @@ def main():
         air_routes = scratch / "air_routes.lbdb"
         ladybug(lbug, air_routes, (HERE / "fixtures/air_routes.cypher").read_text(encoding="utf-8"))
         variables["QW_AIR_ROUTES"] = air_routes
+        amounts = scratch / "aggregate_values.lbdb"
+        ladybug(lbug, amounts, (HERE / "fixtures/aggregate_values.cypher").read_text(encoding="utf-8"))
+        variables["QW_AGGREGATE_VALUES"] = amounts
         archived_routes = scratch / "archived_routes.lbdb"
         shutil.copyfile(air_routes, archived_routes)
         os.utime(archived_routes, ns=(-1_000_000_001, -1_000_000_001))
         variables["QW_ARCHIVED_ROUTES"] = archived_routes
-        fixtures = {"duckgql": duckgql_graph, "replacement": replacement_graph, "air_routes": air_routes}
+        fixtures = {"duckgql": duckgql_graph, "replacement": replacement_graph, "air_routes": air_routes,
+                    "aggregate_values": amounts}
 
         before = scratch / "before.json"
         after = scratch / "after.json"
@@ -185,7 +189,7 @@ def main():
         run_cases(unittest, scratch, variables, [test_dir / name for name in (
             "reads.test", "gql_compatibility.test", "usage_relations.test", "usage_binding.test",
             "usage_boundary.test", "air_routes_fixture.test", "graph_metadata.test",
-            "graph_entry.test", "graph_table.test", "hybrid_public.test",
+            "graph_entry.test", "graph_table.test", "graph_aggregate_pushdown.test", "hybrid_public.test",
             "graph_parameters.test", "graph_values.test",
             "bind.test", "admission.test", "scan.test", "host_access.test", "limits.test",
             "timeout.test_slow", "artifact.test",

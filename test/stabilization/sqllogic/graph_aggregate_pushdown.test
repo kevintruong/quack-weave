@@ -1,0 +1,112 @@
+# name: test/stabilization/sqllogic/graph_aggregate_pushdown.test
+# description: Exact ungrouped integer aggregates over an unfiltered Ladybug scan
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_AIR_ROUTES UNSET_QW_AIR_ROUTES
+
+test-env QW_AGGREGATE_VALUES UNSET_QW_AGGREGATE_VALUES
+
+# case: hybrid.aggregate_pushdown Aggregate result types, NULLs, wide sums, and scan cardinality
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"routes","path":"{QW_AIR_ROUTES}"}';
+
+statement ok
+CREATE VIEW edges AS SELECT * FROM GRAPH_TABLE (
+  routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS (o.code AS origin, e.rid AS mid, e.dist AS distance)
+) AS g;
+
+query III
+SELECT count(*), sum(mid % 11), sum(distance) FROM edges;
+----
+5	20	6010
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT count(*), sum(mid % 11) FROM edges;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 1,[^{}]*"name": "QW_QUERY".*
+
+# Grouped, filtered, and DISTINCT aggregates retain host semantics.
+query TII
+SELECT origin, count(*), sum(DISTINCT distance) FROM edges GROUP BY origin;
+----
+ATL	5	5064
+
+statement ok
+SET error_on_division_by_zero = false;
+
+query III
+SELECT count(*), sum(mid % 0), sum(mid) FILTER (WHERE mid < 103) FROM edges;
+----
+5	NULL	203
+
+query II
+SELECT count(*), sum(mid % 11) FROM edges WHERE mid <= 102;
+----
+2	5
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"w","path":"{QW_AGGREGATE_VALUES}"}';
+
+statement ok
+CREATE VIEW amounts AS SELECT * FROM GRAPH_TABLE (w MATCH (n:wide) COLUMNS (n.amount AS v, n.missing AS missing)) AS g;
+
+query IIIIITT
+SELECT count(*), sum(v), sum(v % 7), sum(missing), count(v), typeof(sum(v)), typeof(count(*)) FROM amounts;
+----
+4	18446744073709551604	-3	NULL	3	HUGEINT	BIGINT
+
+query III
+SELECT count(*), sum(v), sum(missing) FROM amounts;
+----
+4	18446744073709551604	NULL
+
+query II
+SELECT count(*), sum(id) FROM GRAPH_TABLE (w MATCH (n:empty_rows) COLUMNS (n.k AS id)) AS g;
+----
+0	NULL
+
+# Direct callers can supply scoped or limited Cypher; the optimizer preserves their rows.
+query II
+SELECT count(*), sum(qw_col0) FROM qw_graph_query('w', 'cypher',
+  'MATCH (n:wide) RETURN n.amount AS qw_col0 ORDER BY n.k LIMIT 1');
+----
+1	9223372036854775807
+
+query II
+SELECT count(*), sum(v) FROM amounts TABLESAMPLE reservoir(0 ROWS);
+----
+0	NULL
+
+# Batch budgets apply to the original provider output, including its failure path.
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"w","path":"{QW_AGGREGATE_VALUES}","max_batch_bytes":1}';
+
+statement error
+SELECT count(*), sum(v) FROM amounts;
+----
+QW_BATCH_BUDGET
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"w","path":"{QW_AGGREGATE_VALUES}","max_batch_bytes":4096}';
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT count(*), sum(v) FROM amounts;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 4,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"w","path":"{QW_AGGREGATE_VALUES}"}';
+
+# A user-defined percent macro binds to its own expression.
+statement ok
+CREATE TEMP MACRO "%"(x,y) AS 42::BIGINT;
+
+query I
+SELECT sum(v % 7) FROM amounts;
+----
+168

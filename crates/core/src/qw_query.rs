@@ -32,6 +32,7 @@ use duckdb_neo::{
 };
 use serde::{Deserialize, Serialize};
 
+mod aggregate_scan;
 mod gql;
 mod graph_value;
 pub use graph_value::{GraphColumn, GraphValue};
@@ -840,6 +841,7 @@ fn register_query(
             gql_parser,
         },
     )
+    .with_get_bind_info()
     .register(extension)?;
     for (name, kind) in [
         ("qw_graph_query", GraphQueryKind::InferredSchema),
@@ -868,6 +870,7 @@ fn register_query(
                 gql_parser,
             },
         )
+        .with_get_bind_info()
         .register(extension)?;
     }
     Ok(())
