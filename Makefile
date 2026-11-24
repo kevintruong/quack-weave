@@ -125,3 +125,4 @@ mvp2-stabilization-test: mvp2 mvp2-release mvp1
 	$(call record_stabilization,mvp2-release,$(stabilization_slt) --extension '$(MVP2_RELEASE_ARTIFACT)')
 	$(call record_stabilization,cypher-only,$(stabilization_slt) --extension '$(MVP1_DEBUG_ARTIFACT)' --without-gql)
 	$(call record_stabilization,observer,$(stabilization_observer))
+	$(PYTHON_BIN) -B test/stabilization/check_coverage.py --report-dir '$(STABILIZATION_REPORT_DIR)'

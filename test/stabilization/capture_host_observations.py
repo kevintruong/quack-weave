@@ -14,6 +14,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from mvp1_acceptance import graph_query, provision, sql_literal
+from run_sqllogictest import DUCKDB_PIN_SOURCE, DUCKDB_PIN_VERSION
 
 
 class Result(c.Structure):
@@ -237,13 +238,15 @@ def main():
     graph = args.graph.resolve(strict=True)
     extension = args.extension.resolve(strict=True)
     api = duckdb_api(args.duckdb_lib)
-    if api.duckdb_library_version() != b"v2.0.1":
-        parser.error("DuckDB C API library v2.0.1 is required")
+    if api.duckdb_library_version() != DUCKDB_PIN_VERSION.encode():
+        parser.error(f"DuckDB C API library {DUCKDB_PIN_VERSION} is required")
     call = graph_query(
         "MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS document_id",
         dialect="gql",
     )
     with open_connection(api) as connection:
+        execute_setup(api, connection, f"SELECT CASE WHEN source_id = '{DUCKDB_PIN_SOURCE}' THEN true "
+                      "ELSE error('DuckDB C API library source ID mismatch') END FROM pragma_version();")
         execute_setup(api, connection, f"LOAD {sql_literal(extension)};")
         observe_host_scans(api, connection, graph, f"SELECT * FROM {call}")
         observe_path_swap(api, connection, graph, f"SELECT * FROM {call}")

@@ -18,6 +18,13 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 from mvp1_acceptance import LADYBUG_VERSION, ladybug
 
+DUCKDB_PIN_VERSION = "v2.0.1"
+DUCKDB_PIN_SOURCE = "8d78114e90"
+PIN_PROBE_SQL = (
+    "query TT\nSELECT library_version, source_id FROM pragma_version();\n----\n"
+    f"{DUCKDB_PIN_VERSION}\t{DUCKDB_PIN_SOURCE}\n\n"
+)
+
 
 SNAPSHOT = """\
 MATCH (d:Document) RETURN d.id AS id, d.title AS title, d.active AS active, d.ratio AS ratio ORDER BY id;
@@ -36,6 +43,12 @@ NOTICE_HASHES = {
 
 def write_json(path, value):
     path.write_text(json.dumps(value, sort_keys=True, ensure_ascii=False), encoding="utf-8")
+
+
+def report_artifact(path):
+    with path.open("rb") as artifact:
+        identity = {"name": str(path), "sha256": hashlib.file_digest(artifact, "sha256").hexdigest()}
+    print("[QW_ARTIFACT] " + json.dumps(identity), flush=True)
 
 
 def snapshot(binary, graph, target):
@@ -75,18 +88,24 @@ def run_cases(unittest, scratch, variables, files=(), stdin=None):
         manifest = scratch / "slt-files.txt"
         manifest.write_text("\n".join(str(file) for file in files) + "\n", encoding="utf-8")
         args += ["-f", manifest]
-        expected = {
-            str(file): len(re.findall(r"^(?:query [TIR]+|statement (?:ok|error))\b", file.read_text(), re.M))
-            for file in files
-        }
+        source_bytes = {str(file): file.read_bytes() for file in files}
+        expected = {name: len(re.findall(r"^(?:query [TIR]+|statement (?:ok|error))\b",
+                                        source.decode("utf-8"), re.M))
+                    for name, source in source_bytes.items()}
     else:
         args.append("--stdin")
         expected = {"<stdin>": 1}
+        source_bytes = {"<stdin>": stdin.encode("utf-8")}
+    for name, source in source_bytes.items():
+        identity = {"name": name, "sha256": hashlib.sha256(source).hexdigest(), "blocks": expected[name]}
+        print("[QW_SLT_SOURCE] " + json.dumps(identity), flush=True)
     result = subprocess.run(
         args, input=stdin, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         env=env, cwd=scratch, timeout=120, check=False,
     )
     print(result.stdout, end="")
+    if stdin is None and any(file.read_bytes() != source_bytes[str(file)] for file in files):
+        raise SystemExit("SQLLogicTest sources changed during execution")
     completed = {}
     for line in result.stdout.splitlines():
         if "[TEST_EVENT] " in line:
@@ -115,7 +134,7 @@ def main():
 
     with tempfile.TemporaryDirectory(prefix="qw-stabilization-") as directory:
         scratch = Path(directory).resolve()
-        run_cases(unittest, scratch, {}, stdin="query T\nSELECT version();\n----\nv2.0.1\n\n")
+        run_cases(unittest, scratch, {}, stdin=PIN_PROBE_SQL)
         graph = scratch / "graph.lbdb"
         ladybug(lbug, graph, (HERE / "fixtures/read_graph.cypher").read_text(encoding="utf-8"))
         corrupt = scratch / "corrupt.lbdb"
@@ -124,6 +143,7 @@ def main():
         relocated = scratch / "relocated artifact" / "quack_weave.duckdb_extension"
         relocated.parent.mkdir()
         shutil.copy2(package, relocated)
+        report_artifact(relocated)
         variables = {
             "QW_GRAPH": graph, "QW_CORRUPT": corrupt, "QW_EXPORT": export,
             "QW_EXT": relocated, "QW_ROOT": scratch,

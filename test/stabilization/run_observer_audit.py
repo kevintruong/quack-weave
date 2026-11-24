@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 
-from run_sqllogictest import HERE, LADYBUG_VERSION, ladybug, run_cases
+from run_sqllogictest import HERE, LADYBUG_VERSION, PIN_PROBE_SQL, ladybug, report_artifact, run_cases
 
 
 PREFIX = "QW_OBSERVATION\t"
@@ -58,7 +58,8 @@ def main():
 
     with tempfile.TemporaryDirectory(prefix="qw-observer-") as directory:
         scratch = Path(directory).resolve()
-        run_cases(unittest, scratch, {}, stdin="query T\nSELECT version();\n----\nv2.0.1\n\n")
+        run_cases(unittest, scratch, {}, stdin=PIN_PROBE_SQL)
+        report_artifact(extension)
         graph = scratch / "graph.lbdb"
         ladybug(lbug, graph, (HERE / "fixtures/read_graph.cypher").read_text(encoding="utf-8"))
         rust = ["cargo", "test", "--locked", "--package"]
