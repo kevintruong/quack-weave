@@ -1,0 +1,1568 @@
+{
+ "start": "2026-11-24T19:01:20.542780+00:00",
+ "finish": "2026-11-24T19:02:04.009845+00:00",
+ "graph_sha256": "84cd660cac88e20b627b40f2adf8de0c2c6d8693237c0d9f422469825721693f",
+ "graph_sha256_after": "84cd660cac88e20b627b40f2adf8de0c2c6d8693237c0d9f422469825721693f",
+ "graph_bytes": 526757888,
+ "platform": "macOS-26.7.1-arm64-arm-64bit-Mach-O",
+ "cpus": 10,
+ "packages": {
+  "baseline": {
+   "revision": "ecfcd8e",
+   "sha256": "1385701536ca193c1f423d2c6c60c68b60ac1463d9941a9fbf7e310b9ed97c14"
+  },
+  "current": {
+   "revision": "a2098d7",
+   "sha256": "7f8596688d59e129c18ec797da6e0522796ec64c6c7bb593360bc384c4e0f096"
+  }
+ },
+ "duckdb": "v2.0.1 8d78114e90",
+ "library_sha256": "aeaf2ab89938d40c4995ca478a1543a080ad180ea988ac4ba0793805e063c5dd",
+ "versions": {
+  "ladybug": "0.22.3",
+  "pyarrow": "23.0.1",
+  "adbc-driver-manager": "1.9.0"
+ },
+ "cases": {
+  "explain_only": [
+   "P12",
+   "plan",
+   "EXPLAIN (FORMAT JSON) SELECT g.author, count(*) AS n, sum(g.mid % 1000003) AS fingerprint\nFROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) COLUMNS (p.PersonId AS author, m.MessageId AS mid)) AS g\nJOIN (VALUES (4398046519825::BIGINT), (2435::BIGINT), (6575::BIGINT), (28587302326226::BIGINT), (-1::BIGINT)) AS watch(author) ON watch.author = g.author\nGROUP BY g.author ORDER BY g.author"
+  ],
+  "gql_lookup": [
+   "P1",
+   "point",
+   "MATCH (p:Person) WHERE p.PersonId = 4398046519825 RETURN p.PersonId AS id"
+  ],
+  "literal_watchlist": [
+   "P3/P10",
+   "groups",
+   "SELECT g.author, count(*) AS n, sum(g.mid % 1000003) AS fingerprint\nFROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) COLUMNS (p.PersonId AS author, m.MessageId AS mid)) AS g\nJOIN (VALUES (4398046519825::BIGINT), (2435::BIGINT), (6575::BIGINT), (28587302326226::BIGINT), (-1::BIGINT)) AS watch(author) ON watch.author = g.author\nGROUP BY g.author ORDER BY g.author"
+  ],
+  "table_watchlist": [
+   "P3/P10",
+   "groups",
+   "SELECT g.author, count(*) AS n, sum(mid % 1000003) AS fingerprint FROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) COLUMNS (p.PersonId AS author, m.MessageId AS mid)) AS g JOIN watch w ON g.author = w.author GROUP BY g.author ORDER BY g.author"
+  ]
+ },
+ "native_queries": {
+  "point": "MATCH (p:Person) WHERE p.PersonId = 4398046519825 RETURN p.PersonId AS id",
+  "fanout": "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId = 4398046519825 RETURN m.MessageId AS id",
+  "top": "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId = 4398046519825 RETURN m.MessageId AS id ORDER BY id LIMIT 10",
+  "fan_agg": "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId = 4398046519825 RETURN count(*) AS n, sum(m.MessageId % 1000003) AS fingerprint",
+  "scan": "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) RETURN count(*) AS n, sum(m.MessageId % 1000003) AS fingerprint",
+  "groups": "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId IN [4398046519825, 2435, 6575, 28587302326226, -1]\nRETURN p.PersonId AS author, count(*) AS n, sum(m.MessageId % 1000003) AS fingerprint\nORDER BY author",
+  "exists": "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId IN [4398046519825, 2435, 6575, 28587302326226, -1] RETURN DISTINCT p.PersonId AS author ORDER BY author",
+  "self": "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person), (m)-[:Message_hasCreator_Person]->(q:Person) WHERE p.PersonId = 4398046519825 AND q.PersonId = p.PersonId RETURN count(*) AS n, sum(m.MessageId % 1000003) AS fingerprint"
+ },
+ "setup_sql": {
+  "watch": "CREATE TEMP TABLE watch AS SELECT * FROM (VALUES (4398046519825::BIGINT), (2435::BIGINT), (6575::BIGINT), (28587302326226::BIGINT), (-1::BIGINT)) t(author)",
+  "author_messages": "CREATE TEMP VIEW author_messages AS SELECT * FROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId = 4398046519825 COLUMNS (p.PersonId AS author, m.MessageId AS mid)) AS g",
+  "selected": "CREATE TEMP VIEW selected AS SELECT * FROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId IN (4398046519825, 2435, 6575, 28587302326226, -1) COLUMNS (p.PersonId AS author, m.MessageId AS mid)) AS g",
+  "lookup": "PREPARE lookup AS MATCH (p:Person) WHERE p.PersonId = $author RETURN p.PersonId AS id"
+ },
+ "blocks": [
+  {
+   "engine": "baseline",
+   "block": 0,
+   "setup_ms": 88.623667,
+   "first_point_ms": 42.508833,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 754.359375,
+   "samples": {
+    "gql_lookup": [
+     [
+      42.801541,
+      82.713
+     ],
+     [
+      31.741042,
+      61.428
+     ],
+     [
+      34.213875,
+      66.125
+     ],
+     [
+      31.70325,
+      61.426
+     ],
+     [
+      36.085583,
+      69.925
+     ],
+     [
+      33.3945,
+      64.659
+     ]
+    ],
+    "explain_only": [
+     [
+      1.256958,
+      1.354
+     ],
+     [
+      1.148125,
+      1.216
+     ],
+     [
+      0.924542,
+      0.996
+     ],
+     [
+      1.013208,
+      1.092
+     ],
+     [
+      1.00225,
+      1.091
+     ],
+     [
+      0.985833,
+      1.069
+     ]
+    ],
+    "literal_watchlist": [
+     [
+      587.605,
+      1938.144
+     ],
+     [
+      471.251375,
+      1240.299
+     ],
+     [
+      438.872042,
+      1525.33
+     ],
+     [
+      446.172833,
+      1559.317
+     ],
+     [
+      466.435875,
+      1658.176
+     ],
+     [
+      437.02175,
+      1530.829
+     ]
+    ],
+    "table_watchlist": [
+     [
+      592.418125,
+      1957.009
+     ],
+     [
+      422.217959,
+      1117.606
+     ],
+     [
+      402.584708,
+      1054.274
+     ],
+     [
+      420.429,
+      1115.333
+     ],
+     [
+      468.777625,
+      1627.952
+     ],
+     [
+      418.47,
+      1114.56
+     ]
+    ]
+   },
+   "checks": {
+    "gql_lookup": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "explain_only": "graph operator present",
+    "table_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "literal_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ]
+   },
+   "provider_rows": {
+    "literal_watchlist": [
+     3809607
+    ],
+    "table_watchlist": [
+     3809607
+    ]
+   }
+  },
+  {
+   "engine": "current",
+   "block": 0,
+   "setup_ms": 88.4475,
+   "first_point_ms": 29.038375,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 732.59375,
+   "samples": {
+    "gql_lookup": [
+     [
+      2.574291,
+      3.031
+     ],
+     [
+      2.813042,
+      3.284
+     ],
+     [
+      3.11625,
+      3.647
+     ],
+     [
+      2.899209,
+      3.369
+     ],
+     [
+      3.728541,
+      4.247
+     ],
+     [
+      3.441667,
+      3.978
+     ]
+    ],
+    "explain_only": [
+     [
+      0.845,
+      0.923
+     ],
+     [
+      1.086584,
+      1.159
+     ],
+     [
+      1.014917,
+      1.089
+     ],
+     [
+      0.930167,
+      1.015
+     ],
+     [
+      1.41325,
+      1.499
+     ],
+     [
+      1.088792,
+      1.199
+     ]
+    ],
+    "literal_watchlist": [
+     [
+      9.180584,
+      29.412
+     ],
+     [
+      9.329375,
+      22.719
+     ],
+     [
+      10.030208,
+      30.283
+     ],
+     [
+      8.732709,
+      21.024
+     ],
+     [
+      10.572041,
+      23.844
+     ],
+     [
+      10.515667,
+      31.109
+     ]
+    ],
+    "table_watchlist": [
+     [
+      395.507542,
+      1390.002
+     ],
+     [
+      395.301208,
+      1039.274
+     ],
+     [
+      351.324542,
+      964.437
+     ],
+     [
+      359.028542,
+      972.783
+     ],
+     [
+      400.332042,
+      1417.374
+     ],
+     [
+      381.717709,
+      1041.401
+     ]
+    ]
+   },
+   "checks": {
+    "gql_lookup": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "explain_only": "graph operator present",
+    "table_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "literal_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ]
+   },
+   "provider_rows": {
+    "literal_watchlist": [
+     23316
+    ],
+    "table_watchlist": [
+     3809607
+    ]
+   }
+  },
+  {
+   "engine": "ladybug",
+   "block": 0,
+   "setup_ms": 65.765875,
+   "first_point_ms": 12.918084,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 216.09375,
+   "samples": {
+    "point": [
+     [
+      0.966625,
+      0.969
+     ],
+     [
+      0.935458,
+      0.937
+     ],
+     [
+      0.752875,
+      0.754
+     ],
+     [
+      0.769208,
+      0.771
+     ],
+     [
+      0.760083,
+      0.761
+     ],
+     [
+      0.722042,
+      0.723
+     ]
+    ],
+    "groups": [
+     [
+      3.917042,
+      16.249
+     ],
+     [
+      4.240125,
+      16.343
+     ],
+     [
+      3.887333,
+      16.084
+     ],
+     [
+      3.981459,
+      15.518
+     ],
+     [
+      3.839875,
+      16.379
+     ],
+     [
+      3.838541,
+      16.582
+     ]
+    ]
+   },
+   "checks": {
+    "point": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "groups": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ]
+   },
+   "provider_rows": {}
+  },
+  {
+   "engine": "ladybug",
+   "block": 1,
+   "setup_ms": 37.467875,
+   "first_point_ms": 6.934625,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 215.640625,
+   "samples": {
+    "point": [
+     [
+      0.92475,
+      0.933
+     ],
+     [
+      0.773292,
+      0.775
+     ],
+     [
+      0.814958,
+      0.817
+     ],
+     [
+      0.800209,
+      0.801
+     ],
+     [
+      0.886625,
+      0.888
+     ],
+     [
+      0.761125,
+      0.762
+     ]
+    ],
+    "groups": [
+     [
+      3.768792,
+      16.183
+     ],
+     [
+      3.82425,
+      15.902
+     ],
+     [
+      3.717208,
+      15.997
+     ],
+     [
+      3.635917,
+      15.821
+     ],
+     [
+      3.826708,
+      15.508
+     ],
+     [
+      3.76325,
+      15.407
+     ]
+    ]
+   },
+   "checks": {
+    "point": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "groups": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ]
+   },
+   "provider_rows": {}
+  },
+  {
+   "engine": "current",
+   "block": 1,
+   "setup_ms": 79.853584,
+   "first_point_ms": 28.865542,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 734.75,
+   "samples": {
+    "explain_only": [
+     [
+      1.205583,
+      1.283
+     ],
+     [
+      1.107459,
+      1.2
+     ],
+     [
+      1.24,
+      1.329
+     ],
+     [
+      1.045375,
+      1.125
+     ],
+     [
+      1.104,
+      1.19
+     ],
+     [
+      1.22,
+      1.326
+     ]
+    ],
+    "table_watchlist": [
+     [
+      408.436333,
+      1447.098
+     ],
+     [
+      407.614792,
+      1450.94
+     ],
+     [
+      378.861083,
+      1020.973
+     ],
+     [
+      358.220666,
+      970.933
+     ],
+     [
+      365.1325,
+      974.316
+     ],
+     [
+      382.741417,
+      1375.221
+     ]
+    ],
+    "gql_lookup": [
+     [
+      3.520541,
+      4.08
+     ],
+     [
+      3.145042,
+      3.624
+     ],
+     [
+      3.457917,
+      4.011
+     ],
+     [
+      2.728,
+      3.168
+     ],
+     [
+      2.851084,
+      3.313
+     ],
+     [
+      2.783458,
+      3.282
+     ]
+    ],
+    "literal_watchlist": [
+     [
+      10.927167,
+      33.513
+     ],
+     [
+      10.1145,
+      31.017
+     ],
+     [
+      8.981459,
+      21.704
+     ],
+     [
+      8.443208,
+      20.734
+     ],
+     [
+      8.554333,
+      26.757
+     ],
+     [
+      11.285167,
+      33.248
+     ]
+    ]
+   },
+   "checks": {
+    "explain_only": "graph operator present",
+    "gql_lookup": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "table_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "literal_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ]
+   },
+   "provider_rows": {}
+  },
+  {
+   "engine": "baseline",
+   "block": 1,
+   "setup_ms": 80.136958,
+   "first_point_ms": 40.682875,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 744.703125,
+   "samples": {
+    "explain_only": [
+     [
+      1.113167,
+      1.191
+     ],
+     [
+      1.346541,
+      1.466
+     ],
+     [
+      0.898333,
+      0.961
+     ],
+     [
+      1.001291,
+      1.062
+     ],
+     [
+      1.086666,
+      1.16
+     ],
+     [
+      0.991125,
+      1.098
+     ]
+    ],
+    "table_watchlist": [
+     [
+      473.786125,
+      1648.91
+     ],
+     [
+      394.391709,
+      1056.563
+     ],
+     [
+      402.502417,
+      1095.074
+     ],
+     [
+      396.907542,
+      1045.039
+     ],
+     [
+      474.055833,
+      1656.059
+     ],
+     [
+      461.9745,
+      1628.849
+     ]
+    ],
+    "gql_lookup": [
+     [
+      35.517875,
+      69.011
+     ],
+     [
+      37.97925,
+      64.039
+     ],
+     [
+      33.5545,
+      65.214
+     ],
+     [
+      33.216166,
+      64.688
+     ],
+     [
+      34.075875,
+      66.135
+     ],
+     [
+      38.497125,
+      74.785
+     ]
+    ],
+    "literal_watchlist": [
+     [
+      414.890125,
+      1109.67
+     ],
+     [
+      412.005416,
+      1074.309
+     ],
+     [
+      406.11775,
+      1072.403
+     ],
+     [
+      395.186166,
+      1038.549
+     ],
+     [
+      452.479084,
+      1575.022
+     ],
+     [
+      431.855958,
+      1138.314
+     ]
+    ]
+   },
+   "checks": {
+    "explain_only": "graph operator present",
+    "gql_lookup": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "table_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "literal_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ]
+   },
+   "provider_rows": {}
+  },
+  {
+   "engine": "baseline",
+   "block": 2,
+   "setup_ms": 83.42275,
+   "first_point_ms": 41.36625,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 784.5,
+   "samples": {
+    "literal_watchlist": [
+     [
+      419.127667,
+      1125.262
+     ],
+     [
+      463.991208,
+      1606.178
+     ],
+     [
+      403.261958,
+      1076.086
+     ],
+     [
+      396.393,
+      1053.576
+     ],
+     [
+      402.345917,
+      1058.19
+     ],
+     [
+      406.830292,
+      1076.312
+     ]
+    ],
+    "table_watchlist": [
+     [
+      450.62725,
+      1558.353
+     ],
+     [
+      460.442667,
+      1606.886
+     ],
+     [
+      430.710875,
+      1117.916
+     ],
+     [
+      405.046708,
+      1083.312
+     ],
+     [
+      399.226875,
+      1045.122
+     ],
+     [
+      587.750166,
+      1287.076
+     ]
+    ],
+    "explain_only": [
+     [
+      1.188542,
+      1.269
+     ],
+     [
+      0.996042,
+      1.102
+     ],
+     [
+      1.067209,
+      1.136
+     ],
+     [
+      0.941625,
+      1.027
+     ],
+     [
+      0.867375,
+      0.949
+     ],
+     [
+      1.011833,
+      1.088
+     ]
+    ],
+    "gql_lookup": [
+     [
+      38.563709,
+      74.384
+     ],
+     [
+      34.755708,
+      67.667
+     ],
+     [
+      33.274666,
+      33.766
+     ],
+     [
+      32.447541,
+      63.004
+     ],
+     [
+      31.4775,
+      61.053
+     ],
+     [
+      54.166458,
+      103.842
+     ]
+    ]
+   },
+   "checks": {
+    "table_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "gql_lookup": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "literal_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "explain_only": "graph operator present"
+   },
+   "provider_rows": {}
+  },
+  {
+   "engine": "ladybug",
+   "block": 2,
+   "setup_ms": 63.092709,
+   "first_point_ms": 10.692208,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 221.1875,
+   "samples": {
+    "groups": [
+     [
+      5.869083,
+      19.838
+     ],
+     [
+      5.658375,
+      20.934
+     ],
+     [
+      5.883708,
+      20.663
+     ],
+     [
+      6.435667,
+      20.602
+     ],
+     [
+      5.961792,
+      20.317
+     ],
+     [
+      6.177292,
+      20.657
+     ]
+    ],
+    "point": [
+     [
+      1.1555,
+      1.158
+     ],
+     [
+      1.41675,
+      1.397
+     ],
+     [
+      1.382375,
+      1.366
+     ],
+     [
+      1.625667,
+      1.624
+     ],
+     [
+      1.548875,
+      1.513
+     ],
+     [
+      1.283375,
+      1.281
+     ]
+    ]
+   },
+   "checks": {
+    "groups": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "point": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ]
+   },
+   "provider_rows": {}
+  },
+  {
+   "engine": "current",
+   "block": 2,
+   "setup_ms": 116.191334,
+   "first_point_ms": 37.575125,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 739.203125,
+   "samples": {
+    "literal_watchlist": [
+     [
+      9.7965,
+      23.489
+     ],
+     [
+      11.730458,
+      34.608
+     ],
+     [
+      9.246583,
+      22.429
+     ],
+     [
+      8.986125,
+      21.431
+     ],
+     [
+      11.534959,
+      33.884
+     ],
+     [
+      10.299084,
+      24.192
+     ]
+    ],
+    "table_watchlist": [
+     [
+      404.922458,
+      1064.082
+     ],
+     [
+      410.127292,
+      1052.524
+     ],
+     [
+      403.31975,
+      1054.261
+     ],
+     [
+      378.707041,
+      1003.158
+     ],
+     [
+      419.732041,
+      1460.888
+     ],
+     [
+      417.295333,
+      1086.247
+     ]
+    ],
+    "explain_only": [
+     [
+      1.266083,
+      1.351
+     ],
+     [
+      1.053833,
+      1.188
+     ],
+     [
+      1.223458,
+      1.303
+     ],
+     [
+      1.153875,
+      1.279
+     ],
+     [
+      1.114209,
+      1.246
+     ],
+     [
+      1.232209,
+      1.315
+     ]
+    ],
+    "gql_lookup": [
+     [
+      3.260959,
+      3.813
+     ],
+     [
+      2.996916,
+      3.42
+     ],
+     [
+      3.145292,
+      3.255
+     ],
+     [
+      2.975958,
+      3.074
+     ],
+     [
+      3.5605,
+      4.138
+     ],
+     [
+      3.459417,
+      4.012
+     ]
+    ]
+   },
+   "checks": {
+    "table_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "gql_lookup": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "literal_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "explain_only": "graph operator present"
+   },
+   "provider_rows": {}
+  },
+  {
+   "engine": "current",
+   "block": 3,
+   "setup_ms": 93.673167,
+   "first_point_ms": 34.381167,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 739.09375,
+   "samples": {
+    "gql_lookup": [
+     [
+      3.6305,
+      4.258
+     ],
+     [
+      3.280166,
+      3.357
+     ],
+     [
+      2.716125,
+      3.174
+     ],
+     [
+      2.808667,
+      3.368
+     ],
+     [
+      3.052875,
+      3.543
+     ],
+     [
+      3.558667,
+      4.205
+     ]
+    ],
+    "table_watchlist": [
+     [
+      414.880833,
+      1093.771
+     ],
+     [
+      399.808209,
+      1049.097
+     ],
+     [
+      352.704208,
+      967.609
+     ],
+     [
+      345.673708,
+      945.266
+     ],
+     [
+      368.8485,
+      1322.874
+     ],
+     [
+      407.727542,
+      1433.862
+     ]
+    ],
+    "explain_only": [
+     [
+      1.231958,
+      1.366
+     ],
+     [
+      1.204125,
+      1.297
+     ],
+     [
+      1.029333,
+      1.09
+     ],
+     [
+      1.11225,
+      1.194
+     ],
+     [
+      1.1205,
+      1.19
+     ],
+     [
+      1.554458,
+      1.644
+     ]
+    ],
+    "literal_watchlist": [
+     [
+      10.95275,
+      33.627
+     ],
+     [
+      10.106458,
+      23.276
+     ],
+     [
+      8.782166,
+      27.997
+     ],
+     [
+      8.69075,
+      20.675
+     ],
+     [
+      11.082125,
+      32.933
+     ],
+     [
+      11.769292,
+      33.575
+     ]
+    ]
+   },
+   "checks": {
+    "gql_lookup": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "literal_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "table_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "explain_only": "graph operator present"
+   },
+   "provider_rows": {}
+  },
+  {
+   "engine": "baseline",
+   "block": 3,
+   "setup_ms": 108.037958,
+   "first_point_ms": 53.724709,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 761.765625,
+   "samples": {
+    "gql_lookup": [
+     [
+      48.496208,
+      89.624
+     ],
+     [
+      39.755,
+      77.103
+     ],
+     [
+      30.917625,
+      60.438
+     ],
+     [
+      31.331459,
+      60.57
+     ],
+     [
+      40.2745,
+      77.993
+     ],
+     [
+      32.477041,
+      63.247
+     ]
+    ],
+    "table_watchlist": [
+     [
+      534.573792,
+      1791.848
+     ],
+     [
+      477.51325,
+      1229.004
+     ],
+     [
+      408.293667,
+      1087.159
+     ],
+     [
+      403.193292,
+      1066.956
+     ],
+     [
+      465.304917,
+      1613.155
+     ],
+     [
+      424.777541,
+      1124.857
+     ]
+    ],
+    "explain_only": [
+     [
+      1.275167,
+      1.371
+     ],
+     [
+      1.235667,
+      1.323
+     ],
+     [
+      0.8965,
+      0.982
+     ],
+     [
+      1.052167,
+      1.113
+     ],
+     [
+      1.124292,
+      1.213
+     ],
+     [
+      0.992209,
+      1.066
+     ]
+    ],
+    "literal_watchlist": [
+     [
+      525.240917,
+      1789.136
+     ],
+     [
+      510.993916,
+      1755.68
+     ],
+     [
+      384.825584,
+      1038.557
+     ],
+     [
+      414.113916,
+      1081.035
+     ],
+     [
+      472.571666,
+      1649.246
+     ],
+     [
+      432.280834,
+      1101.078
+     ]
+    ]
+   },
+   "checks": {
+    "gql_lookup": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "literal_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "table_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "explain_only": "graph operator present"
+   },
+   "provider_rows": {}
+  },
+  {
+   "engine": "ladybug",
+   "block": 3,
+   "setup_ms": 37.190042,
+   "first_point_ms": 6.853208,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 213.78125,
+   "samples": {
+    "point": [
+     [
+      0.81775,
+      0.819
+     ],
+     [
+      0.7895,
+      0.79
+     ],
+     [
+      0.767875,
+      0.77
+     ],
+     [
+      0.753291,
+      0.754
+     ],
+     [
+      0.823666,
+      0.825
+     ],
+     [
+      0.767291,
+      0.769
+     ]
+    ],
+    "groups": [
+     [
+      3.605542,
+      15.948
+     ],
+     [
+      3.434291,
+      15.036
+     ],
+     [
+      3.622833,
+      15.492
+     ],
+     [
+      3.65275,
+      14.936
+     ],
+     [
+      3.837417,
+      15.652
+     ],
+     [
+      3.683167,
+      15.114
+     ]
+    ]
+   },
+   "checks": {
+    "groups": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "point": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ]
+   },
+   "provider_rows": {}
+  }
+ ],
+ "summary": [
+  {
+   "workload": "explain_only",
+   "pattern": "P12",
+   "engine": "baseline",
+   "n": 24,
+   "p50_ms": 1.0125205,
+   "p95_ms": 1.275167,
+   "cpu_ms": 1.1,
+   "provider_rows": null
+  },
+  {
+   "workload": "explain_only",
+   "pattern": "P12",
+   "engine": "current",
+   "n": 24,
+   "p50_ms": 1.1173545,
+   "p95_ms": 1.41325,
+   "cpu_ms": 1.2229999999999999,
+   "provider_rows": null
+  },
+  {
+   "workload": "gql_lookup",
+   "pattern": "P1",
+   "engine": "baseline",
+   "n": 24,
+   "p50_ms": 34.144875,
+   "p95_ms": 48.496208,
+   "cpu_ms": 65.6695,
+   "provider_rows": null
+  },
+  {
+   "workload": "gql_lookup",
+   "pattern": "P1",
+   "engine": "current",
+   "n": 24,
+   "p50_ms": 3.130646,
+   "p95_ms": 3.6305,
+   "cpu_ms": 3.4815,
+   "provider_rows": null
+  },
+  {
+   "workload": "gql_lookup",
+   "pattern": "P1",
+   "engine": "ladybug",
+   "n": 24,
+   "p50_ms": 0.816354,
+   "p95_ms": 1.548875,
+   "cpu_ms": 0.818,
+   "provider_rows": null
+  },
+  {
+   "workload": "literal_watchlist",
+   "pattern": "P3/P10",
+   "engine": "baseline",
+   "n": 24,
+   "p50_ms": 432.068396,
+   "p95_ms": 525.240917,
+   "cpu_ms": 1131.788,
+   "provider_rows": [
+    3809607
+   ]
+  },
+  {
+   "workload": "literal_watchlist",
+   "pattern": "P3/P10",
+   "engine": "current",
+   "n": 24,
+   "p50_ms": 10.068332999999999,
+   "p95_ms": 11.730458,
+   "cpu_ms": 27.377000000000002,
+   "provider_rows": [
+    23316
+   ]
+  },
+  {
+   "workload": "literal_watchlist",
+   "pattern": "P3/P10",
+   "engine": "ladybug",
+   "n": 24,
+   "p50_ms": 3.837979,
+   "p95_ms": 6.177292,
+   "cpu_ms": 16.0405,
+   "provider_rows": null
+  },
+  {
+   "workload": "table_watchlist",
+   "pattern": "P3/P10",
+   "engine": "baseline",
+   "n": 24,
+   "p50_ms": 427.74420799999996,
+   "p95_ms": 587.750166,
+   "cpu_ms": 1121.3865,
+   "provider_rows": [
+    3809607
+   ]
+  },
+  {
+   "workload": "table_watchlist",
+   "pattern": "P3/P10",
+   "engine": "current",
+   "n": 24,
+   "p50_ms": 395.40437499999996,
+   "p95_ms": 417.295333,
+   "cpu_ms": 1053.3925,
+   "provider_rows": [
+    3809607
+   ]
+  },
+  {
+   "workload": "table_watchlist",
+   "pattern": "P3/P10",
+   "engine": "ladybug",
+   "n": 24,
+   "p50_ms": 3.837979,
+   "p95_ms": 6.177292,
+   "cpu_ms": 16.0405,
+   "provider_rows": null
+  }
+ ]
+}

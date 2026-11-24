@@ -151,6 +151,8 @@ For a literal watchlist, use a graph on the left of an inner equality join, qual
 
 For a DuckDB table, use the same join, for example `JOIN watch AS w ON w.id = g.route_id`. When DuckDB builds a hash table on the watchlist and supplies a supported exact key filter, QuackWeave sends up to 64 `BIGINT` keys to Ladybug. DuckDB still performs the join, including duplicate matches, within the executing transaction. When the optimizer cannot supply an eligible filter, DuckDB joins the ordinary graph scan. `EXPLAIN (ANALYZE, FORMAT JSON)` shows how many rows the graph scan returned on that execution. [Table watchlist SQLLogic examples](test/stabilization/sqllogic/table_watchlist.test)
 
+The [SF1 usage benchmark notebook](benchmarks/lsqb_sf1/usage_regression.ipynb) compares the published Ladybug graph on two extension builds with direct Ladybug. It includes the executed watchlist and aggregate profiles, warm latency distributions, and the commands to repeat the measurements.
+
 To reuse an existing GQL or Cypher query verbatim, execute it on a graph-enabled connection and ingest its Arrow result into the SQL consumer. This example uses two ADBC cursors. A limit inside `graph_statement` applies before the directory join.
 
 ```python

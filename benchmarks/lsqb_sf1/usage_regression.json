@@ -1,0 +1,4779 @@
+{
+ "start": "2026-11-24T18:58:19.943281+00:00",
+ "finish": "2026-11-24T19:00:29.065039+00:00",
+ "graph_sha256": "84cd660cac88e20b627b40f2adf8de0c2c6d8693237c0d9f422469825721693f",
+ "graph_sha256_after": "84cd660cac88e20b627b40f2adf8de0c2c6d8693237c0d9f422469825721693f",
+ "graph_bytes": 526757888,
+ "platform": "macOS-26.7.1-arm64-arm-64bit-Mach-O",
+ "cpus": 10,
+ "packages": {
+  "baseline": {
+   "revision": "ecfcd8e",
+   "sha256": "1385701536ca193c1f423d2c6c60c68b60ac1463d9941a9fbf7e310b9ed97c14"
+  },
+  "current": {
+   "revision": "a2098d7",
+   "sha256": "7f8596688d59e129c18ec797da6e0522796ec64c6c7bb593360bc384c4e0f096"
+  }
+ },
+ "duckdb": "v2.0.1 8d78114e90",
+ "library_sha256": "aeaf2ab89938d40c4995ca478a1543a080ad180ea988ac4ba0793805e063c5dd",
+ "versions": {
+  "ladybug": "0.22.3",
+  "pyarrow": "23.0.1",
+  "adbc-driver-manager": "1.9.0"
+ },
+ "cases": {
+  "gql_lookup": [
+   "P1",
+   "point",
+   "MATCH (p:Person) WHERE p.PersonId = 4398046519825 RETURN p.PersonId AS id"
+  ],
+  "gql_fanout": [
+   "P1",
+   "fanout",
+   "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId = 4398046519825 RETURN m.MessageId AS id"
+  ],
+  "cypher_fanout": [
+   "P1",
+   "fanout",
+   "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId = 4398046519825 RETURN m.MessageId AS id"
+  ],
+  "graph_table_equality": [
+   "P2",
+   "fanout",
+   "SELECT mid AS id FROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId = 4398046519825 COLUMNS (p.PersonId AS author, m.MessageId AS mid)) AS g"
+  ],
+  "cte_order_limit": [
+   "P2/P3",
+   "top",
+   "WITH hits AS (SELECT mid AS id FROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId = 4398046519825 COLUMNS (p.PersonId AS author, m.MessageId AS mid)) AS g) SELECT id FROM hits ORDER BY id LIMIT 10"
+  ],
+  "view_self_join": [
+   "P4/P7",
+   "self",
+   "SELECT count(*), sum(l.mid % 1000003) FROM author_messages l JOIN author_messages r ON l.mid = r.mid AND l.author = r.author"
+  ],
+  "view_exists": [
+   "P5/P7",
+   "exists",
+   "SELECT w.author FROM watch w WHERE EXISTS (SELECT 1 FROM selected s WHERE s.author=w.author) ORDER BY w.author"
+  ],
+  "view_aggregate": [
+   "P6/P7",
+   "fan_agg",
+   "SELECT count(*) AS n, sum(mid % 1000003) AS fingerprint FROM author_messages"
+  ],
+  "prepared_match": [
+   "P8",
+   "point",
+   "EXECUTE lookup(author := 4398046519825)"
+  ],
+  "literal_watchlist": [
+   "P3/P10",
+   "groups",
+   "SELECT g.author, count(*) AS n, sum(g.mid % 1000003) AS fingerprint\nFROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) COLUMNS (p.PersonId AS author, m.MessageId AS mid)) AS g\nJOIN (VALUES (4398046519825::BIGINT), (2435::BIGINT), (6575::BIGINT), (28587302326226::BIGINT), (-1::BIGINT)) AS watch(author) ON watch.author = g.author\nGROUP BY g.author ORDER BY g.author"
+  ],
+  "table_watchlist": [
+   "P3/P10",
+   "groups",
+   "SELECT g.author, count(*) AS n, sum(mid % 1000003) AS fingerprint FROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) COLUMNS (p.PersonId AS author, m.MessageId AS mid)) AS g JOIN watch w ON g.author = w.author GROUP BY g.author ORDER BY g.author"
+  ],
+  "graph_table_in": [
+   "P2/P6",
+   "groups",
+   "SELECT g.author, count(*) AS n, sum(mid % 1000003) AS fingerprint FROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId IN (4398046519825, 2435, 6575, 28587302326226, -1) COLUMNS (p.PersonId AS author, m.MessageId AS mid)) AS g GROUP BY g.author ORDER BY g.author"
+  ],
+  "arrow_reuse": [
+   "P11",
+   "fan_agg",
+   "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId = 4398046519825 RETURN m.MessageId AS id"
+  ],
+  "full_scan": [
+   "P6",
+   "scan",
+   "SELECT count(*) AS n, sum(mid % 1000003) AS fingerprint FROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) COLUMNS (p.PersonId AS author, m.MessageId AS mid)) AS g"
+  ],
+  "explain_only": [
+   "P12",
+   "plan",
+   "EXPLAIN (FORMAT JSON) SELECT g.author, count(*) AS n, sum(g.mid % 1000003) AS fingerprint\nFROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) COLUMNS (p.PersonId AS author, m.MessageId AS mid)) AS g\nJOIN (VALUES (4398046519825::BIGINT), (2435::BIGINT), (6575::BIGINT), (28587302326226::BIGINT), (-1::BIGINT)) AS watch(author) ON watch.author = g.author\nGROUP BY g.author ORDER BY g.author"
+  ]
+ },
+ "native_queries": {
+  "point": "MATCH (p:Person) WHERE p.PersonId = 4398046519825 RETURN p.PersonId AS id",
+  "fanout": "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId = 4398046519825 RETURN m.MessageId AS id",
+  "top": "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId = 4398046519825 RETURN m.MessageId AS id ORDER BY id LIMIT 10",
+  "fan_agg": "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId = 4398046519825 RETURN count(*) AS n, sum(m.MessageId % 1000003) AS fingerprint",
+  "scan": "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) RETURN count(*) AS n, sum(m.MessageId % 1000003) AS fingerprint",
+  "groups": "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId IN [4398046519825, 2435, 6575, 28587302326226, -1]\nRETURN p.PersonId AS author, count(*) AS n, sum(m.MessageId % 1000003) AS fingerprint\nORDER BY author",
+  "exists": "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId IN [4398046519825, 2435, 6575, 28587302326226, -1] RETURN DISTINCT p.PersonId AS author ORDER BY author",
+  "self": "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person), (m)-[:Message_hasCreator_Person]->(q:Person) WHERE p.PersonId = 4398046519825 AND q.PersonId = p.PersonId RETURN count(*) AS n, sum(m.MessageId % 1000003) AS fingerprint"
+ },
+ "setup_sql": {
+  "watch": "CREATE TEMP TABLE watch AS SELECT * FROM (VALUES (4398046519825::BIGINT), (2435::BIGINT), (6575::BIGINT), (28587302326226::BIGINT), (-1::BIGINT)) t(author)",
+  "author_messages": "CREATE TEMP VIEW author_messages AS SELECT * FROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId = 4398046519825 COLUMNS (p.PersonId AS author, m.MessageId AS mid)) AS g",
+  "selected": "CREATE TEMP VIEW selected AS SELECT * FROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId IN (4398046519825, 2435, 6575, 28587302326226, -1) COLUMNS (p.PersonId AS author, m.MessageId AS mid)) AS g",
+  "lookup": "PREPARE lookup AS MATCH (p:Person) WHERE p.PersonId = $author RETURN p.PersonId AS id"
+ },
+ "blocks": [
+  {
+   "engine": "baseline",
+   "block": 0,
+   "setup_ms": 87.836917,
+   "first_point_ms": 45.019833,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 764.03125,
+   "samples": {
+    "view_self_join": [
+     [
+      671.55225,
+      2155.34
+     ],
+     [
+      677.371541,
+      2498.894
+     ],
+     [
+      639.477,
+      1756.456
+     ],
+     [
+      662.624666,
+      2125.403
+     ],
+     [
+      635.790792,
+      1761.792
+     ]
+    ],
+    "graph_table_equality": [
+     [
+      327.545125,
+      1208.817
+     ],
+     [
+      343.755917,
+      1268.523
+     ],
+     [
+      326.293542,
+      1210.77
+     ],
+     [
+      331.365542,
+      1226.304
+     ],
+     [
+      333.913417,
+      1217.123
+     ]
+    ],
+    "prepared_match": [
+     [
+      28.002916,
+      28.481
+     ],
+     [
+      30.92025,
+      31.67
+     ],
+     [
+      29.329292,
+      29.906
+     ],
+     [
+      28.929042,
+      29.479
+     ],
+     [
+      29.628583,
+      30.284
+     ]
+    ],
+    "explain_only": [
+     [
+      0.862125,
+      0.932
+     ],
+     [
+      0.924875,
+      0.992
+     ],
+     [
+      0.844834,
+      0.904
+     ],
+     [
+      0.882708,
+      0.952
+     ],
+     [
+      0.910709,
+      0.983
+     ]
+    ],
+    "view_aggregate": [
+     [
+      320.798458,
+      900.48
+     ],
+     [
+      326.32175,
+      1224.423
+     ],
+     [
+      356.831708,
+      1280.506
+     ],
+     [
+      324.34425,
+      873.381
+     ],
+     [
+      314.055375,
+      883.72
+     ]
+    ],
+    "table_watchlist": [
+     [
+      351.273,
+      952.726
+     ],
+     [
+      362.600875,
+      962.077
+     ],
+     [
+      358.051667,
+      992.774
+     ],
+     [
+      356.2465,
+      995.69
+     ],
+     [
+      382.100375,
+      1376.465
+     ]
+    ],
+    "gql_fanout": [
+     [
+      36.877916,
+      71.538
+     ],
+     [
+      39.912208,
+      77.485
+     ],
+     [
+      35.436958,
+      68.937
+     ],
+     [
+      39.66525,
+      77.266
+     ],
+     [
+      40.093958,
+      75.742
+     ]
+    ],
+    "cypher_fanout": [
+     [
+      34.370792,
+      68.887
+     ],
+     [
+      36.150334,
+      72.211
+     ],
+     [
+      38.120709,
+      76.222
+     ],
+     [
+      34.0435,
+      67.839
+     ],
+     [
+      35.237292,
+      70.446
+     ]
+    ],
+    "cte_order_limit": [
+     [
+      334.705541,
+      1248.5
+     ],
+     [
+      325.626333,
+      905.853
+     ],
+     [
+      324.464459,
+      901.268
+     ],
+     [
+      339.399125,
+      1252.431
+     ],
+     [
+      330.572375,
+      898.848
+     ]
+    ],
+    "arrow_reuse": [
+     [
+      39.586083,
+      75.996
+     ],
+     [
+      38.791458,
+      74.671
+     ],
+     [
+      38.594667,
+      74.618
+     ],
+     [
+      37.761625,
+      72.685
+     ],
+     [
+      36.346167,
+      70.015
+     ]
+    ],
+    "full_scan": [
+     [
+      329.908417,
+      1225.786
+     ],
+     [
+      330.863292,
+      1217.835
+     ],
+     [
+      332.641833,
+      902.905
+     ],
+     [
+      336.22375,
+      1239.58
+     ],
+     [
+      342.326333,
+      1257.46
+     ]
+    ],
+    "graph_table_in": [
+     [
+      328.953333,
+      897.699
+     ],
+     [
+      324.730875,
+      901.974
+     ],
+     [
+      333.877792,
+      903.954
+     ],
+     [
+      332.048625,
+      904.666
+     ],
+     [
+      346.262458,
+      1279.029
+     ]
+    ],
+    "gql_lookup": [
+     [
+      27.409042,
+      53.179
+     ],
+     [
+      28.633375,
+      55.732
+     ],
+     [
+      29.861416,
+      57.913
+     ],
+     [
+      27.086375,
+      52.619
+     ],
+     [
+      29.39475,
+      57.036
+     ]
+    ],
+    "literal_watchlist": [
+     [
+      350.199459,
+      945.314
+     ],
+     [
+      394.736041,
+      1374.848
+     ],
+     [
+      347.759,
+      957.012
+     ],
+     [
+      381.288458,
+      1389.541
+     ],
+     [
+      379.802875,
+      1370.126
+     ]
+    ],
+    "view_exists": [
+     [
+      331.392708,
+      884.991
+     ],
+     [
+      347.586625,
+      1263.623
+     ],
+     [
+      321.239125,
+      894.528
+     ],
+     [
+      322.221666,
+      880.67
+     ],
+     [
+      327.373333,
+      897.155
+     ]
+    ]
+   },
+   "checks": {
+    "table_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "view_aggregate": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "cypher_fanout": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "arrow_reuse": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "gql_fanout": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "view_exists": [
+     4,
+     "2dde95002194e90ebc8d4f132afa479af56ec6ec9b95bb1a48653303c1edda2b"
+    ],
+    "cte_order_limit": [
+     10,
+     "ecef664d3156a910a1cfd486e46ae8470cf971c1d1c945f4a2841f70b720f782"
+    ],
+    "explain_only": "graph operator present",
+    "prepared_match": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "full_scan": [
+     1,
+     "1aa9fa6698ed1cc6061d9a63a30e966a3302122b181512800b91a366728ec677"
+    ],
+    "gql_lookup": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "graph_table_equality": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "graph_table_in": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "view_self_join": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "literal_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ]
+   },
+   "provider_rows": {
+    "graph_table_equality": [
+     3809607
+    ],
+    "cte_order_limit": [
+     3809607
+    ],
+    "view_self_join": [
+     3809607,
+     3809607
+    ],
+    "view_exists": [
+     3809607
+    ],
+    "view_aggregate": [
+     3809607
+    ],
+    "literal_watchlist": [
+     3809607
+    ],
+    "table_watchlist": [
+     3809607
+    ],
+    "graph_table_in": [
+     3809607
+    ],
+    "full_scan": [
+     3809607
+    ]
+   }
+  },
+  {
+   "engine": "current",
+   "block": 0,
+   "setup_ms": 72.486,
+   "first_point_ms": 24.324625,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 737.625,
+   "samples": {
+    "view_self_join": [
+     [
+      6.603209,
+      6.791
+     ],
+     [
+      6.634666,
+      9.564
+     ],
+     [
+      6.369041,
+      6.502
+     ],
+     [
+      6.575,
+      9.495
+     ],
+     [
+      6.549792,
+      6.707
+     ]
+    ],
+    "graph_table_equality": [
+     [
+      3.287875,
+      6.252
+     ],
+     [
+      3.004625,
+      5.706
+     ],
+     [
+      3.149417,
+      5.989
+     ],
+     [
+      3.265958,
+      6.134
+     ],
+     [
+      3.322042,
+      6.231
+     ]
+    ],
+    "prepared_match": [
+     [
+      2.511042,
+      2.567
+     ],
+     [
+      2.339584,
+      2.43
+     ],
+     [
+      2.377042,
+      2.437
+     ],
+     [
+      1.976708,
+      2.031
+     ],
+     [
+      2.182167,
+      2.287
+     ]
+    ],
+    "explain_only": [
+     [
+      0.77,
+      0.832
+     ],
+     [
+      0.7915,
+      0.846
+     ],
+     [
+      0.705541,
+      0.767
+     ],
+     [
+      0.914917,
+      0.976
+     ],
+     [
+      0.74575,
+      0.811
+     ]
+    ],
+    "view_aggregate": [
+     [
+      3.347875,
+      3.435
+     ],
+     [
+      4.027167,
+      7.259
+     ],
+     [
+      3.119458,
+      3.255
+     ],
+     [
+      3.032875,
+      3.157
+     ],
+     [
+      3.322875,
+      6.098
+     ]
+    ],
+    "table_watchlist": [
+     [
+      297.365542,
+      856.876
+     ],
+     [
+      317.91975,
+      1176.073
+     ],
+     [
+      311.007583,
+      874.507
+     ],
+     [
+      309.564125,
+      849.603
+     ],
+     [
+      321.246708,
+      1187.587
+     ]
+    ],
+    "gql_fanout": [
+     [
+      4.663916,
+      6.905
+     ],
+     [
+      4.58275,
+      6.838
+     ],
+     [
+      4.441708,
+      6.643
+     ],
+     [
+      4.382458,
+      6.475
+     ],
+     [
+      4.194875,
+      4.266
+     ]
+    ],
+    "cypher_fanout": [
+     [
+      2.593125,
+      4.867
+     ],
+     [
+      2.654875,
+      4.992
+     ],
+     [
+      2.654042,
+      4.896
+     ],
+     [
+      2.122166,
+      2.188
+     ],
+     [
+      2.324084,
+      4.362
+     ]
+    ],
+    "cte_order_limit": [
+     [
+      2.759875,
+      2.839
+     ],
+     [
+      2.832417,
+      2.916
+     ],
+     [
+      3.09525,
+      5.893
+     ],
+     [
+      3.049083,
+      3.136
+     ],
+     [
+      3.0205,
+      3.14
+     ]
+    ],
+    "arrow_reuse": [
+     [
+      4.779917,
+      5.149
+     ],
+     [
+      6.393083,
+      9.353
+     ],
+     [
+      6.097583,
+      8.899
+     ],
+     [
+      5.64975,
+      8.53
+     ],
+     [
+      5.053083,
+      5.449
+     ]
+    ],
+    "full_scan": [
+     [
+      288.696875,
+      1078.166
+     ],
+     [
+      286.277333,
+      1085.637
+     ],
+     [
+      278.080209,
+      787.615
+     ],
+     [
+      275.185458,
+      772.827
+     ],
+     [
+      282.753625,
+      1077.413
+     ]
+    ],
+    "graph_table_in": [
+     [
+      7.183875,
+      18.707
+     ],
+     [
+      6.695167,
+      16.972
+     ],
+     [
+      6.666333,
+      16.736
+     ],
+     [
+      6.85525,
+      17.356
+     ],
+     [
+      7.231959,
+      23.982
+     ]
+    ],
+    "gql_lookup": [
+     [
+      2.384541,
+      2.738
+     ],
+     [
+      2.061,
+      2.125
+     ],
+     [
+      2.40525,
+      2.819
+     ],
+     [
+      2.444708,
+      2.865
+     ],
+     [
+      1.949375,
+      2.059
+     ]
+    ],
+    "literal_watchlist": [
+     [
+      7.793333,
+      24.962
+     ],
+     [
+      7.771958,
+      24.915
+     ],
+     [
+      7.147917,
+      17.801
+     ],
+     [
+      6.854208,
+      17.132
+     ],
+     [
+      7.429,
+      23.865
+     ]
+    ],
+    "view_exists": [
+     [
+      7.782458,
+      24.387
+     ],
+     [
+      8.465292,
+      25.623
+     ],
+     [
+      7.251291,
+      17.814
+     ],
+     [
+      7.242084,
+      17.12
+     ],
+     [
+      7.143041,
+      16.773
+     ]
+    ]
+   },
+   "checks": {
+    "table_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "view_aggregate": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "cypher_fanout": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "arrow_reuse": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "gql_fanout": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "view_exists": [
+     4,
+     "2dde95002194e90ebc8d4f132afa479af56ec6ec9b95bb1a48653303c1edda2b"
+    ],
+    "cte_order_limit": [
+     10,
+     "ecef664d3156a910a1cfd486e46ae8470cf971c1d1c945f4a2841f70b720f782"
+    ],
+    "explain_only": "graph operator present",
+    "prepared_match": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "full_scan": [
+     1,
+     "1aa9fa6698ed1cc6061d9a63a30e966a3302122b181512800b91a366728ec677"
+    ],
+    "gql_lookup": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "graph_table_equality": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "graph_table_in": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "view_self_join": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "literal_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ]
+   },
+   "provider_rows": {
+    "graph_table_equality": [
+     6465
+    ],
+    "cte_order_limit": [
+     6465
+    ],
+    "view_self_join": [
+     6465,
+     6465
+    ],
+    "view_exists": [
+     23316
+    ],
+    "view_aggregate": [
+     6465
+    ],
+    "literal_watchlist": [
+     23316
+    ],
+    "table_watchlist": [
+     3809607
+    ],
+    "graph_table_in": [
+     23316
+    ],
+    "full_scan": [
+     3809607
+    ]
+   }
+  },
+  {
+   "engine": "ladybug",
+   "block": 0,
+   "setup_ms": 40.548959,
+   "first_point_ms": 5.933667,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 530.03125,
+   "samples": {
+    "top": [
+     [
+      2.236084,
+      2.238
+     ],
+     [
+      1.995459,
+      1.996
+     ],
+     [
+      1.922833,
+      1.924
+     ],
+     [
+      2.314875,
+      2.315
+     ],
+     [
+      1.955708,
+      1.957
+     ]
+    ],
+    "self": [
+     [
+      5.001,
+      5.501
+     ],
+     [
+      4.784458,
+      5.123
+     ],
+     [
+      4.158709,
+      4.512
+     ],
+     [
+      6.19475,
+      6.805
+     ],
+     [
+      4.578125,
+      4.971
+     ]
+    ],
+    "fanout": [
+     [
+      2.442167,
+      2.44
+     ],
+     [
+      2.383041,
+      2.384
+     ],
+     [
+      2.378916,
+      2.381
+     ],
+     [
+      2.03975,
+      2.041
+     ],
+     [
+      2.441667,
+      2.442
+     ]
+    ],
+    "fan_agg": [
+     [
+      2.391833,
+      2.924
+     ],
+     [
+      2.319625,
+      2.85
+     ],
+     [
+      1.795292,
+      2.258
+     ],
+     [
+      2.000167,
+      2.392
+     ],
+     [
+      1.91225,
+      2.305
+     ]
+    ],
+    "scan": [
+     [
+      119.370417,
+      653.79
+     ],
+     [
+      119.042792,
+      643.875
+     ],
+     [
+      114.202625,
+      628.164
+     ],
+     [
+      119.594917,
+      653.144
+     ],
+     [
+      116.586625,
+      634.074
+     ]
+    ],
+    "point": [
+     [
+      0.801833,
+      0.803
+     ],
+     [
+      0.735708,
+      0.737
+     ],
+     [
+      0.686333,
+      0.688
+     ],
+     [
+      0.724542,
+      0.726
+     ],
+     [
+      0.717833,
+      0.718
+     ]
+    ],
+    "exists": [
+     [
+      1.438541,
+      2.539
+     ],
+     [
+      1.463917,
+      2.82
+     ],
+     [
+      1.394333,
+      2.473
+     ],
+     [
+      1.51625,
+      2.674
+     ],
+     [
+      1.313083,
+      2.514
+     ]
+    ],
+    "groups": [
+     [
+      3.533583,
+      14.591
+     ],
+     [
+      3.393791,
+      14.98
+     ],
+     [
+      3.367083,
+      15.132
+     ],
+     [
+      3.37525,
+      14.967
+     ],
+     [
+      3.358125,
+      13.87
+     ]
+    ]
+   },
+   "checks": {
+    "exists": [
+     4,
+     "2dde95002194e90ebc8d4f132afa479af56ec6ec9b95bb1a48653303c1edda2b"
+    ],
+    "groups": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "self": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "top": [
+     10,
+     "ecef664d3156a910a1cfd486e46ae8470cf971c1d1c945f4a2841f70b720f782"
+    ],
+    "point": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "fanout": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "scan": [
+     1,
+     "1aa9fa6698ed1cc6061d9a63a30e966a3302122b181512800b91a366728ec677"
+    ],
+    "fan_agg": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ]
+   },
+   "provider_rows": {}
+  },
+  {
+   "engine": "ladybug",
+   "block": 1,
+   "setup_ms": 31.436625,
+   "first_point_ms": 5.89625,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 527.53125,
+   "samples": {
+    "fanout": [
+     [
+      2.146417,
+      2.148
+     ],
+     [
+      2.277917,
+      2.278
+     ],
+     [
+      2.776459,
+      2.778
+     ],
+     [
+      2.460625,
+      2.462
+     ],
+     [
+      2.767208,
+      2.769
+     ]
+    ],
+    "fan_agg": [
+     [
+      1.923958,
+      2.386
+     ],
+     [
+      2.258209,
+      2.688
+     ],
+     [
+      2.127125,
+      2.566
+     ],
+     [
+      2.188708,
+      2.56
+     ],
+     [
+      2.399834,
+      2.729
+     ]
+    ],
+    "point": [
+     [
+      0.700958,
+      0.702
+     ],
+     [
+      0.821958,
+      0.823
+     ],
+     [
+      0.78075,
+      0.782
+     ],
+     [
+      0.740042,
+      0.742
+     ],
+     [
+      0.94175,
+      0.943
+     ]
+    ],
+    "self": [
+     [
+      4.27675,
+      4.682
+     ],
+     [
+      5.549834,
+      5.967
+     ],
+     [
+      5.40075,
+      5.974
+     ],
+     [
+      4.684292,
+      5.203
+     ],
+     [
+      4.977708,
+      5.432
+     ]
+    ],
+    "scan": [
+     [
+      117.611917,
+      640.437
+     ],
+     [
+      121.425125,
+      659.809
+     ],
+     [
+      122.988542,
+      668.236
+     ],
+     [
+      123.237125,
+      678.174
+     ],
+     [
+      126.346625,
+      682.578
+     ]
+    ],
+    "top": [
+     [
+      2.438875,
+      2.44
+     ],
+     [
+      2.133375,
+      2.135
+     ],
+     [
+      2.587292,
+      2.594
+     ],
+     [
+      2.078792,
+      2.078
+     ],
+     [
+      2.323208,
+      2.324
+     ]
+    ],
+    "groups": [
+     [
+      4.271416,
+      16.292
+     ],
+     [
+      3.951916,
+      16.211
+     ],
+     [
+      3.60175,
+      15.76
+     ],
+     [
+      3.27075,
+      14.635
+     ],
+     [
+      3.534041,
+      14.884
+     ]
+    ],
+    "exists": [
+     [
+      1.616292,
+      2.791
+     ],
+     [
+      1.486084,
+      2.945
+     ],
+     [
+      1.58125,
+      2.952
+     ],
+     [
+      1.526666,
+      2.958
+     ],
+     [
+      1.5905,
+      3.063
+     ]
+    ]
+   },
+   "checks": {
+    "scan": [
+     1,
+     "1aa9fa6698ed1cc6061d9a63a30e966a3302122b181512800b91a366728ec677"
+    ],
+    "point": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "fanout": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "top": [
+     10,
+     "ecef664d3156a910a1cfd486e46ae8470cf971c1d1c945f4a2841f70b720f782"
+    ],
+    "groups": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "self": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "fan_agg": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "exists": [
+     4,
+     "2dde95002194e90ebc8d4f132afa479af56ec6ec9b95bb1a48653303c1edda2b"
+    ]
+   },
+   "provider_rows": {}
+  },
+  {
+   "engine": "current",
+   "block": 1,
+   "setup_ms": 74.284292,
+   "first_point_ms": 27.211042,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 738.71875,
+   "samples": {
+    "graph_table_in": [
+     [
+      7.149209,
+      18.845
+     ],
+     [
+      6.90875,
+      17.302
+     ],
+     [
+      7.410292,
+      24.461
+     ],
+     [
+      7.001417,
+      17.585
+     ],
+     [
+      7.086375,
+      23.7
+     ]
+    ],
+    "gql_fanout": [
+     [
+      5.372084,
+      7.856
+     ],
+     [
+      5.007209,
+      7.5
+     ],
+     [
+      4.493917,
+      6.696
+     ],
+     [
+      4.417208,
+      6.527
+     ],
+     [
+      5.081916,
+      7.574
+     ]
+    ],
+    "view_self_join": [
+     [
+      6.279625,
+      6.408
+     ],
+     [
+      6.668416,
+      6.877
+     ],
+     [
+      6.716625,
+      9.67
+     ],
+     [
+      6.350625,
+      9.143
+     ],
+     [
+      6.313667,
+      6.462
+     ]
+    ],
+    "gql_lookup": [
+     [
+      2.089375,
+      2.367
+     ],
+     [
+      2.504333,
+      2.892
+     ],
+     [
+      2.04,
+      2.102
+     ],
+     [
+      2.26025,
+      2.576
+     ],
+     [
+      2.580708,
+      2.963
+     ]
+    ],
+    "table_watchlist": [
+     [
+      312.462209,
+      886.657
+     ],
+     [
+      324.066584,
+      919.944
+     ],
+     [
+      309.042625,
+      869.693
+     ],
+     [
+      316.89925,
+      880.149
+     ],
+     [
+      335.336666,
+      1235.881
+     ]
+    ],
+    "graph_table_equality": [
+     [
+      3.8875,
+      7.361
+     ],
+     [
+      2.800208,
+      2.874
+     ],
+     [
+      3.21475,
+      6.06
+     ],
+     [
+      3.112041,
+      5.911
+     ],
+     [
+      3.805792,
+      7.135
+     ]
+    ],
+    "view_aggregate": [
+     [
+      3.31625,
+      5.981
+     ],
+     [
+      3.672333,
+      6.79
+     ],
+     [
+      3.258,
+      3.419
+     ],
+     [
+      3.624625,
+      3.762
+     ],
+     [
+      3.328875,
+      3.424
+     ]
+    ],
+    "prepared_match": [
+     [
+      2.273291,
+      2.36
+     ],
+     [
+      2.606875,
+      2.665
+     ],
+     [
+      2.283,
+      2.365
+     ],
+     [
+      2.33775,
+      2.396
+     ],
+     [
+      2.55875,
+      2.604
+     ]
+    ],
+    "cypher_fanout": [
+     [
+      2.270167,
+      2.322
+     ],
+     [
+      2.512292,
+      2.597
+     ],
+     [
+      2.390917,
+      4.503
+     ],
+     [
+      2.695542,
+      5.03
+     ],
+     [
+      2.477208,
+      4.618
+     ]
+    ],
+    "view_exists": [
+     [
+      7.475,
+      18.5
+     ],
+     [
+      7.941459,
+      24.721
+     ],
+     [
+      7.656667,
+      17.937
+     ],
+     [
+      7.81,
+      24.297
+     ],
+     [
+      8.369541,
+      19.017
+     ]
+    ],
+    "literal_watchlist": [
+     [
+      7.429125,
+      18.559
+     ],
+     [
+      7.912375,
+      18.816
+     ],
+     [
+      7.824875,
+      25.426
+     ],
+     [
+      8.08625,
+      19.019
+     ],
+     [
+      7.263958,
+      17.568
+     ]
+    ],
+    "full_scan": [
+     [
+      300.000334,
+      1120.792
+     ],
+     [
+      279.919125,
+      810.276
+     ],
+     [
+      279.647458,
+      812.233
+     ],
+     [
+      281.922333,
+      805.063
+     ],
+     [
+      310.4695,
+      1171.955
+     ]
+    ],
+    "cte_order_limit": [
+     [
+      3.8365,
+      3.978
+     ],
+     [
+      3.024083,
+      5.676
+     ],
+     [
+      3.614583,
+      6.693
+     ],
+     [
+      2.982708,
+      3.089
+     ],
+     [
+      3.1365,
+      3.234
+     ]
+    ],
+    "explain_only": [
+     [
+      0.974791,
+      1.062
+     ],
+     [
+      0.809334,
+      0.883
+     ],
+     [
+      0.776833,
+      0.847
+     ],
+     [
+      0.907,
+      1.002
+     ],
+     [
+      1.044792,
+      1.102
+     ]
+    ],
+    "arrow_reuse": [
+     [
+      7.040417,
+      7.299
+     ],
+     [
+      5.837,
+      8.593
+     ],
+     [
+      5.871083,
+      8.696
+     ],
+     [
+      5.460792,
+      5.961
+     ],
+     [
+      5.436125,
+      7.979
+     ]
+    ]
+   },
+   "checks": {
+    "prepared_match": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "graph_table_in": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "graph_table_equality": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "view_exists": [
+     4,
+     "2dde95002194e90ebc8d4f132afa479af56ec6ec9b95bb1a48653303c1edda2b"
+    ],
+    "cypher_fanout": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "full_scan": [
+     1,
+     "1aa9fa6698ed1cc6061d9a63a30e966a3302122b181512800b91a366728ec677"
+    ],
+    "gql_lookup": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "gql_fanout": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "view_self_join": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "explain_only": "graph operator present",
+    "literal_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "arrow_reuse": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "view_aggregate": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "table_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "cte_order_limit": [
+     10,
+     "ecef664d3156a910a1cfd486e46ae8470cf971c1d1c945f4a2841f70b720f782"
+    ]
+   },
+   "provider_rows": {}
+  },
+  {
+   "engine": "baseline",
+   "block": 1,
+   "setup_ms": 74.067583,
+   "first_point_ms": 39.473833,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 747.125,
+   "samples": {
+    "graph_table_in": [
+     [
+      362.582333,
+      953.611
+     ],
+     [
+      354.941375,
+      962.788
+     ],
+     [
+      592.613833,
+      1838.737
+     ],
+     [
+      393.549958,
+      1397.249
+     ],
+     [
+      371.075542,
+      1008.287
+     ]
+    ],
+    "gql_fanout": [
+     [
+      36.940042,
+      71.783
+     ],
+     [
+      40.644834,
+      79.04
+     ],
+     [
+      47.620625,
+      92.437
+     ],
+     [
+      39.930625,
+      40.441
+     ],
+     [
+      45.139375,
+      86.882
+     ]
+    ],
+    "view_self_join": [
+     [
+      702.111208,
+      2274.525
+     ],
+     [
+      807.566916,
+      2846.019
+     ],
+     [
+      947.033875,
+      2856.72
+     ],
+     [
+      763.417042,
+      2435.516
+     ],
+     [
+      722.71125,
+      1954.326
+     ]
+    ],
+    "gql_lookup": [
+     [
+      31.57875,
+      61.642
+     ],
+     [
+      30.238791,
+      58.666
+     ],
+     [
+      46.246583,
+      88.683
+     ],
+     [
+      34.688125,
+      67.149
+     ],
+     [
+      38.887291,
+      39.585
+     ]
+    ],
+    "table_watchlist": [
+     [
+      416.618375,
+      1464.398
+     ],
+     [
+      438.568958,
+      1529.401
+     ],
+     [
+      420.903291,
+      1106.02
+     ],
+     [
+      388.846375,
+      1049.917
+     ],
+     [
+      486.224333,
+      1677.022
+     ]
+    ],
+    "graph_table_equality": [
+     [
+      386.082834,
+      1400.983
+     ],
+     [
+      369.1015,
+      1350.734
+     ],
+     [
+      506.016541,
+      1239.695
+     ],
+     [
+      364.393958,
+      1009.873
+     ],
+     [
+      423.044292,
+      1497.755
+     ]
+    ],
+    "view_aggregate": [
+     [
+      391.437125,
+      1034.294
+     ],
+     [
+      515.5855,
+      1190.144
+     ],
+     [
+      421.311292,
+      1082.328
+     ],
+     [
+      418.045,
+      1435.272
+     ],
+     [
+      430.447334,
+      1509.775
+     ]
+    ],
+    "prepared_match": [
+     [
+      30.58225,
+      31.207
+     ],
+     [
+      51.09125,
+      49.827
+     ],
+     [
+      42.032084,
+      42.402
+     ],
+     [
+      30.894458,
+      31.364
+     ],
+     [
+      34.444625,
+      35.154
+     ]
+    ],
+    "cypher_fanout": [
+     [
+      37.646875,
+      75.433
+     ],
+     [
+      54.876125,
+      108.825
+     ],
+     [
+      53.036166,
+      105.259
+     ],
+     [
+      38.686875,
+      77.307
+     ],
+     [
+      38.2725,
+      76.335
+     ]
+    ],
+    "view_exists": [
+     [
+      356.870375,
+      959.246
+     ],
+     [
+      373.931208,
+      998.906
+     ],
+     [
+      414.862166,
+      1071.779
+     ],
+     [
+      378.2395,
+      998.643
+     ],
+     [
+      408.427167,
+      1084.286
+     ]
+    ],
+    "literal_watchlist": [
+     [
+      382.469042,
+      1030.766
+     ],
+     [
+      405.274875,
+      1116.762
+     ],
+     [
+      446.229041,
+      1163.57
+     ],
+     [
+      399.386625,
+      1071.244
+     ],
+     [
+      427.989708,
+      1525.365
+     ]
+    ],
+    "full_scan": [
+     [
+      367.86,
+      1323.882
+     ],
+     [
+      582.300875,
+      1781.113
+     ],
+     [
+      416.442,
+      1455.781
+     ],
+     [
+      365.91825,
+      1002.519
+     ],
+     [
+      395.717375,
+      1421.366
+     ]
+    ],
+    "cte_order_limit": [
+     [
+      356.111583,
+      977.053
+     ],
+     [
+      351.834458,
+      944.741
+     ],
+     [
+      376.21375,
+      1372.437
+     ],
+     [
+      379.056583,
+      1360.77
+     ],
+     [
+      395.977333,
+      1060.047
+     ]
+    ],
+    "explain_only": [
+     [
+      0.999417,
+      1.065
+     ],
+     [
+      1.419834,
+      1.499
+     ],
+     [
+      1.243625,
+      1.323
+     ],
+     [
+      1.006917,
+      1.085
+     ],
+     [
+      1.158667,
+      1.231
+     ]
+    ],
+    "arrow_reuse": [
+     [
+      43.330042,
+      83.451
+     ],
+     [
+      42.160917,
+      81.073
+     ],
+     [
+      49.426459,
+      94.627
+     ],
+     [
+      40.50475,
+      78.122
+     ],
+     [
+      56.226958,
+      107.029
+     ]
+    ]
+   },
+   "checks": {
+    "prepared_match": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "graph_table_in": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "graph_table_equality": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "view_exists": [
+     4,
+     "2dde95002194e90ebc8d4f132afa479af56ec6ec9b95bb1a48653303c1edda2b"
+    ],
+    "cypher_fanout": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "full_scan": [
+     1,
+     "1aa9fa6698ed1cc6061d9a63a30e966a3302122b181512800b91a366728ec677"
+    ],
+    "gql_lookup": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "gql_fanout": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "view_self_join": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "explain_only": "graph operator present",
+    "literal_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "arrow_reuse": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "view_aggregate": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "table_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "cte_order_limit": [
+     10,
+     "ecef664d3156a910a1cfd486e46ae8470cf971c1d1c945f4a2841f70b720f782"
+    ]
+   },
+   "provider_rows": {}
+  },
+  {
+   "engine": "baseline",
+   "block": 2,
+   "setup_ms": 81.143292,
+   "first_point_ms": 44.504292,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 752.421875,
+   "samples": {
+    "explain_only": [
+     [
+      1.123,
+      1.218
+     ],
+     [
+      0.938083,
+      1.068
+     ],
+     [
+      1.089334,
+      1.18
+     ],
+     [
+      0.992166,
+      1.057
+     ],
+     [
+      0.934291,
+      1.01
+     ]
+    ],
+    "literal_watchlist": [
+     [
+      416.994416,
+      1099.974
+     ],
+     [
+      504.275416,
+      1718.798
+     ],
+     [
+      416.682333,
+      1104.796
+     ],
+     [
+      476.66,
+      1667.054
+     ],
+     [
+      646.756625,
+      2006.534
+     ]
+    ],
+    "cypher_fanout": [
+     [
+      41.320458,
+      82.532
+     ],
+     [
+      44.154042,
+      88.084
+     ],
+     [
+      40.128292,
+      80.282
+     ],
+     [
+      49.586833,
+      98.886
+     ],
+     [
+      40.760541,
+      81.291
+     ]
+    ],
+    "table_watchlist": [
+     [
+      424.489625,
+      1103.186
+     ],
+     [
+      444.687291,
+      1172.725
+     ],
+     [
+      441.062,
+      1532.337
+     ],
+     [
+      433.756,
+      1147.626
+     ],
+     [
+      457.93925,
+      1607.168
+     ]
+    ],
+    "gql_lookup": [
+     [
+      33.360708,
+      64.776
+     ],
+     [
+      33.864333,
+      34.459
+     ],
+     [
+      33.311292,
+      64.589
+     ],
+     [
+      33.325208,
+      65.079
+     ],
+     [
+      34.480959,
+      66.748
+     ]
+    ],
+    "view_aggregate": [
+     [
+      417.38075,
+      1460.178
+     ],
+     [
+      408.7385,
+      1457.802
+     ],
+     [
+      406.751042,
+      1452.364
+     ],
+     [
+      419.316958,
+      1477.657
+     ],
+     [
+      360.65725,
+      983.873
+     ]
+    ],
+    "arrow_reuse": [
+     [
+      48.854166,
+      93.816
+     ],
+     [
+      44.082125,
+      84.524
+     ],
+     [
+      44.176833,
+      85.019
+     ],
+     [
+      44.100334,
+      84.732
+     ],
+     [
+      48.003667,
+      92.595
+     ]
+    ],
+    "cte_order_limit": [
+     [
+      371.949709,
+      1029.755
+     ],
+     [
+      356.464,
+      977.142
+     ],
+     [
+      413.783541,
+      1462.671
+     ],
+     [
+      358.889083,
+      980.325
+     ],
+     [
+      367.244375,
+      993.862
+     ]
+    ],
+    "graph_table_in": [
+     [
+      381.129417,
+      1013.298
+     ],
+     [
+      387.089542,
+      1021.216
+     ],
+     [
+      399.476709,
+      1073.466
+     ],
+     [
+      392.7265,
+      1030.672
+     ],
+     [
+      408.928084,
+      1070.885
+     ]
+    ],
+    "gql_fanout": [
+     [
+      44.447667,
+      85.998
+     ],
+     [
+      45.349209,
+      87.793
+     ],
+     [
+      44.57775,
+      86.838
+     ],
+     [
+      49.37975,
+      95.259
+     ],
+     [
+      43.838375,
+      85.294
+     ]
+    ],
+    "view_self_join": [
+     [
+      799.464167,
+      2467.31
+     ],
+     [
+      752.679334,
+      2037.704
+     ],
+     [
+      800.009792,
+      2513.832
+     ],
+     [
+      740.039125,
+      2034.946
+     ],
+     [
+      1116.643625,
+      2504.016
+     ]
+    ],
+    "view_exists": [
+     [
+      416.647542,
+      1460.148
+     ],
+     [
+      391.097084,
+      1042.461
+     ],
+     [
+      425.613583,
+      1069.083
+     ],
+     [
+      393.526958,
+      1018.223
+     ],
+     [
+      389.536583,
+      1040.096
+     ]
+    ],
+    "full_scan": [
+     [
+      427.465375,
+      1508.682
+     ],
+     [
+      394.177625,
+      1411.202
+     ],
+     [
+      394.436,
+      1410.641
+     ],
+     [
+      407.844458,
+      1456.932
+     ],
+     [
+      375.192041,
+      1008.568
+     ]
+    ],
+    "graph_table_equality": [
+     [
+      421.985542,
+      1512.551
+     ],
+     [
+      417.024333,
+      1491.953
+     ],
+     [
+      363.159542,
+      983.137
+     ],
+     [
+      408.733834,
+      1461.897
+     ],
+     [
+      414.865875,
+      1480.497
+     ]
+    ],
+    "prepared_match": [
+     [
+      38.8085,
+      39.391
+     ],
+     [
+      31.723542,
+      32.334
+     ],
+     [
+      34.775667,
+      35.355
+     ],
+     [
+      35.129792,
+      35.713
+     ],
+     [
+      35.690208,
+      36.346
+     ]
+    ]
+   },
+   "checks": {
+    "cypher_fanout": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "cte_order_limit": [
+     10,
+     "ecef664d3156a910a1cfd486e46ae8470cf971c1d1c945f4a2841f70b720f782"
+    ],
+    "full_scan": [
+     1,
+     "1aa9fa6698ed1cc6061d9a63a30e966a3302122b181512800b91a366728ec677"
+    ],
+    "literal_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "view_exists": [
+     4,
+     "2dde95002194e90ebc8d4f132afa479af56ec6ec9b95bb1a48653303c1edda2b"
+    ],
+    "arrow_reuse": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "gql_fanout": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "explain_only": "graph operator present",
+    "graph_table_in": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "view_aggregate": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "graph_table_equality": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "view_self_join": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "table_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "gql_lookup": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "prepared_match": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ]
+   },
+   "provider_rows": {}
+  },
+  {
+   "engine": "ladybug",
+   "block": 2,
+   "setup_ms": 74.259833,
+   "first_point_ms": 15.872375,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 526.84375,
+   "samples": {
+    "fan_agg": [
+     [
+      3.699875,
+      4.038
+     ],
+     [
+      3.612958,
+      4.06
+     ],
+     [
+      3.7695,
+      4.336
+     ],
+     [
+      3.309625,
+      3.891
+     ],
+     [
+      3.382,
+      3.94
+     ]
+    ],
+    "groups": [
+     [
+      5.950625,
+      20.142
+     ],
+     [
+      6.25775,
+      20.005
+     ],
+     [
+      5.485084,
+      20.674
+     ],
+     [
+      5.218708,
+      19.739
+     ],
+     [
+      5.10225,
+      18.989
+     ]
+    ],
+    "exists": [
+     [
+      2.035042,
+      3.724
+     ],
+     [
+      2.439292,
+      4.307
+     ],
+     [
+      2.25725,
+      4.45
+     ],
+     [
+      2.143167,
+      4.08
+     ],
+     [
+      2.224084,
+      4.111
+     ]
+    ],
+    "point": [
+     [
+      1.057041,
+      1.041
+     ],
+     [
+      1.5445,
+      1.504
+     ],
+     [
+      1.198875,
+      1.2
+     ],
+     [
+      1.102541,
+      1.104
+     ],
+     [
+      1.135417,
+      1.14
+     ]
+    ],
+    "top": [
+     [
+      2.91375,
+      2.889
+     ],
+     [
+      3.228708,
+      3.23
+     ],
+     [
+      3.121833,
+      3.127
+     ],
+     [
+      3.073083,
+      3.074
+     ],
+     [
+      3.575708,
+      3.578
+     ]
+    ],
+    "scan": [
+     [
+      174.711208,
+      853.708
+     ],
+     [
+      162.363042,
+      852.186
+     ],
+     [
+      164.118125,
+      856.744
+     ],
+     [
+      157.042083,
+      859.727
+     ],
+     [
+      151.3945,
+      829.647
+     ]
+    ],
+    "fanout": [
+     [
+      4.6085,
+      4.54
+     ],
+     [
+      3.74675,
+      3.743
+     ],
+     [
+      5.150583,
+      5.153
+     ],
+     [
+      3.951334,
+      3.954
+     ],
+     [
+      3.631375,
+      3.633
+     ]
+    ],
+    "self": [
+     [
+      9.769334,
+      10.113
+     ],
+     [
+      9.554958,
+      9.787
+     ],
+     [
+      7.280625,
+      7.859
+     ],
+     [
+      7.25875,
+      7.826
+     ],
+     [
+      7.33475,
+      7.824
+     ]
+    ]
+   },
+   "checks": {
+    "scan": [
+     1,
+     "1aa9fa6698ed1cc6061d9a63a30e966a3302122b181512800b91a366728ec677"
+    ],
+    "groups": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "exists": [
+     4,
+     "2dde95002194e90ebc8d4f132afa479af56ec6ec9b95bb1a48653303c1edda2b"
+    ],
+    "self": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "fanout": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "top": [
+     10,
+     "ecef664d3156a910a1cfd486e46ae8470cf971c1d1c945f4a2841f70b720f782"
+    ],
+    "fan_agg": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "point": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ]
+   },
+   "provider_rows": {}
+  },
+  {
+   "engine": "current",
+   "block": 2,
+   "setup_ms": 142.966125,
+   "first_point_ms": 38.137167,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 748.359375,
+   "samples": {
+    "explain_only": [
+     [
+      1.18025,
+      1.277
+     ],
+     [
+      1.1725,
+      1.263
+     ],
+     [
+      0.97125,
+      1.032
+     ],
+     [
+      0.991416,
+      1.053
+     ],
+     [
+      1.071667,
+      1.145
+     ]
+    ],
+    "literal_watchlist": [
+     [
+      10.084875,
+      23.762
+     ],
+     [
+      10.15925,
+      24.083
+     ],
+     [
+      9.0475,
+      21.616
+     ],
+     [
+      8.717667,
+      20.313
+     ],
+     [
+      9.754041,
+      22.587
+     ]
+    ],
+    "cypher_fanout": [
+     [
+      3.574084,
+      6.723
+     ],
+     [
+      4.218916,
+      7.732
+     ],
+     [
+      3.436083,
+      6.349
+     ],
+     [
+      2.954,
+      5.43
+     ],
+     [
+      4.053417,
+      7.467
+     ]
+    ],
+    "table_watchlist": [
+     [
+      412.31,
+      1099.697
+     ],
+     [
+      407.965458,
+      1091.357
+     ],
+     [
+      362.501834,
+      978.974
+     ],
+     [
+      346.380375,
+      949.058
+     ],
+     [
+      415.777792,
+      1443.961
+     ]
+    ],
+    "gql_lookup": [
+     [
+      3.377042,
+      3.93
+     ],
+     [
+      3.194833,
+      3.657
+     ],
+     [
+      2.814166,
+      3.194
+     ],
+     [
+      2.53625,
+      2.886
+     ],
+     [
+      2.776625,
+      3.213
+     ]
+    ],
+    "view_aggregate": [
+     [
+      4.864583,
+      8.877
+     ],
+     [
+      4.369291,
+      4.559
+     ],
+     [
+      4.102709,
+      4.229
+     ],
+     [
+      3.567208,
+      3.677
+     ],
+     [
+      3.724625,
+      3.838
+     ]
+    ],
+    "arrow_reuse": [
+     [
+      7.398292,
+      8.139
+     ],
+     [
+      7.778625,
+      11.398
+     ],
+     [
+      6.635416,
+      9.656
+     ],
+     [
+      6.19175,
+      9.098
+     ],
+     [
+      8.085125,
+      11.859
+     ]
+    ],
+    "cte_order_limit": [
+     [
+      4.297625,
+      4.42
+     ],
+     [
+      4.083375,
+      4.209
+     ],
+     [
+      3.724792,
+      3.838
+     ],
+     [
+      3.565,
+      6.747
+     ],
+     [
+      3.773541,
+      3.892
+     ]
+    ],
+    "graph_table_in": [
+     [
+      9.915375,
+      22.748
+     ],
+     [
+      9.818292,
+      22.878
+     ],
+     [
+      9.950542,
+      20.267
+     ],
+     [
+      7.475125,
+      18.439
+     ],
+     [
+      7.855417,
+      19.117
+     ]
+    ],
+    "gql_fanout": [
+     [
+      6.508542,
+      9.604
+     ],
+     [
+      6.3785,
+      6.53
+     ],
+     [
+      5.485875,
+      8.074
+     ],
+     [
+      5.110625,
+      7.55
+     ],
+     [
+      5.475959,
+      8.222
+     ]
+    ],
+    "view_self_join": [
+     [
+      9.035333,
+      9.323
+     ],
+     [
+      8.783,
+      8.991
+     ],
+     [
+      8.470666,
+      8.665
+     ],
+     [
+      7.728333,
+      7.896
+     ],
+     [
+      9.694875,
+      13.941
+     ]
+    ],
+    "view_exists": [
+     [
+      10.125,
+      22.282
+     ],
+     [
+      10.805375,
+      23.364
+     ],
+     [
+      10.250792,
+      21.314
+     ],
+     [
+      8.767833,
+      20.1
+     ],
+     [
+      10.301584,
+      22.881
+     ]
+    ],
+    "full_scan": [
+     [
+      386.510917,
+      1376.681
+     ],
+     [
+      360.957,
+      1316.422
+     ],
+     [
+      340.781292,
+      957.599
+     ],
+     [
+      309.837291,
+      885.408
+     ],
+     [
+      316.615792,
+      883.934
+     ]
+    ],
+    "graph_table_equality": [
+     [
+      5.149916,
+      9.746
+     ],
+     [
+      3.877208,
+      3.97
+     ],
+     [
+      3.522791,
+      3.589
+     ],
+     [
+      3.502333,
+      6.664
+     ],
+     [
+      3.3195,
+      3.391
+     ]
+    ],
+    "prepared_match": [
+     [
+      3.384959,
+      3.499
+     ],
+     [
+      3.446708,
+      3.536
+     ],
+     [
+      3.046458,
+      3.117
+     ],
+     [
+      2.690292,
+      2.759
+     ],
+     [
+      3.590958,
+      3.668
+     ]
+    ]
+   },
+   "checks": {
+    "cypher_fanout": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "cte_order_limit": [
+     10,
+     "ecef664d3156a910a1cfd486e46ae8470cf971c1d1c945f4a2841f70b720f782"
+    ],
+    "full_scan": [
+     1,
+     "1aa9fa6698ed1cc6061d9a63a30e966a3302122b181512800b91a366728ec677"
+    ],
+    "literal_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "view_exists": [
+     4,
+     "2dde95002194e90ebc8d4f132afa479af56ec6ec9b95bb1a48653303c1edda2b"
+    ],
+    "arrow_reuse": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "gql_fanout": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "explain_only": "graph operator present",
+    "graph_table_in": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "view_aggregate": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "graph_table_equality": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "view_self_join": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "table_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "gql_lookup": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "prepared_match": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ]
+   },
+   "provider_rows": {}
+  },
+  {
+   "engine": "current",
+   "block": 3,
+   "setup_ms": 93.637458,
+   "first_point_ms": 30.958625,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 745.328125,
+   "samples": {
+    "prepared_match": [
+     [
+      3.312084,
+      3.388
+     ],
+     [
+      3.337583,
+      3.431
+     ],
+     [
+      2.841583,
+      2.933
+     ],
+     [
+      3.304125,
+      3.394
+     ],
+     [
+      2.456917,
+      2.573
+     ]
+    ],
+    "literal_watchlist": [
+     [
+      9.933958,
+      23.905
+     ],
+     [
+      9.042791,
+      21.891
+     ],
+     [
+      10.329708,
+      22.69
+     ],
+     [
+      8.699292,
+      19.979
+     ],
+     [
+      10.506125,
+      31.179
+     ]
+    ],
+    "view_aggregate": [
+     [
+      4.757542,
+      8.704
+     ],
+     [
+      4.21675,
+      4.351
+     ],
+     [
+      4.820791,
+      8.686
+     ],
+     [
+      4.308666,
+      7.714
+     ],
+     [
+      3.431959,
+      3.548
+     ]
+    ],
+    "view_exists": [
+     [
+      10.523667,
+      23.871
+     ],
+     [
+      9.925041,
+      22.374
+     ],
+     [
+      10.177,
+      22.095
+     ],
+     [
+      10.1685,
+      22.611
+     ],
+     [
+      8.580125,
+      26.316
+     ]
+    ],
+    "graph_table_equality": [
+     [
+      4.051542,
+      4.141
+     ],
+     [
+      3.986542,
+      4.073
+     ],
+     [
+      4.341083,
+      4.423
+     ],
+     [
+      3.728291,
+      7.167
+     ],
+     [
+      3.488125,
+      6.554
+     ]
+    ],
+    "table_watchlist": [
+     [
+      426.25575,
+      1501.879
+     ],
+     [
+      418.304333,
+      1440.083
+     ],
+     [
+      413.008208,
+      1469.631
+     ],
+     [
+      352.717583,
+      960.905
+     ],
+     [
+      385.114958,
+      1364.869
+     ]
+    ],
+    "gql_lookup": [
+     [
+      3.524875,
+      4.129
+     ],
+     [
+      2.981625,
+      3.406
+     ],
+     [
+      2.996958,
+      3.094
+     ],
+     [
+      2.466709,
+      2.823
+     ],
+     [
+      2.348584,
+      2.666
+     ]
+    ],
+    "gql_fanout": [
+     [
+      6.373,
+      9.521
+     ],
+     [
+      5.9755,
+      8.932
+     ],
+     [
+      8.233125,
+      11.504
+     ],
+     [
+      5.611291,
+      8.413
+     ],
+     [
+      5.05275,
+      7.533
+     ]
+    ],
+    "full_scan": [
+     [
+      377.606542,
+      1385.292
+     ],
+     [
+      344.344625,
+      964.693
+     ],
+     [
+      354.263375,
+      1291.612
+     ],
+     [
+      332.610083,
+      935.399
+     ],
+     [
+      308.803708,
+      864.5
+     ]
+    ],
+    "view_self_join": [
+     [
+      9.7865,
+      14.279
+     ],
+     [
+      8.8175,
+      12.878
+     ],
+     [
+      8.301,
+      11.937
+     ],
+     [
+      8.740333,
+      8.971
+     ],
+     [
+      7.197292,
+      7.343
+     ]
+    ],
+    "explain_only": [
+     [
+      1.052583,
+      1.149
+     ],
+     [
+      0.963708,
+      1.05
+     ],
+     [
+      1.185708,
+      1.274
+     ],
+     [
+      0.921667,
+      1.02
+     ],
+     [
+      1.019708,
+      1.112
+     ]
+    ],
+    "graph_table_in": [
+     [
+      9.487416,
+      22.816
+     ],
+     [
+      9.396542,
+      22.366
+     ],
+     [
+      9.950334,
+      30.865
+     ],
+     [
+      7.588208,
+      18.701
+     ],
+     [
+      7.703458,
+      18.736
+     ]
+    ],
+    "cypher_fanout": [
+     [
+      3.389208,
+      3.495
+     ],
+     [
+      3.380917,
+      6.353
+     ],
+     [
+      3.610458,
+      6.734
+     ],
+     [
+      3.210417,
+      3.33
+     ],
+     [
+      2.728,
+      2.8
+     ]
+    ],
+    "cte_order_limit": [
+     [
+      4.174375,
+      4.326
+     ],
+     [
+      4.782666,
+      9.135
+     ],
+     [
+      4.0235,
+      4.19
+     ],
+     [
+      3.992458,
+      4.149
+     ],
+     [
+      3.701583,
+      6.972
+     ]
+    ],
+    "arrow_reuse": [
+     [
+      8.166625,
+      11.975
+     ],
+     [
+      7.128875,
+      7.747
+     ],
+     [
+      7.958209,
+      11.768
+     ],
+     [
+      6.101959,
+      9.005
+     ],
+     [
+      6.86,
+      10.007
+     ]
+    ]
+   },
+   "checks": {
+    "cte_order_limit": [
+     10,
+     "ecef664d3156a910a1cfd486e46ae8470cf971c1d1c945f4a2841f70b720f782"
+    ],
+    "arrow_reuse": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "view_aggregate": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "view_self_join": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "literal_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "table_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "view_exists": [
+     4,
+     "2dde95002194e90ebc8d4f132afa479af56ec6ec9b95bb1a48653303c1edda2b"
+    ],
+    "graph_table_equality": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "full_scan": [
+     1,
+     "1aa9fa6698ed1cc6061d9a63a30e966a3302122b181512800b91a366728ec677"
+    ],
+    "prepared_match": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "cypher_fanout": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "graph_table_in": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "gql_fanout": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "explain_only": "graph operator present",
+    "gql_lookup": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ]
+   },
+   "provider_rows": {}
+  },
+  {
+   "engine": "baseline",
+   "block": 3,
+   "setup_ms": 85.146666,
+   "first_point_ms": 44.932584,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 746.765625,
+   "samples": {
+    "prepared_match": [
+     [
+      34.061667,
+      34.726
+     ],
+     [
+      34.735083,
+      35.442
+     ],
+     [
+      35.874041,
+      36.673
+     ],
+     [
+      34.21,
+      34.904
+     ],
+     [
+      34.380541,
+      34.994
+     ]
+    ],
+    "literal_watchlist": [
+     [
+      451.891083,
+      1563.039
+     ],
+     [
+      484.702417,
+      1202.124
+     ],
+     [
+      468.488375,
+      1615.578
+     ],
+     [
+      429.961667,
+      1141.088
+     ],
+     [
+      408.924791,
+      1070.479
+     ]
+    ],
+    "view_aggregate": [
+     [
+      420.005834,
+      1489.53
+     ],
+     [
+      368.0625,
+      999.329
+     ],
+     [
+      416.225334,
+      1486.755
+     ],
+     [
+      423.732709,
+      1502.392
+     ],
+     [
+      394.212542,
+      1404.291
+     ]
+    ],
+    "view_exists": [
+     [
+      434.552084,
+      1541.682
+     ],
+     [
+      432.356791,
+      1118.465
+     ],
+     [
+      428.914416,
+      1517.085
+     ],
+     [
+      373.915792,
+      1000.25
+     ],
+     [
+      371.389042,
+      980.251
+     ]
+    ],
+    "graph_table_equality": [
+     [
+      429.31775,
+      1519.738
+     ],
+     [
+      476.102542,
+      1636.143
+     ],
+     [
+      414.687959,
+      1433.399
+     ],
+     [
+      419.286583,
+      1499.073
+     ],
+     [
+      421.671875,
+      1462.887
+     ]
+    ],
+    "table_watchlist": [
+     [
+      450.633916,
+      1193.48
+     ],
+     [
+      435.848083,
+      1146.225
+     ],
+     [
+      431.886916,
+      1141.597
+     ],
+     [
+      474.832292,
+      1658.998
+     ],
+     [
+      437.489333,
+      1181.281
+     ]
+    ],
+    "gql_lookup": [
+     [
+      35.14175,
+      68.314
+     ],
+     [
+      42.131625,
+      81.893
+     ],
+     [
+      40.131542,
+      40.801
+     ],
+     [
+      35.196958,
+      68.617
+     ],
+     [
+      42.033084,
+      81.645
+     ]
+    ],
+    "gql_fanout": [
+     [
+      43.46375,
+      84.396
+     ],
+     [
+      54.866625,
+      106.532
+     ],
+     [
+      46.798166,
+      91.302
+     ],
+     [
+      45.086791,
+      87.741
+     ],
+     [
+      45.00475,
+      87.304
+     ]
+    ],
+    "full_scan": [
+     [
+      423.940708,
+      1484.294
+     ],
+     [
+      404.107084,
+      1428.971
+     ],
+     [
+      402.303709,
+      1057.829
+     ],
+     [
+      412.11275,
+      1455.577
+     ],
+     [
+      418.758083,
+      1489.809
+     ]
+    ],
+    "view_self_join": [
+     [
+      802.762333,
+      2538.915
+     ],
+     [
+      834.812458,
+      2981.558
+     ],
+     [
+      744.385959,
+      1995.031
+     ],
+     [
+      813.419667,
+      2544.102
+     ],
+     [
+      734.610875,
+      1992.356
+     ]
+    ],
+    "explain_only": [
+     [
+      0.941208,
+      0.996
+     ],
+     [
+      1.037916,
+      1.154
+     ],
+     [
+      1.102334,
+      1.185
+     ],
+     [
+      1.018333,
+      1.091
+     ],
+     [
+      0.969375,
+      1.043
+     ]
+    ],
+    "graph_table_in": [
+     [
+      376.830959,
+      1003.101
+     ],
+     [
+      373.981042,
+      992.577
+     ],
+     [
+      432.34775,
+      1523.221
+     ],
+     [
+      435.136125,
+      1483.761
+     ],
+     [
+      432.993334,
+      1539.843
+     ]
+    ],
+    "cypher_fanout": [
+     [
+      41.22325,
+      82.262
+     ],
+     [
+      51.937417,
+      101.973
+     ],
+     [
+      51.56,
+      103.155
+     ],
+     [
+      42.039792,
+      84.18
+     ],
+     [
+      51.384459,
+      102.64
+     ]
+    ],
+    "cte_order_limit": [
+     [
+      379.342166,
+      998.788
+     ],
+     [
+      371.150625,
+      980.265
+     ],
+     [
+      389.075208,
+      1047.786
+     ],
+     [
+      403.632292,
+      1440.765
+     ],
+     [
+      354.15875,
+      957.94
+     ]
+    ],
+    "arrow_reuse": [
+     [
+      48.214458,
+      93.073
+     ],
+     [
+      46.193416,
+      89.115
+     ],
+     [
+      53.139542,
+      101.989
+     ],
+     [
+      45.925625,
+      88.248
+     ],
+     [
+      50.821583,
+      52.032
+     ]
+    ]
+   },
+   "checks": {
+    "cte_order_limit": [
+     10,
+     "ecef664d3156a910a1cfd486e46ae8470cf971c1d1c945f4a2841f70b720f782"
+    ],
+    "arrow_reuse": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "view_aggregate": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "view_self_join": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "literal_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "table_watchlist": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "view_exists": [
+     4,
+     "2dde95002194e90ebc8d4f132afa479af56ec6ec9b95bb1a48653303c1edda2b"
+    ],
+    "graph_table_equality": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "full_scan": [
+     1,
+     "1aa9fa6698ed1cc6061d9a63a30e966a3302122b181512800b91a366728ec677"
+    ],
+    "prepared_match": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ],
+    "cypher_fanout": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "graph_table_in": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "gql_fanout": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "explain_only": "graph operator present",
+    "gql_lookup": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ]
+   },
+   "provider_rows": {}
+  },
+  {
+   "engine": "ladybug",
+   "block": 3,
+   "setup_ms": 58.0105,
+   "first_point_ms": 11.905167,
+   "first_point_result": [
+    1,
+    "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+   ],
+   "peak_rss_mib": 528.515625,
+   "samples": {
+    "point": [
+     [
+      0.802083,
+      0.803
+     ],
+     [
+      0.9005,
+      0.898
+     ],
+     [
+      1.047209,
+      1.048
+     ],
+     [
+      1.05975,
+      1.061
+     ],
+     [
+      1.072583,
+      1.074
+     ]
+    ],
+    "scan": [
+     [
+      145.391792,
+      723.931
+     ],
+     [
+      134.474958,
+      735.946
+     ],
+     [
+      132.376291,
+      735.745
+     ],
+     [
+      130.412375,
+      736.929
+     ],
+     [
+      134.468209,
+      754.047
+     ]
+    ],
+    "self": [
+     [
+      6.751,
+      7.197
+     ],
+     [
+      5.754667,
+      6.359
+     ],
+     [
+      6.19675,
+      6.778
+     ],
+     [
+      6.300917,
+      6.776
+     ],
+     [
+      6.269792,
+      6.879
+     ]
+    ],
+    "top": [
+     [
+      2.8095,
+      2.811
+     ],
+     [
+      2.513166,
+      2.514
+     ],
+     [
+      2.942708,
+      2.945
+     ],
+     [
+      2.7365,
+      2.737
+     ],
+     [
+      2.811042,
+      2.816
+     ]
+    ],
+    "groups": [
+     [
+      4.51425,
+      18.914
+     ],
+     [
+      4.782917,
+      19.293
+     ],
+     [
+      4.408167,
+      18.745
+     ],
+     [
+      4.579125,
+      18.836
+     ],
+     [
+      4.638958,
+      18.401
+     ]
+    ],
+    "fan_agg": [
+     [
+      2.705167,
+      3.334
+     ],
+     [
+      2.54825,
+      3.006
+     ],
+     [
+      3.073083,
+      3.476
+     ],
+     [
+      2.798917,
+      3.51
+     ],
+     [
+      3.987375,
+      3.922
+     ]
+    ],
+    "fanout": [
+     [
+      3.270208,
+      3.271
+     ],
+     [
+      2.873917,
+      2.875
+     ],
+     [
+      3.129292,
+      3.131
+     ],
+     [
+      3.135583,
+      3.132
+     ],
+     [
+      3.323917,
+      3.326
+     ]
+    ],
+    "exists": [
+     [
+      1.869833,
+      3.47
+     ],
+     [
+      1.756125,
+      3.309
+     ],
+     [
+      1.90325,
+      3.536
+     ],
+     [
+      2.06675,
+      3.867
+     ],
+     [
+      2.003833,
+      3.8
+     ]
+    ]
+   },
+   "checks": {
+    "top": [
+     10,
+     "ecef664d3156a910a1cfd486e46ae8470cf971c1d1c945f4a2841f70b720f782"
+    ],
+    "exists": [
+     4,
+     "2dde95002194e90ebc8d4f132afa479af56ec6ec9b95bb1a48653303c1edda2b"
+    ],
+    "self": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "fan_agg": [
+     1,
+     "65c8ae1af0acc3d9aa25dd4a160d613584b35e43350807789d691e90a1b4ff22"
+    ],
+    "fanout": [
+     6465,
+     "41c87f39e068461c455b8c5050ce1298d4d0f4824cc4b72e87a1e96a294bffa3"
+    ],
+    "groups": [
+     4,
+     "014bfc0ebd4e11e0586293d282ab916bbdacfc734225338abf3dd431f8029079"
+    ],
+    "scan": [
+     1,
+     "1aa9fa6698ed1cc6061d9a63a30e966a3302122b181512800b91a366728ec677"
+    ],
+    "point": [
+     1,
+     "403170b02562da416382ab215b833f6806d05c75c0ee30a5469a3e20cb009d24"
+    ]
+   },
+   "provider_rows": {}
+  }
+ ],
+ "summary": [
+  {
+   "workload": "gql_lookup",
+   "pattern": "P1",
+   "engine": "baseline",
+   "n": 20,
+   "p50_ms": 33.6125205,
+   "p95_ms": 42.131625,
+   "cpu_ms": 63.1155,
+   "provider_rows": null
+  },
+  {
+   "workload": "gql_lookup",
+   "pattern": "P1",
+   "engine": "current",
+   "n": 20,
+   "p50_ms": 2.485521,
+   "p95_ms": 3.377042,
+   "cpu_ms": 2.8755,
+   "provider_rows": null
+  },
+  {
+   "workload": "gql_lookup",
+   "pattern": "P1",
+   "engine": "ladybug",
+   "n": 20,
+   "p50_ms": 0.861229,
+   "p95_ms": 1.198875,
+   "cpu_ms": 0.8605,
+   "provider_rows": null
+  },
+  {
+   "workload": "gql_fanout",
+   "pattern": "P1",
+   "engine": "baseline",
+   "n": 20,
+   "p50_ms": 44.143021000000005,
+   "p95_ms": 49.37975,
+   "cpu_ms": 85.646,
+   "provider_rows": null
+  },
+  {
+   "workload": "gql_fanout",
+   "pattern": "P1",
+   "engine": "current",
+   "n": 20,
+   "p50_ms": 5.096270499999999,
+   "p95_ms": 6.508542,
+   "cpu_ms": 7.5415,
+   "provider_rows": null
+  },
+  {
+   "workload": "gql_fanout",
+   "pattern": "P1",
+   "engine": "ladybug",
+   "n": 20,
+   "p50_ms": 2.825188,
+   "p95_ms": 4.6085,
+   "cpu_ms": 2.8265000000000002,
+   "provider_rows": null
+  },
+  {
+   "workload": "cypher_fanout",
+   "pattern": "P1",
+   "engine": "baseline",
+   "n": 20,
+   "p50_ms": 40.9918955,
+   "p95_ms": 53.036166,
+   "cpu_ms": 81.7765,
+   "provider_rows": null
+  },
+  {
+   "workload": "cypher_fanout",
+   "pattern": "P1",
+   "engine": "current",
+   "n": 20,
+   "p50_ms": 2.711771,
+   "p95_ms": 4.053417,
+   "cpu_ms": 4.8815,
+   "provider_rows": null
+  },
+  {
+   "workload": "cypher_fanout",
+   "pattern": "P1",
+   "engine": "ladybug",
+   "n": 20,
+   "p50_ms": 2.825188,
+   "p95_ms": 4.6085,
+   "cpu_ms": 2.8265000000000002,
+   "provider_rows": null
+  },
+  {
+   "workload": "graph_table_equality",
+   "pattern": "P2",
+   "engine": "baseline",
+   "n": 20,
+   "p50_ms": 411.7108965,
+   "p95_ms": 476.102542,
+   "cpu_ms": 1417.1909999999998,
+   "provider_rows": [
+    3809607
+   ]
+  },
+  {
+   "workload": "graph_table_equality",
+   "pattern": "P2",
+   "engine": "current",
+   "n": 20,
+   "p50_ms": 3.495229,
+   "p95_ms": 4.341083,
+   "cpu_ms": 6.0245,
+   "provider_rows": [
+    6465
+   ]
+  },
+  {
+   "workload": "graph_table_equality",
+   "pattern": "P2",
+   "engine": "ladybug",
+   "n": 20,
+   "p50_ms": 2.825188,
+   "p95_ms": 4.6085,
+   "cpu_ms": 2.8265000000000002,
+   "provider_rows": null
+  },
+  {
+   "workload": "cte_order_limit",
+   "pattern": "P2/P3",
+   "engine": "baseline",
+   "n": 20,
+   "p50_ms": 363.066729,
+   "p95_ms": 403.632292,
+   "cpu_ms": 996.325,
+   "provider_rows": [
+    3809607
+   ]
+  },
+  {
+   "workload": "cte_order_limit",
+   "pattern": "P2/P3",
+   "engine": "current",
+   "n": 20,
+   "p50_ms": 3.658083,
+   "p95_ms": 4.297625,
+   "cpu_ms": 4.1695,
+   "provider_rows": [
+    6465
+   ]
+  },
+  {
+   "workload": "cte_order_limit",
+   "pattern": "P2/P3",
+   "engine": "ladybug",
+   "n": 20,
+   "p50_ms": 2.550229,
+   "p95_ms": 3.228708,
+   "cpu_ms": 2.554,
+   "provider_rows": null
+  },
+  {
+   "workload": "view_self_join",
+   "pattern": "P4/P7",
+   "engine": "baseline",
+   "n": 20,
+   "p50_ms": 748.5326465,
+   "p95_ms": 947.033875,
+   "cpu_ms": 2355.0205,
+   "provider_rows": [
+    3809607,
+    3809607
+   ]
+  },
+  {
+   "workload": "view_self_join",
+   "pattern": "P4/P7",
+   "engine": "current",
+   "n": 20,
+   "p50_ms": 6.9569585,
+   "p95_ms": 9.694875,
+   "cpu_ms": 8.981,
+   "provider_rows": [
+    6465,
+    6465
+   ]
+  },
+  {
+   "workload": "view_self_join",
+   "pattern": "P4/P7",
+   "engine": "ladybug",
+   "n": 20,
+   "p50_ms": 5.9747085,
+   "p95_ms": 9.554958,
+   "cpu_ms": 6.5675,
+   "provider_rows": null
+  },
+  {
+   "workload": "view_exists",
+   "pattern": "P5/P7",
+   "engine": "baseline",
+   "n": 20,
+   "p50_ms": 383.8880415,
+   "p95_ms": 432.356791,
+   "cpu_ms": 1029.1595,
+   "provider_rows": [
+    3809607
+   ]
+  },
+  {
+   "workload": "view_exists",
+   "pattern": "P5/P7",
+   "engine": "current",
+   "n": 20,
+   "p50_ms": 8.5227085,
+   "p95_ms": 10.523667,
+   "cpu_ms": 22.328,
+   "provider_rows": [
+    23316
+   ]
+  },
+  {
+   "workload": "view_exists",
+   "pattern": "P5/P7",
+   "engine": "ladybug",
+   "n": 20,
+   "p50_ms": 1.6862085,
+   "p95_ms": 2.25725,
+   "cpu_ms": 3.186,
+   "provider_rows": null
+  },
+  {
+   "workload": "view_aggregate",
+   "pattern": "P6/P7",
+   "engine": "baseline",
+   "n": 20,
+   "p50_ms": 407.744771,
+   "p95_ms": 430.447334,
+   "cpu_ms": 1342.3985,
+   "provider_rows": [
+    3809607
+   ]
+  },
+  {
+   "workload": "view_aggregate",
+   "pattern": "P6/P7",
+   "engine": "current",
+   "n": 20,
+   "p50_ms": 3.648479,
+   "p95_ms": 4.820791,
+   "cpu_ms": 4.29,
+   "provider_rows": [
+    6465
+   ]
+  },
+  {
+   "workload": "view_aggregate",
+   "pattern": "P6/P7",
+   "engine": "ladybug",
+   "n": 20,
+   "p50_ms": 2.474042,
+   "p95_ms": 3.7695,
+   "cpu_ms": 2.965,
+   "provider_rows": null
+  },
+  {
+   "workload": "prepared_match",
+   "pattern": "P8",
+   "engine": "baseline",
+   "n": 20,
+   "p50_ms": 34.2952705,
+   "p95_ms": 42.032084,
+   "cpu_ms": 34.949,
+   "provider_rows": null
+  },
+  {
+   "workload": "prepared_match",
+   "pattern": "P8",
+   "engine": "current",
+   "n": 20,
+   "p50_ms": 2.5828125,
+   "p95_ms": 3.446708,
+   "cpu_ms": 2.6345,
+   "provider_rows": null
+  },
+  {
+   "workload": "prepared_match",
+   "pattern": "P8",
+   "engine": "ladybug",
+   "n": 20,
+   "p50_ms": 0.861229,
+   "p95_ms": 1.198875,
+   "cpu_ms": 0.8605,
+   "provider_rows": null
+  },
+  {
+   "workload": "literal_watchlist",
+   "pattern": "P3/P10",
+   "engine": "baseline",
+   "n": 20,
+   "p50_ms": 416.8383745,
+   "p95_ms": 504.275416,
+   "cpu_ms": 1182.847,
+   "provider_rows": [
+    3809607
+   ]
+  },
+  {
+   "workload": "literal_watchlist",
+   "pattern": "P3/P10",
+   "engine": "current",
+   "n": 20,
+   "p50_ms": 8.392771,
+   "p95_ms": 10.329708,
+   "cpu_ms": 22.238999999999997,
+   "provider_rows": [
+    23316
+   ]
+  },
+  {
+   "workload": "literal_watchlist",
+   "pattern": "P3/P10",
+   "engine": "ladybug",
+   "n": 20,
+   "p50_ms": 4.3397915000000005,
+   "p95_ms": 5.950625,
+   "cpu_ms": 17.3465,
+   "provider_rows": null
+  },
+  {
+   "workload": "table_watchlist",
+   "pattern": "P3/P10",
+   "engine": "baseline",
+   "n": 20,
+   "p50_ms": 432.821458,
+   "p95_ms": 474.832292,
+   "cpu_ms": 1160.1754999999998,
+   "provider_rows": [
+    3809607
+   ]
+  },
+  {
+   "workload": "table_watchlist",
+   "pattern": "P3/P10",
+   "engine": "current",
+   "n": 20,
+   "p50_ms": 340.8585205,
+   "p95_ms": 418.304333,
+   "cpu_ms": 1035.1655,
+   "provider_rows": [
+    3809607
+   ]
+  },
+  {
+   "workload": "table_watchlist",
+   "pattern": "P3/P10",
+   "engine": "ladybug",
+   "n": 20,
+   "p50_ms": 4.3397915000000005,
+   "p95_ms": 5.950625,
+   "cpu_ms": 17.3465,
+   "provider_rows": null
+  },
+  {
+   "workload": "graph_table_in",
+   "pattern": "P2/P6",
+   "engine": "baseline",
+   "n": 20,
+   "p50_ms": 378.980188,
+   "p95_ms": 435.136125,
+   "cpu_ms": 1017.2570000000001,
+   "provider_rows": [
+    3809607
+   ]
+  },
+  {
+   "workload": "graph_table_in",
+   "pattern": "P2/P6",
+   "engine": "current",
+   "n": 20,
+   "p50_ms": 7.4427085,
+   "p95_ms": 9.950334,
+   "cpu_ms": 18.981,
+   "provider_rows": [
+    23316
+   ]
+  },
+  {
+   "workload": "graph_table_in",
+   "pattern": "P2/P6",
+   "engine": "ladybug",
+   "n": 20,
+   "p50_ms": 4.3397915000000005,
+   "p95_ms": 5.950625,
+   "cpu_ms": 17.3465,
+   "provider_rows": null
+  },
+  {
+   "workload": "arrow_reuse",
+   "pattern": "P11",
+   "engine": "baseline",
+   "n": 20,
+   "p50_ms": 44.138583499999996,
+   "p95_ms": 53.139542,
+   "cpu_ms": 84.628,
+   "provider_rows": null
+  },
+  {
+   "workload": "arrow_reuse",
+   "pattern": "P11",
+   "engine": "current",
+   "n": 20,
+   "p50_ms": 6.2924165,
+   "p95_ms": 8.085125,
+   "cpu_ms": 8.7975,
+   "provider_rows": null
+  },
+  {
+   "workload": "arrow_reuse",
+   "pattern": "P11",
+   "engine": "ladybug",
+   "n": 20,
+   "p50_ms": 2.474042,
+   "p95_ms": 3.7695,
+   "cpu_ms": 2.965,
+   "provider_rows": null
+  },
+  {
+   "workload": "full_scan",
+   "pattern": "P6",
+   "engine": "baseline",
+   "n": 20,
+   "p50_ms": 395.0766875,
+   "p95_ms": 427.465375,
+   "cpu_ms": 1410.9215,
+   "provider_rows": [
+    3809607
+   ]
+  },
+  {
+   "workload": "full_scan",
+   "pattern": "P6",
+   "engine": "current",
+   "n": 20,
+   "p50_ms": 309.3204995,
+   "p95_ms": 377.606542,
+   "cpu_ms": 961.146,
+   "provider_rows": [
+    3809607
+   ]
+  },
+  {
+   "workload": "full_scan",
+   "pattern": "P6",
+   "engine": "ladybug",
+   "n": 20,
+   "p50_ms": 128.3795,
+   "p95_ms": 164.118125,
+   "cpu_ms": 703.2545,
+   "provider_rows": null
+  },
+  {
+   "workload": "explain_only",
+   "pattern": "P12",
+   "engine": "baseline",
+   "n": 20,
+   "p50_ms": 0.9957914999999999,
+   "p95_ms": 1.243625,
+   "cpu_ms": 1.0665,
+   "provider_rows": null
+  },
+  {
+   "workload": "explain_only",
+   "pattern": "P12",
+   "engine": "current",
+   "n": 20,
+   "p50_ms": 0.967479,
+   "p95_ms": 1.18025,
+   "cpu_ms": 1.041,
+   "provider_rows": null
+  }
+ ]
+}
