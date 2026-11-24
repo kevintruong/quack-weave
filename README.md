@@ -1,4 +1,43 @@
-# DuckDB Rust extension template
+# QuackWeave
+
+QuackWeave MVP1 is a native DuckDB extension that runs a single read-only Cypher query against an existing local Ladybug graph. `qw_query` returns typed rows for regular DuckDB queries, including joins and aggregates.
+
+## Build and use MVP1
+
+The native package targets macOS arm64, DuckDB `v2.0.1` and Ladybug `v0.22.3`. The build uses the Rust toolchain, a C++20 compiler, Python 3.12 or later, and OpenSSL 3 static libraries. It locates those libraries through Homebrew or `OPENSSL_LIB_DIR`.
+
+```sh
+make mvp1-deps
+make mvp1
+/path/to/duckdb-v2.0.1 -unsigned
+```
+
+Using an existing Ladybug graph with `Document` nodes and `LINKS_TO` relationships, run:
+
+```sql
+LOAD '/absolute/path/to/quack-weave/build/debug/extension/quack_weave/quack_weave.duckdb_extension';
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"/absolute/path/to/documents.lbdb"}';
+
+SELECT document_id
+FROM qw_query(
+    'kg', 'cypher',
+    $$MATCH (:Document {id: 100})-[:LINKS_TO]->(doc:Document)
+      RETURN doc.id AS document_id$$,
+    schema := 'document_id BIGINT'
+);
+```
+
+The `schema` argument accepts ordered `name TYPE` pairs using `BOOLEAN`, `BIGINT`, `DOUBLE`, or `VARCHAR`. The declared names and types must match the Cypher output. Configure the graph from a trusted DuckDB session with external access enabled. The optional `timeout_ms` setting applies a positive Ladybug query timeout.
+
+Set `max_batch_bytes` to a positive integer to bound the size of each bridge-owned batch. An oversized batch raises `QW_BATCH_BUDGET` before its rows are published. Ladybug may still materialize the native result.
+
+Run the native acceptance suite with version-matched DuckDB and Ladybug CLI binaries:
+
+```sh
+make mvp1-test DUCKDB=/path/to/duckdb-v2.0.1 LBUG=/path/to/lbug-v0.22.3
+```
+
+## Rust extension template reference
 This is an template for Rust based extensions based on the V2 C API of DuckDB. This repository will become a stable basis for pure-Rust DuckDB extensions that can be submitted to the Community extensions repository. 
 
 It contains build pipelines for dynamic and wasm-based extensions. It is prefilled with example functions, so you can have an quick start with duckdb-neo!

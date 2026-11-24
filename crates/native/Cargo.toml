@@ -3,6 +3,9 @@ name = "rusty_quack"
 version.workspace = true
 edition.workspace = true
 
+[features]
+template-compat = []
+
 [lib]
 crate-type = ["cdylib"]
 

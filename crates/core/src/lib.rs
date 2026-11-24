@@ -25,6 +25,7 @@ pub mod options;
 pub mod pragma;
 pub mod quack;
 pub mod quack_type;
+pub mod qw_query;
 pub mod replacement_scan;
 pub mod scalar;
 pub mod sequence;
