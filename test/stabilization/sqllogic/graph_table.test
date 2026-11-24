@@ -101,6 +101,102 @@ SELECT sum(flag), count(*) FROM GRAPH_TABLE (
 ----
 5	5
 
+# For a local BIGINT predicate, the executed scan must emit only retained rows.
+# DuckDB still evaluates the original predicate over the native projection.
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport)
+  WHERE e.dist = 946 COLUMNS (e.rid AS route_id)
+) AS g;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 2,[^{}]*"name": "QW_GRAPH_QUERY_FILTERED".*
+
+query II
+SELECT route_id, miles FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport)
+  WHERE e.dist IN (946, 946, -1, 1946) COLUMNS (e.rid AS route_id, e.dist AS miles)
+) AS g ORDER BY route_id;
+----
+101	946
+102	946
+103	1946
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport)
+  WHERE e.dist IN (946, 946, -1, 1946) COLUMNS (e.rid AS route_id)
+) AS g;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 3,[^{}]*"name": "QW_GRAPH_QUERY_FILTERED".*
+
+# The bounded fast path accepts up to 64 literals. Larger lists use DuckDB evaluation.
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport)
+  WHERE e.dist IN (
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+    12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+    24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
+    36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+    48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
+    60, 61, 62, 946
+  ) COLUMNS (e.rid)
+) AS g;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 2,[^{}]*"name": "QW_GRAPH_QUERY_FILTERED".*
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport)
+  WHERE e.dist IN (
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+    12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+    24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
+    36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+    48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
+    60, 61, 62, 63, 946
+  ) COLUMNS (e.rid)
+) AS g;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 5,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+# A NULL inside IN and an arbitrary SQL expression both retain the host scan.
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport)
+  WHERE e.dist IN (946, NULL) COLUMNS (e.rid AS route_id)
+) AS g;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 5,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+query I
+SELECT route_id FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport)
+  WHERE abs(e.dist) = 946 OR e.dist IS NULL COLUMNS (e.rid AS route_id)
+) AS g ORDER BY route_id;
+----
+101
+102
+105
+
+# Type coercion and its conversion error belong to DuckDB.
+statement error
+SELECT * FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)
+  WHERE o.code = 10 COLUMNS (o.code)
+) AS g;
+----
+Could not convert string
+
+# Exercise signed extrema as parsed integer literals through the graph engine.
+query I
+SELECT count(*) FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport)
+  WHERE e.dist IN (-9223372036854775808,9223372036854775807) COLUMNS (e.rid)
+) AS g;
+----
+0
+
 statement ok
 CREATE TEMP MACRO qw_graph_query(graph_name, lang, payload) AS TABLE SELECT 999 AS fake;
 

@@ -515,9 +515,17 @@ impl GraphLanguage {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GraphQueryKind {
+    DeclaredSchema,
+    InferredSchema,
+    Parameterized,
+    Filtered,
+}
+
 struct GraphQuery<B> {
     backend: Arc<B>,
-    inferred: bool,
+    kind: GraphQueryKind,
     gql_parser: Option<GqlParser>,
 }
 
@@ -539,7 +547,7 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
                     "QW_ARGUMENT: qw_query requires constant alias, dialect, query and schema values",
                 ))
         };
-        if self.inferred
+        if self.kind != GraphQueryKind::DeclaredSchema
             && args
                 .arg(0)?
                 .resolved_value::<String>()?
@@ -552,8 +560,8 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
         }
         let alias = required(0)?;
         let dialect = required(1)?;
-        let query = required(2)?;
-        let declared = if self.inferred {
+        let mut query = required(2)?;
+        let declared = if self.kind != GraphQueryKind::DeclaredSchema {
             None
         } else {
             Some(parse_schema(&required(3)?)?)
@@ -570,8 +578,24 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
                 "QW_CONFIG: Unknown Ladybug graph alias",
             ));
         }
+        if self.kind == GraphQueryKind::Filtered {
+            let label = required(3)?;
+            let property = required(4)?;
+            if config
+                .catalog
+                .as_ref()
+                .and_then(|c| c.get(&label))
+                .is_some_and(|properties| {
+                    properties
+                        .iter()
+                        .any(|(name, ty)| name == &property && ty == "INT64")
+                })
+            {
+                query = required(5)?;
+            }
+        }
         let cypher = match language {
-            GraphLanguage::Gql if self.inferred => {
+            GraphLanguage::Gql if self.kind != GraphQueryKind::DeclaredSchema => {
                 self.backend.native_gql(query, self.gql_parser)?
             }
             _ => language.compile(query, self.gql_parser)?,
@@ -596,7 +620,7 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
         for column in &schema {
             handle.add_result_column(&column.name, &column.data_type.logical_type(context)?)?;
         }
-        let params = if self.inferred && args.len()? == 4 {
+        let params = if self.kind == GraphQueryKind::Parameterized {
             parameters::from_struct(
                 context,
                 &args.arg(3)?.value()?.ok_or_else(|| {
@@ -734,17 +758,26 @@ fn register_query(
             ),
         GraphQuery {
             backend: Arc::clone(&backend),
-            inferred: false,
+            kind: GraphQueryKind::DeclaredSchema,
             gql_parser,
         },
     )
     .register(extension)?;
-    for (name, parameterized) in [("qw_graph_query", false), ("qw_graph_query_params", true)] {
+    for (name, kind) in [
+        ("qw_graph_query", GraphQueryKind::InferredSchema),
+        ("qw_graph_query_params", GraphQueryKind::Parameterized),
+        ("qw_graph_query_filtered", GraphQueryKind::Filtered),
+    ] {
         let mut signature = SignatureBuilder::new()
             .param(FunctionParameter::new::<String>("alias"))
             .param(FunctionParameter::new::<String>("dialect"))
             .param(FunctionParameter::new::<String>("query"));
-        if parameterized {
+        if kind == GraphQueryKind::Filtered {
+            for arg in ["label", "property", "candidate"] {
+                signature = signature.param(FunctionParameter::new::<String>(arg));
+            }
+        }
+        if kind == GraphQueryKind::Parameterized {
             signature =
                 signature.param(FunctionParameter::new::<duckdb_neo::types::Any>("bindings"));
         }
@@ -753,7 +786,7 @@ fn register_query(
             signature,
             GraphQuery {
                 backend: Arc::clone(&backend),
-                inferred: true,
+                kind,
                 gql_parser,
             },
         )

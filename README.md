@@ -128,6 +128,8 @@ FETCH FIRST 2 ROWS ONLY;
 
 The SQL/PGQ read surface supports named, labeled vertices and named, typed edges in fixed forward patterns. `COLUMNS` exposes the projected columns to SQL. Use a view or CTE to reuse them in subqueries, set operations or aggregates. DuckDB evaluates the outer join, ordering and row limit. [Hybrid fixture and SQLLogic examples](test/stabilization/sqllogic/hybrid_public.test)
 
+For a selective graph scan, write the predicate inside `GRAPH_TABLE`, for example `WHERE e.rid = 101` or `WHERE e.rid IN (101, 104)`. QuackWeave sends these predicates to Ladybug when the property is registered as `INT64` and the list contains at most 64 signed integer literals. DuckDB evaluates the original SQL predicate on the returned rows. Expressions, parameter values, and lists containing NULL use the ordinary DuckDB filter.
+
 To reuse an existing GQL or Cypher query verbatim, execute it on a graph-enabled connection and ingest its Arrow result into the SQL consumer. This example uses two ADBC cursors. A limit inside `graph_statement` applies before the directory join.
 
 ```python

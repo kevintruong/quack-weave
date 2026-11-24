@@ -1,4 +1,6 @@
 #include "graph_table.hpp"
+#include "duckdb/parser/expression/comparison_expression.hpp"
+#include "duckdb/parser/expression/operator_expression.hpp"
 
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
@@ -12,11 +14,12 @@
 namespace duckdb {
 namespace {
 
-// Only identifier tokens cross into the generated provider statement. All SQL
-// expressions and literal values stay in their original DuckDB expression tree.
+// Provider identifiers are restricted to simple tokens.
 string ProviderName(const Identifier &identifier) {
 	const auto &name = identifier.GetIdentifierName();
-	auto letter = [](char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; };
+	auto letter = [](char c) {
+		return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+	};
 	if (name.empty() || !letter(name[0])) {
 		throw NotImplementedException("GRAPH_TABLE requires simple graph identifiers");
 	}
@@ -28,7 +31,15 @@ string ProviderName(const Identifier &identifier) {
 	return name;
 }
 
+// Reuse the original DuckDB WHERE as a residual for every provider prefilter.
+constexpr idx_t MAX_PREFILTER_KEYS = 64;
+
+struct Candidate {
+	string label, property, predicate;
+};
+
 struct GraphBindings {
+	identifier_map_t<string> labels;
 	identifier_map_t<Identifier> variables;
 	identifier_map_t<identifier_map_t<Identifier>> properties;
 	vector<string> projections;
@@ -37,9 +48,54 @@ struct GraphBindings {
 		auto &list = element.Cast<ListParseResult>();
 		auto variable = transformer.Transform<Identifier>(list, 1);
 		auto label = transformer.Transform<Identifier>(list, 3);
-		auto canonical = variables.emplace(variable, variable).first->second;
+		auto inserted = variables.emplace(variable, variable);
+		auto canonical = inserted.first->second;
+		labels[canonical] = inserted.second ? ProviderName(label) : "";
 		auto binding = ProviderName(canonical) + ":" + ProviderName(label);
 		return edge ? "[" + binding + "]" : "(" + binding + ")";
+	}
+
+	Candidate Prefilter(const ParsedExpression &expr) const {
+		const ParsedExpression *property = nullptr;
+		vector<const ParsedExpression *> values;
+		bool equality = expr.GetExpressionType() == ExpressionType::COMPARE_EQUAL;
+		if (equality && expr.GetExpressionClass() == ExpressionClass::COMPARISON) {
+			const auto &cmp = expr.Cast<ComparisonExpression>();
+			property = &cmp.Left();
+			values.push_back(&cmp.Right());
+		} else if (expr.GetExpressionType() == ExpressionType::COMPARE_IN &&
+		           expr.GetExpressionClass() == ExpressionClass::OPERATOR) {
+			const auto &args = expr.Cast<OperatorExpression>().GetChildren();
+			if (args.size() < 2 || args.size() - 1 > MAX_PREFILTER_KEYS)
+				return {};
+			property = args[0].get();
+			for (idx_t i = 1; i < args.size(); ++i)
+				values.push_back(args[i].get());
+		} else {
+			return {};
+		}
+		if (property->GetExpressionClass() != ExpressionClass::COLUMN_REF)
+			return {};
+		const auto &names = property->Cast<ColumnRefExpression>().ColumnNames();
+		if (names.size() != 2)
+			return {};
+		const auto variable = variables.find(names[0]);
+		const auto label = labels.find(names[0]);
+		if (variable == variables.end() || label == labels.end() || label->second.empty())
+			return {};
+		vector<string> literals;
+		for (const auto *value : values) {
+			if (value->GetExpressionClass() != ExpressionClass::CONSTANT)
+				return {};
+			int64_t n;
+			if (!value->Cast<ConstantExpression>().GetLiteral().TryGetInt64(n))
+				return {};
+			literals.push_back(std::to_string(n));
+		}
+		const auto name = ProviderName(names[1]);
+		const auto lhs = ProviderName(variable->second) + "." + name;
+		return {label->second, name,
+		        equality ? lhs + " = " + literals[0] : lhs + " IN [" + StringUtil::Join(literals, ", ") + "]"};
 	}
 
 	void BindProperties(ParsedExpression &expression) {
@@ -99,19 +155,28 @@ arena_ptr<TransformResultValue> TransformGraphTable(PEGTransformer &transformer,
 		}
 		bindings.BindProperties(*expression);
 	}
+	Candidate candidate;
 	if (result->where_clause) {
+		candidate = bindings.Prefilter(*result->where_clause);
 		bindings.BindProperties(*result->where_clause);
 	}
 	// A constant projection still returns one row per pattern match.
-	query += " RETURN " + (bindings.projections.empty() ? string("1 AS qw_row") :
-	                      StringUtil::Join(bindings.projections, ", "));
+	const auto projection = " RETURN " + (bindings.projections.empty() ? string("1 AS qw_row")
+	                                                                   : StringUtil::Join(bindings.projections, ", "));
 
 	vector<unique_ptr<ParsedExpression>> args;
 	args.push_back(ConstantExpression::String(graph.GetIdentifierName()));
 	args.push_back(ConstantExpression::String("cypher"));
-	args.push_back(ConstantExpression::String(std::move(query)));
+	args.push_back(ConstantExpression::String(query + projection));
+	const char *function = "qw_graph_query";
+	if (!candidate.predicate.empty()) {
+		function = "qw_graph_query_filtered";
+		args.push_back(ConstantExpression::String(candidate.label));
+		args.push_back(ConstantExpression::String(candidate.property));
+		args.push_back(ConstantExpression::String(query + " WHERE " + candidate.predicate + projection));
+	}
 	auto scan = make_uniq<TableFunctionRef>();
-	scan->function = make_uniq<FunctionExpression>(QualifiedName("system", "main", "qw_graph_query"), std::move(args));
+	scan->function = make_uniq<FunctionExpression>(QualifiedName("system", "main", function), std::move(args));
 	result->from_table = std::move(scan);
 	auto statement = make_uniq<SelectStatement>();
 	statement->node = std::move(result);
@@ -134,7 +199,8 @@ arena_ptr<TransformProcess> StartGraphTable(PEGTransformer &transformer, ParseRe
 void QwAddGraphTableRules(vector<GrammarChange> &changes) {
 	changes.push_back(GrammarChange::AddRule(
 	    "QwGraphTable <- 'GRAPH_TABLE' '(' Identifier 'MATCH' QwPgqVertex QwPgqStep* WhereClause? "
-	    "'COLUMNS' '(' TargetList ')' ')' TableAlias?", StartGraphTable));
+	    "'COLUMNS' '(' TargetList ')' ')' TableAlias?",
+	    StartGraphTable));
 	changes.push_back(GrammarChange::AddRule("QwPgqVertex <- '(' Identifier ':' Identifier ')'"));
 	changes.push_back(GrammarChange::AddRule("QwPgqEdge <- '[' Identifier ':' Identifier ']'"));
 	changes.push_back(GrammarChange::AddRule("QwPgqStep <- '-' QwPgqEdge '->' QwPgqVertex"));
