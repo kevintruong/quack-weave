@@ -1,0 +1,90 @@
+# name: test/stabilization/sqllogic/graph_entry.test
+# description: Native graph statements and connection-local language and graph selection
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_AIR_ROUTES UNSET_QW_AIR_ROUTES
+
+# case: graph_entry.selection Session selection resolves a registered graph
+query I old
+SELECT 1;
+----
+1
+
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"air_routes","path":"{QW_AIR_ROUTES}"}';
+
+statement error
+SESSION SET GRAPH absent;
+----
+QW_CONFIG
+
+statement ok
+SESSION SET GRAPH air_routes;
+
+# case: graph_entry.isolation A second connection must select its own graph
+statement error another
+MATCH (a:airport)-[e:route]->(b:airport) WHERE a.code = 'ATL' RETURN b.code AS destination;
+----
+QW_CONFIG
+
+statement ok another
+SESSION SET GRAPH air_routes;
+
+# A connection established before LOAD uses DuckDB's own grammar activation call.
+statement ok old
+CALL add_grammar_extension('quack_weave');
+
+statement ok old
+SESSION SET GRAPH air_routes;
+
+query T old
+SELECT current_setting('qw_selected_graph');
+----
+air_routes
+
+# case: graph_entry.gql_native GQL standalone traversal preserves aliases, NULLs and repeated rows
+query TTI rowsort
+MATCH (origin:airport)-[route:route]->(destination:airport)
+WHERE origin.code = 'ATL'
+RETURN origin.code AS origin, destination.code AS destination, route.dist AS miles
+LIMIT 10;
+----
+ATL	BOS	946
+ATL	BOS	946
+ATL	LAX	1946
+ATL	PDX	2172
+ATL	SEA	NULL
+
+# case: graph_entry.cypher_native Explicit connection language routes the original Cypher statement
+statement ok another
+SET SESSION qw_graph_dialect = 'cypher';
+
+query T rowsort another
+MATCH (a:airport)-[e:route]->(b:airport) WHERE a.code = 'ATL' RETURN b.code AS destination;
+----
+BOS
+BOS
+LAX
+PDX
+SEA
+
+query T
+SELECT current_setting('qw_graph_dialect');
+----
+gql
+
+# case: graph_entry.sql_preserved SQL identifiers, literal keywords, and invalid languages
+query T
+SELECT match FROM (VALUES ('SESSION SET GRAPH; MATCH')) AS session(match);
+----
+SESSION SET GRAPH; MATCH
+
+statement error
+SET SESSION qw_graph_dialect = 'other';
+----
+QW_ARGUMENT

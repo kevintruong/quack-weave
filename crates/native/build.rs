@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const DUCKGQL_REVISION: &str = "b4421c5cb5e3a389f9658de591a0aa6d397da991";
+const DUCKDB_REVISION: &str = "8d78114e90a53823803660bf821f6073ac87da8c";
 const ANTLR_VERSION: &str = "4.13.2";
 
 fn main() {
@@ -59,6 +60,7 @@ fn main() {
     println!("cargo:rustc-link-lib=static=qw_ladybug_admission");
     if env::var_os("CARGO_FEATURE_GQL").is_some() {
         build_gql(&manifest_dir, &out);
+        build_graph_grammar(&manifest_dir, &out);
     }
 
     let macos = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos");
@@ -85,6 +87,48 @@ fn main() {
         "stdc++"
     };
     println!("cargo:rustc-link-lib=dylib={cpp_runtime}");
+}
+
+fn build_graph_grammar(manifest: &Path, out: &Path) {
+    let source = manifest.join(format!("../../build/deps/duckdb-{DUCKDB_REVISION}"));
+    require_file(&source.join("src/include/duckdb/parser/grammar_extension.hpp"));
+    let grammar = manifest.join("grammar/standalone.cpp");
+    println!("cargo:rerun-if-changed={}", grammar.display());
+    let object = out.join("standalone.o");
+    run(
+        Command::new(env::var_os("CXX").as_deref().unwrap_or(OsStr::new("c++")))
+            .args([
+                "-std=c++17",
+                "-O2",
+                "-DNDEBUG",
+                "-fPIC",
+                "-fvisibility=hidden",
+                "-I",
+            ])
+            .arg(source.join("src/include"))
+            .arg("-I")
+            .arg(source.join("third_party/utf8proc/include"))
+            .arg("-c")
+            .arg(grammar)
+            .arg("-o")
+            .arg(&object),
+    );
+    run(
+        Command::new(env::var_os("AR").as_deref().unwrap_or(OsStr::new("ar")))
+            .arg("crs")
+            .arg(out.join("libqw_grammar.a"))
+            .arg(object),
+    );
+    println!("cargo:rustc-link-lib=static=qw_grammar");
+    // Upstream EXTENSION_STATIC_BUILD links DuckDB privately so loaders using
+    // RTLD_LOCAL can resolve the C++ parser ABI. Keep only referenced symbols.
+    let libraries = manifest.join("../../build/deps/gql-antlr/duckdb-static-v2.0.1");
+    let archive = libraries.join("libduckdb_static.a");
+    require_file(&archive);
+    println!("cargo:rustc-link-arg=-Wl,-dead_strip");
+    println!("cargo:rustc-link-arg=-Wl,-load_hidden");
+    println!("cargo:rustc-link-arg=-Xlinker");
+    println!("cargo:rustc-link-arg={}", archive.display());
 }
 
 fn build_gql(manifest_dir: &Path, out: &Path) {

@@ -4,13 +4,15 @@ import shutil
 import tempfile
 
 from package_mvp1 import package
-from prepare_gql_deps import ANTLR_VERSION, DUCKGQL_REVISION, ROOT
+from prepare_gql_deps import ANTLR_VERSION, DUCKDB_REVISION, DUCKGQL_REVISION, ROOT
 from prepare_mvp1_deps import verify
 
 
 def package_mvp2(library, extension, duckdb_version, platform, extension_version):
     duckgql = ROOT / f"duckdb-gql-{DUCKGQL_REVISION}"
     licenses = (
+        ("DuckDB-LICENSE", ROOT.parent / f"duckdb-{DUCKDB_REVISION}" / "LICENSE",
+         "075c33400ffcb0c586dd106a029d3e733e9da3693f8fcb9cebfc651c8a2f14e3"),
         ("DuckGQL-LICENSE", duckgql / "LICENSE",
          "bc65d3cde8d481d55c682ee88518ded59793453091a9f34edd3f1957d0251e8a"),
         ("openGQL-LICENSE", duckgql / "third_party" / "opengql" / "LICENSE",

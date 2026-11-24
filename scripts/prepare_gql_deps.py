@@ -1,5 +1,6 @@
 import pathlib
 import shutil
+import subprocess
 import tarfile
 import tempfile
 import urllib.request
@@ -11,9 +12,10 @@ ROOT = pathlib.Path(__file__).resolve().parents[1] / "build" / "deps" / "gql-ant
 GITHUB = "https://codeload.github.com"
 DUCKGQL_REVISION = "b4421c5cb5e3a389f9658de591a0aa6d397da991"
 ANTLR_VERSION = "4.13.2"
+DUCKDB_REVISION = "8d78114e90a53823803660bf821f6073ac87da8c"
 
 
-def install(name, url, digest, subtree, marker):
+def install(name, url, digest, subtree, marker, *, flat=False):
     archive = ROOT / name
     installed = ROOT / subtree
     with tempfile.TemporaryDirectory(dir=ROOT) as directory:
@@ -30,9 +32,11 @@ def install(name, url, digest, subtree, marker):
         if (installed / marker).is_file():
             return
 
-        with tarfile.open(archive) as contents:
-            contents.extractall(staging, filter="data")
         unpacked = staging / subtree
+        if flat:
+            unpacked.mkdir()
+        with tarfile.open(archive) as contents:
+            contents.extractall(unpacked if flat else staging, filter="data")
         if not (unpacked / marker).is_file():
             raise ValueError(f"Unexpected archive layout for {name}")
         try:
@@ -42,8 +46,37 @@ def install(name, url, digest, subtree, marker):
                 raise
 
 
+def install_duckdb_headers():
+    # Grammar extensions use DuckDB's exact C++ ABI. A shallow checkout verifies
+    # the source identity independently of the platform of the loading process.
+    destination = ROOT.parent / f"duckdb-{DUCKDB_REVISION}"
+    if not destination.exists():
+        with tempfile.TemporaryDirectory(dir=ROOT.parent) as directory:
+            staged = pathlib.Path(directory) / "source"
+            subprocess.run(["git", "clone", "--depth", "1", "--branch", "v2.0.1",
+                            "https://github.com/duckdb/duckdb.git", str(staged)], check=True)
+            verify_duckdb_revision(staged)
+            staged.rename(destination)
+    verify_duckdb_revision(destination)
+
+
+def verify_duckdb_revision(path):
+    revision = subprocess.check_output(["git", "-C", str(path), "rev-parse", "HEAD"], text=True).strip()
+    if revision != DUCKDB_REVISION:
+        raise ValueError(f"{path} is not the pinned DuckDB grammar source {DUCKDB_REVISION}")
+
+
 def main():
     ROOT.mkdir(parents=True, exist_ok=True)
+    install_duckdb_headers()
+    install(
+        "duckdb-static-libs-osx-arm64.tar.gz",
+        "https://github.com/duckdb/duckdb/releases/download/v2.0.1/duckdb-static-libs-osx-arm64.tar.gz",
+        "adaada35202db67d010b06277320aa700f1313d9997b549a948349c9fd749a41",
+        "duckdb-static-v2.0.1",
+        "libduckdb_static.a",
+        flat=True,
+    )
     install(
         "duckdb-gql.tar.gz",
         f"{GITHUB}/rahul-iyer/duckdb-gql/tar.gz/{DUCKGQL_REVISION}",

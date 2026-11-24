@@ -35,6 +35,7 @@ CALL show_tables() RETURN name AS table_name ORDER BY table_name;
 """
 
 NOTICE_HASHES = {
+    "DuckDB-LICENSE": "075c33400ffcb0c586dd106a029d3e733e9da3693f8fcb9cebfc651c8a2f14e3",
     "DuckGQL-LICENSE": "bc65d3cde8d481d55c682ee88518ded59793453091a9f34edd3f1957d0251e8a",
     "openGQL-LICENSE": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1",
     "ANTLR-LICENSE.txt": "3db1fb3ee79a4b4f9918fc4d0f6133bf18a3cf787f126cd22f8aa9b862281c0c",
@@ -179,7 +180,7 @@ def main():
         snapshot(lbug, graph, fixtures, before)
         run_cases(unittest, scratch, variables, [test_dir / name for name in (
             "reads.test", "gql_compatibility.test", "usage_relations.test", "usage_binding.test",
-            "usage_boundary.test", "air_routes_fixture.test", "graph_metadata.test",
+            "usage_boundary.test", "air_routes_fixture.test", "graph_metadata.test", "graph_entry.test",
             "bind.test", "admission.test", "scan.test", "host_access.test", "limits.test",
             "timeout.test_slow", "artifact.test",
             "duckgql_admission.test", "duckgql_aggregates.test", "duckgql_basic.test",
