@@ -646,7 +646,7 @@ impl TableFunctionCallbacks for GraphQuery {
                 }
             }
         }
-        let cypher = match language {
+        let mut cypher = match language {
             GraphLanguage::Gql if self.kind != GraphQueryKind::DeclaredSchema => {
                 backend.native_gql(query, self.gql_parser)?
             }
@@ -669,6 +669,49 @@ impl TableFunctionCallbacks for GraphQuery {
                     other => backend_error(other),
                 })?
         };
+        // A Relate declaration can claim BIGINT for a stored string. Pushing the
+        // filter could hide a conversion error. Only its observed, kind-qualified
+        // catalog certifies the actual graph values. Keep explicit budgets on the
+        // original scan so changing the row count cannot suppress a budget error.
+        if provider.kind == ProviderKind::Relate
+            && matches!(
+                self.kind,
+                GraphQueryKind::Filtered | GraphQueryKind::RuntimeWatch
+            )
+            && config.config.max_batch_bytes.is_none()
+            && config
+                .catalog
+                .as_ref()
+                .is_some_and(|c| c.keys().next().is_some_and(|k| k.contains(':')))
+        {
+            let label = required(3)?;
+            let property = required(4)?;
+            let is_integer = |i: usize| {
+                schema
+                    .get(i)
+                    .is_some_and(|c| c.data_type == ScalarType::BigInt)
+            };
+            if self.kind == GraphQueryKind::RuntimeWatch {
+                watch = RuntimeWatch::from_scan(
+                    &cypher,
+                    &label,
+                    &property,
+                    &required(5)?,
+                    &required(6)?,
+                )
+                .filter(|w| is_integer(w.column));
+                if watch.is_some() {
+                    handle.set_cardinality(MAX_KEYS + 1, false)?;
+                }
+            } else {
+                let candidate = required(5)?;
+                if runtime_watch::filtered_column(&cypher, &candidate, &label, &property)
+                    .is_some_and(is_integer)
+                {
+                    cypher = candidate;
+                }
+            }
+        }
         for column in &schema {
             handle.add_result_column(&column.name, &column.data_type.logical_type(context)?)?;
         }

@@ -1,0 +1,147 @@
+# name: test/relate/predicate_pushdown.test
+# description: RelateDB filters typed graph properties before DuckDB consumes rows
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_RELATE UNSET_QW_RELATE
+
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"routes","path":"{QW_RELATE}"}';
+
+# The output includes only the matching relationship even when the SQL output
+# omits the filter column. The SQL residual is still evaluated.
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM GRAPH_TABLE (
+  routes MATCH (o:airport)-[r:route]->(d:airport)
+  WHERE r.rid = 202 COLUMNS (d.code AS destination)
+) g;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 1,[^{}]*"name": "QW_GRAPH_QUERY_FILTERED".*
+
+query TI rowsort
+SELECT * FROM GRAPH_TABLE (
+  routes MATCH (o:airport)-[r:route]->(d:airport)
+  WHERE r.rid IN (201,201,-1,203) COLUMNS (d.code AS destination, r.dist AS dist)
+) g;
+----
+AMS	595
+RIX	NULL
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM GRAPH_TABLE (
+  routes MATCH (o:airport)-[r:route]->(d:airport)
+  WHERE r.rid IN (201,201,-1,203) COLUMNS (d.code AS destination)
+) g;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 2,[^{}]*"name": "QW_GRAPH_QUERY_FILTERED".*
+
+# Node and relationship namespaces overlap on Item. Its lowercase node id is
+# BIGINT, the uppercase node ID and lowercase relationship id are VARCHAR.
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM GRAPH_TABLE (
+  routes MATCH (a:Item) WHERE a.id = 8 COLUMNS (a.ID AS text_id)
+) g;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 1,[^{}]*"name": "QW_GRAPH_QUERY_FILTERED".*
+
+query T
+SELECT * FROM GRAPH_TABLE (
+  routes MATCH (a:Item) WHERE a.id = 8 COLUMNS (a.ID AS text_id)
+) g;
+----
+eight
+
+# The dynamic watchlist is read when executing a prepared statement. The native
+# IN prefilter may deduplicate keys; DuckDB's retained join restores multiplicity.
+statement ok
+CREATE TEMP TABLE watch(rid BIGINT);
+
+statement ok
+INSERT INTO watch VALUES (201),(201),(203),(NULL),(-1);
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON)
+SELECT g.rid FROM GRAPH_TABLE (routes MATCH (o:airport)-[r:route]->(d:airport)
+  COLUMNS (r.rid AS rid)) g JOIN watch w ON g.rid=w.rid;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 2,[^{}]*"name": "QW_GRAPH_QUERY_WATCH".*
+
+statement ok
+PREPARE grouped AS SELECT g.rid, count(*) FROM GRAPH_TABLE (
+  routes MATCH (o:airport)-[r:route]->(d:airport) COLUMNS (r.rid AS rid)
+) g JOIN watch w ON g.rid=w.rid GROUP BY g.rid ORDER BY g.rid;
+
+query II
+EXECUTE grouped;
+----
+201	2
+203	1
+
+statement ok
+DELETE FROM watch;
+
+statement ok
+INSERT INTO watch VALUES (202);
+
+query II
+EXECUTE grouped;
+----
+202	1
+
+# The internal helper cannot inject a different match, an unrelated property,
+# or an unbounded predicate in place of the typed filter.
+query I rowsort
+FROM qw_graph_query_filtered('routes','cypher',
+ 'MATCH (a:Item) RETURN a.id AS qw_col0','Item','id',
+ 'MATCH (a:Item) WHERE a.id > 7 RETURN a.id AS qw_col0');
+----
+7
+8
+
+query I rowsort
+FROM qw_graph_query_filtered('routes','cypher',
+ 'MATCH (a:Item) RETURN a.id AS qw_col0','Item','id',
+ 'MATCH (a:Item) WHERE a.id = 8 RETURN a.ID AS qw_col0');
+----
+7
+8
+
+query I rowsort
+FROM qw_graph_query_filtered('routes','cypher',
+ 'MATCH (a:Item) RETURN a.id AS qw_col0','airport','id',
+ 'MATCH (a:Item) WHERE a.id = 8 RETURN a.id AS qw_col0');
+----
+7
+8
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON)
+SELECT * FROM GRAPH_TABLE (routes MATCH (a:airport)
+  WHERE a.score = 2 COLUMNS(a.code AS code)) g;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 4,[^{}]*"name": "QW_GRAPH_QUERY_FILTERED".*
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"routes","path":"{QW_RELATE}","max_batch_bytes":1}';
+
+statement error
+SELECT * FROM GRAPH_TABLE (routes MATCH (o:airport)-[r:route]->(d:airport)
+  WHERE r.rid = -1 COLUMNS(r.rid AS rid)) g;
+----
+QW_BATCH_BUDGET
+
+# Filtering inside a provider using a declared but inaccurate schema can
+# silently drop a row that should produce a conversion error at the SQL boundary.
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"routes","path":"{QW_RELATE}","catalog":{"Item":{"ID":"BIGINT","id":"BIGINT"}}}';
+
+statement error
+SELECT * FROM GRAPH_TABLE (
+  routes MATCH (a:Item) WHERE a.ID = 8 COLUMNS (a.id AS numeric_id)
+) g;
+----
+QW_SCHEMA

@@ -11,6 +11,14 @@ use duckdb_neo::{
 
 unsafe extern "C" {
     fn qw_register_graph_grammar(factory: *mut c_void) -> *const c_char;
+    fn qw_runtime_watch_keys(column: usize, keys: *mut i64, capacity: usize) -> usize;
+}
+
+pub(crate) fn runtime_watch_keys(column: usize) -> Vec<i64> {
+    let mut keys = [0i64; 64];
+    // The grammar shim copies at most capacity BIGINTs during init_local.
+    let n = unsafe { qw_runtime_watch_keys(column, keys.as_mut_ptr(), keys.len()) };
+    keys[..n].to_vec()
 }
 
 enum GraphOption {

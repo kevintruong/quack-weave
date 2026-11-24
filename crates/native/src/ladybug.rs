@@ -51,13 +51,7 @@ impl LadybugBackend {
 impl ReadBackend for LadybugBackend {
     #[cfg(feature = "gql")]
     fn runtime_watch_keys(&self, column: usize) -> Vec<i64> {
-        unsafe extern "C" {
-            fn qw_runtime_watch_keys(column: usize, keys: *mut i64, capacity: usize) -> usize;
-        }
-        let mut keys = [0i64; 64];
-        // The grammar shim copies at most capacity BIGINTs during init_local.
-        let n = unsafe { qw_runtime_watch_keys(column, keys.as_mut_ptr(), keys.len()) };
-        keys[..n].to_vec()
+        crate::graph_entry::runtime_watch_keys(column)
     }
 
     fn set_generation(&self, generation: Option<u64>) {

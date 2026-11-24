@@ -90,6 +90,10 @@ impl ReadBackend for RelateBackend {
         rusty_quack_core::qw_query::compile_gql_query(&query, Some(crate::gql::parse_native))
     }
 
+    fn runtime_watch_keys(&self, column: usize) -> Vec<i64> {
+        crate::graph_entry::runtime_watch_keys(column)
+    }
+
     fn open(
         &self,
         path: &Path,

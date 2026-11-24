@@ -1,9 +1,45 @@
 //! Recognize the grammar's direct-property scan before applying an execution-time key filter.
 //! The internal table function can also be called from SQL, so validate its hints against
-//! the actual pattern and projection before moving a predicate into Ladybug.
+//! the actual pattern and projection before moving a predicate into the provider.
 use super::is_identifier;
 
 pub(super) const MAX_KEYS: usize = 64;
+
+/// Locate the column constrained by the grammar's literal candidate. The filter
+/// can only restrict the base MATCH and must preserve every projected expression.
+pub(super) fn filtered_column(
+    base: &str,
+    candidate: &str,
+    label: &str,
+    property: &str,
+) -> Option<usize> {
+    let (pattern, projection) = base.split_once(" RETURN ")?;
+    let (filtered, returned) = candidate.split_once(" RETURN ")?;
+    if projection != returned {
+        return None;
+    }
+    let predicate = filtered.strip_prefix(pattern)?.strip_prefix(" WHERE ")?;
+    let (key, values) = predicate.split_once(' ')?;
+    let (var, field) = key.split_once('.')?;
+    if field != property {
+        return None;
+    }
+    if let Some(literal) = values.strip_prefix("= ") {
+        literal.parse::<i64>().ok()?;
+    } else {
+        let list = values.strip_prefix("IN [")?.strip_suffix(']')?;
+        if list.split(',').count() > MAX_KEYS
+            || !list.split(',').all(|v| v.trim().parse::<i64>().is_ok())
+        {
+            return None;
+        }
+    }
+    let column = projection.split(", ").find_map(|item| {
+        let (expr, alias) = item.split_once(" AS ")?;
+        (expr == key).then_some(alias)
+    })?;
+    RuntimeWatch::from_scan(base, label, property, var, column).map(|watch| watch.column)
+}
 
 pub(super) struct RuntimeWatch {
     pub(super) column: usize,
