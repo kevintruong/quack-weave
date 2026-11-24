@@ -5,6 +5,7 @@ edition.workspace = true
 
 [features]
 gql = []
+relate-provider = ["gql", "dep:relate", "dep:relate-parser"]
 template-compat = []
 
 [lib]
@@ -13,3 +14,10 @@ crate-type = ["cdylib"]
 [dependencies]
 duckdb-neo.workspace = true
 rusty_quack_core.workspace = true
+relate = { version = "=1.2.0", optional = true }
+relate-parser = { version = "=1.2.0", optional = true }
+
+[[example]]
+name = "relate_fixture"
+path = "examples/relate_fixture.rs"
+required-features = ["relate-provider"]

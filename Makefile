@@ -2,6 +2,7 @@
 
 .PHONY: clean clean_all mvp1 mvp1-release mvp1-deps mvp1-test mvp2-deps
 .PHONY: mvp2 mvp2-release mvp2-test mvp2-stabilization-test public-client-test
+.PHONY: mvp2-relate-release mvp2-relate-test
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -50,8 +51,10 @@ MVP1_DEBUG_ARTIFACT := build/debug/extension/quack_weave/quack_weave.duckdb_exte
 MVP1_RELEASE_ARTIFACT := build/release/extension/quack_weave/quack_weave.duckdb_extension
 MVP2_EXTENSION_VERSION := v0.2.0
 MVP2_CARGO_DIR := $(MVP1_CARGO_DIR)/mvp2
+MVP2_RELATE_CARGO_DIR ?= $(MVP1_CARGO_DIR)/mvp2-relate
 MVP2_DEBUG_ARTIFACT := build/mvp2/debug/extension/quack_weave/quack_weave.duckdb_extension
 MVP2_RELEASE_ARTIFACT := build/mvp2/release/extension/quack_weave/quack_weave.duckdb_extension
+MVP2_RELATE_ARTIFACT := build/mvp2-relate/release/extension/quack_weave/quack_weave.duckdb_extension
 
 PYTHON_BIN ?= python3
 DUCKDB ?= duckdb
@@ -77,8 +80,8 @@ define make_mvp1
 endef
 
 define make_mvp2
-	$(call build_native,$(1) --features gql --target-dir '$(MVP2_CARGO_DIR)')
-	$(PYTHON_BIN) -B scripts/package_mvp2.py '$(MVP2_CARGO_DIR)/$(MVP1_TARGET)/$(2)/librusty_quack.dylib' '$(3)' $(MVP1_DUCKDB_VERSION) osx_arm64 $(MVP2_EXTENSION_VERSION)
+	$(call build_native,$(1) --features $(if $(4),$(4),gql) --target-dir '$(MVP2_CARGO_DIR)')
+	$(PYTHON_BIN) -B scripts/package_mvp2.py '$(MVP2_CARGO_DIR)/$(MVP1_TARGET)/$(2)/librusty_quack.dylib' '$(3)' $(MVP1_DUCKDB_VERSION) osx_arm64 $(MVP2_EXTENSION_VERSION) $(if $(filter relate-provider,$(4)),--relate)
 endef
 
 define check_native
@@ -106,6 +109,15 @@ mvp2:
 
 mvp2-release:
 	$(call make_mvp2,--release,release,$(MVP2_RELEASE_ARTIFACT))
+
+mvp2-relate-release mvp2-relate-test: MVP2_CARGO_DIR = $(MVP2_RELATE_CARGO_DIR)
+
+mvp2-relate-release:
+	$(call make_mvp2,--release,release,$(MVP2_RELATE_ARTIFACT),relate-provider)
+
+mvp2-relate-test: mvp2-relate-release
+	$(call build_native,--release --features relate-provider --target-dir '$(MVP2_CARGO_DIR)' --example relate_fixture)
+	$(PYTHON_BIN) -B test/relate/run.py --duckdb-unittest '$(DUCKDB_UNITTEST)' --fixture-builder '$(MVP2_CARGO_DIR)/$(MVP1_TARGET)/release/examples/relate_fixture' --extension '$(MVP2_RELATE_ARTIFACT)' --lbug '$(LBUG)'
 
 mvp2-test: mvp2 mvp2-release
 	$(call check_mvp2,$(MVP2_DEBUG_ARTIFACT))

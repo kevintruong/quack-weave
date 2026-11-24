@@ -57,7 +57,7 @@ pub fn register(extension: &Extension) -> Result<()> {
     for (name, description, initial, option) in [
         (
             "qw_selected_graph",
-            "Ladybug graph selected by SESSION SET GRAPH",
+            "Graph alias selected by SESSION SET GRAPH",
             "",
             GraphOption::Graph,
         ),

@@ -97,7 +97,7 @@ def run_cases(unittest, scratch, variables, files=(), stdin=None):
         manifest.write_text("\n".join(str(file) for file in files) + "\n", encoding="utf-8")
         args += ["-f", manifest]
         source_bytes = {str(file): file.read_bytes() for file in files}
-        expected = {name: len(re.findall(r"^(?:query [TIR]+|statement (?:ok|error))\b",
+        expected = {name: len(re.findall(r"^(?:query [TIR]+|statement (?:ok|error|maybe))\b",
                                         source.decode("utf-8"), re.M))
                     for name, source in source_bytes.items()}
     else:

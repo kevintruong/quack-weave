@@ -1,0 +1,314 @@
+# name: test/relate/provider.test
+# description: Real RelateDB and Ladybug reads on one DuckDB connection
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_RELATE UNSET_QW_RELATE
+
+test-env QW_LADYBUG UNSET_QW_LADYBUG
+
+test-env QW_MISSING UNSET_QW_MISSING
+
+test-env QW_CORRUPT UNSET_QW_CORRUPT
+
+test-env QW_DIR UNSET_QW_DIR
+
+statement ok
+LOAD '{QW_EXT}';
+
+# An application with an explicit result schema can read without a property catalog.
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"relate_routes","path":"{QW_RELATE}"}';
+
+query TI rowsort
+FROM qw_query('relate_routes', 'cypher',
+  $$MATCH (a:airport)-[r:route]->(b:airport) RETURN b.code AS destination, r.dist AS miles$$,
+  schema := 'destination VARCHAR, miles BIGINT');
+----
+AMS	595
+AMS	600
+RIX	NULL
+
+# The observed catalog also binds this property query in the default GQL dialect.
+statement ok
+SESSION SET GRAPH relate_routes;
+
+query T rowsort
+MATCH (a:airport)-[r:route]->(d:airport) WHERE r.rid = 202 RETURN d.code AS destination;
+----
+AMS
+
+# Relate keeps node labels and relationship types in separate namespaces.
+query ITI
+MATCH (a:Item)-[e:Item]->(b:Item) RETURN a.id AS source_id, e.id AS edge_id, b.id AS dest_id;
+----
+7	edge	8
+
+query IT rowsort
+SELECT * FROM GRAPH_TABLE (relate_routes MATCH (a:Item) COLUMNS(a.id AS numeric_id, a.ID AS text_id)) AS items;
+----
+7	seven
+8	eight
+
+statement error
+MATCH (a:Item)-[e:Item]->(b:Item) RETURN a.edge_only AS wrong_entity;
+----
+QW_SCHEMA
+
+# Cover more rows than fit into a DuckDB output vector without enlarging the graph fixture.
+query II
+SELECT count(*), sum(id) FROM qw_query('relate_routes', 'cypher',
+  $$UNWIND range(1,5001) AS n RETURN n AS id$$, schema := 'id BIGINT');
+----
+5001	12507501
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"relate_routes","path":"{QW_RELATE}","catalog":{"airport":{"code":"VARCHAR","hub":"BOOLEAN","score":"DOUBLE"},"route":{"rid":"BIGINT","dist":"BIGINT"},"Item":{"id":"BIGINT","ID":"VARCHAR"}}}';
+
+query IT rowsort
+SELECT * FROM GRAPH_TABLE (relate_routes MATCH (a:Item) COLUMNS(a.id AS numeric_id, a.ID AS text_id)) AS items;
+----
+7	seven
+8	eight
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"lady_routes","path":"{QW_LADYBUG}"}';
+
+statement ok
+SESSION SET GRAPH relate_routes;
+
+statement ok
+SET qw_graph_dialect = 'cypher';
+
+query I
+MATCH (a:airport) RETURN count(*) AS total;
+----
+4
+
+query TI rowsort
+MATCH (o:airport)-[r:route]->(d:airport)
+WHERE o.code = 'OSL' RETURN d.code AS destination, r.dist AS miles;
+----
+AMS	595
+AMS	600
+RIX	NULL
+
+query TRI
+MATCH (a:airport) WHERE a.code = 'OSL' RETURN a.code AS code, a.score AS score, a.hub AS hub;
+----
+OSL	2.5	true
+
+statement ok
+PREPARE route_for AS MATCH (o:airport)-[r:route]->(d:airport)
+WHERE r.rid = $id RETURN d.code AS destination;
+
+query T
+EXECUTE route_for(id := 201);
+----
+AMS
+
+query T
+EXECUTE route_for(id := 999);
+----
+
+# Verify bind-time types and values independently, including a zero-row match.
+statement ok
+CREATE TEMP TABLE empty_result AS SELECT g.* FROM GRAPH_TABLE (
+    relate_routes MATCH (o:airport)-[r:route]->(d:airport)
+    WHERE r.rid = 0 COLUMNS (d.code AS destination, r.dist AS miles)
+) AS g;
+
+query TT
+SELECT column_name, data_type FROM duckdb_columns() WHERE table_name='empty_result'
+ORDER BY column_index;
+----
+destination	VARCHAR
+miles	BIGINT
+
+query I
+SELECT count(*) FROM empty_result;
+----
+0
+
+statement ok
+CREATE TEMP TABLE watch(rid BIGINT);
+
+statement ok
+INSERT INTO watch VALUES (201),(201),(203),(NULL),(-1);
+
+query III
+SELECT g.rid, count(*), count(g.miles)
+FROM GRAPH_TABLE (relate_routes MATCH (o:airport)-[r:route]->(d:airport)
+      COLUMNS (r.rid AS rid, r.dist AS miles)) g
+JOIN watch w ON g.rid = w.rid GROUP BY g.rid ORDER BY g.rid;
+----
+201	2	2
+203	1	0
+
+# Each alias resolves independently of the selected session graph.
+query II
+SELECT
+ (SELECT count(*) FROM GRAPH_TABLE (relate_routes MATCH (o:airport)-[r:route]->(d:airport) COLUMNS(r.rid AS id)) AS rg),
+ (SELECT count(*) FROM GRAPH_TABLE (lady_routes MATCH (o:airport)-[r:route]->(d:airport) COLUMNS(r.rid AS id)) AS lg);
+----
+3	5
+
+# The two graphs join on airport business keys. Ladybug has two parallel flights to BOS.
+query IT
+SELECT lg.route_id, rg.code
+FROM GRAPH_TABLE (lady_routes MATCH (o:airport)-[r:route]->(d:airport)
+       COLUMNS(r.rid AS route_id, d.code AS destination)) AS lg
+JOIN GRAPH_TABLE (relate_routes MATCH (a:airport) COLUMNS(a.code AS code)) AS rg
+ON lg.destination = rg.code ORDER BY lg.route_id;
+----
+101	BOS
+102	BOS
+
+statement ok
+SESSION SET GRAPH lady_routes;
+
+query T rowsort
+MATCH (o:airport)-[r:route]->(d:airport) WHERE o.code = 'ATL' RETURN d.code AS destination;
+----
+BOS
+BOS
+LAX
+PDX
+SEA
+
+statement error
+SELECT * FROM qw_query('relate_routes','cypher',
+ $$MATCH (a:airport) WHERE a.code = 'OSL' SET a.code = 'changed' RETURN a.code AS code$$, schema := 'code VARCHAR');
+----
+QW_ADMISSION
+
+statement error
+SELECT * FROM qw_query('relate_routes','cypher',
+ $$CALL db.labels() YIELD label RETURN label$$, schema := 'label VARCHAR');
+----
+QW_ADMISSION
+
+statement error
+SELECT * FROM qw_query('relate_routes','cypher',
+ $$CREATE (a:airport {code: 'XXX'}) RETURN a.code AS code$$, schema := 'code VARCHAR');
+----
+QW_ADMISSION
+
+statement error
+SELECT * FROM qw_query('relate_routes','cypher', $$MATCH (a:airport) RETURN a.code AS code$$, schema := 'code BIGINT');
+----
+QW_SCHEMA
+
+# A duplicate alias cannot replace the second provider's active registration.
+statement error
+SET GLOBAL qw_relate_config = '{"alias":"LADY_ROUTES","path":"{QW_RELATE}"}';
+----
+QW_CONFIG
+
+statement error
+SET GLOBAL qw_relate_config = '{"alias":"broken","path":"{QW_CORRUPT}","catalog":{"airport":{"code":"VARCHAR"}}}';
+----
+QW_OPEN
+
+statement error
+SET GLOBAL qw_relate_config = '{"alias":"bad","path":"{QW_RELATE}","timeout_ms":1000}';
+----
+QW_CONFIG
+
+statement error
+SET GLOBAL qw_relate_config = '{"alias":"bad","path":"{QW_RELATE}","catalog":{"airport":{"code":"UUID"}}}';
+----
+QW_CONFIG
+
+statement error
+SET GLOBAL qw_relate_config = '{"alias":"remote","path":"https://example.invalid/routes.rl"}';
+----
+QW_ACCESS
+
+statement error
+SET GLOBAL qw_relate_config = '{"alias":"dir","path":"{QW_DIR}"}';
+----
+QW_ACCESS
+
+statement error
+SET GLOBAL qw_relate_config = '{"alias":"missing","path":"{QW_MISSING}"}';
+----
+QW_ACCESS
+
+query I
+SELECT count(*) FROM qw_query('relate_routes','cypher',
+ $$MATCH (a:airport) WHERE a.code = 'OSL' RETURN a.code AS code$$, schema := 'code VARCHAR');
+----
+1
+
+# Resetting and replacing a Relate alias does not reset the Ladybug alias.
+statement ok
+RESET GLOBAL qw_relate_config;
+
+statement error
+SESSION SET GRAPH relate_routes;
+----
+QW_CONFIG
+
+query T
+MATCH (o:airport)-[r:route]->(d:airport) WHERE r.rid = 103 RETURN d.code AS destination;
+----
+LAX
+
+# A RESET racing a SET on an empty provider must allow a later registration.
+concurrentforeach action reset set
+
+onlyif action=reset
+statement ok
+RESET GLOBAL qw_relate_config;
+
+onlyif action=set
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"transient","path":"{QW_RELATE}"}';
+
+endloop
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"recovered","path":"{QW_RELATE}"}';
+
+query I
+SELECT count(*) FROM GRAPH_TABLE (recovered MATCH (a:airport) COLUMNS(a.code AS code)) AS g;
+----
+4
+
+# Concurrent SETs must leave exactly one owner for the shared alias.
+concurrentforeach provider ladybug relate
+
+onlyif provider=ladybug
+statement maybe
+SET GLOBAL qw_ladybug_config = '{"alias":"race","path":"{QW_LADYBUG}"}';
+----
+QW_CONFIG: Graph alias must be unique
+
+onlyif provider=relate
+statement maybe
+SET GLOBAL qw_relate_config = '{"alias":"race","path":"{QW_RELATE}"}';
+----
+QW_CONFIG: Graph alias must be unique
+
+endloop
+
+statement ok
+SESSION SET GRAPH race;
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"small","path":"{QW_RELATE}","max_batch_bytes":1}';
+
+statement error
+SELECT * FROM qw_query('small','cypher', $$MATCH (a:airport) RETURN a.code AS code$$, schema := 'code VARCHAR');
+----
+QW_BATCH_BUDGET
+
+statement ok
+SET enable_external_access = false;
+
+statement error
+SELECT * FROM qw_query('small','cypher', $$MATCH (a:airport) RETURN a.code AS code$$, schema := 'code VARCHAR');
+----
+QW_ACCESS

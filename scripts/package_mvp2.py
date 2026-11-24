@@ -8,7 +8,7 @@ from prepare_gql_deps import ANTLR_VERSION, DUCKDB_REVISION, DUCKGQL_REVISION, R
 from prepare_mvp1_deps import verify
 
 
-def package_mvp2(library, extension, duckdb_version, platform, extension_version):
+def package_mvp2(library, extension, duckdb_version, platform, extension_version, relate=False):
     duckgql = ROOT / f"duckdb-gql-{DUCKGQL_REVISION}"
     licenses = (
         ("DuckDB-LICENSE", ROOT.parent / f"duckdb-{DUCKDB_REVISION}" / "LICENSE",
@@ -20,6 +20,14 @@ def package_mvp2(library, extension, duckdb_version, platform, extension_version
         ("ANTLR-LICENSE.txt", ROOT / f"antlr4-{ANTLR_VERSION}" / "LICENSE.txt",
          "3db1fb3ee79a4b4f9918fc4d0f6133bf18a3cf787f126cd22f8aa9b862281c0c"),
     )
+    if relate:
+        source = Path(__file__).resolve().parents[1] / "crates/native/licenses/relate-1.2.0"
+        licenses += (
+            ("Relate-LICENSE", source / "LICENSE",
+             "ac87d12e27d69f09130a7b4178e48e995ab131e4b476aa188e58ffac7ed7fab3"),
+            ("Relate-THIRDPARTY-NOTICES.md", source / "THIRDPARTY-NOTICES.md",
+             "d81c94a78eeb4b2bba3052cb3740bdd2f234b377f8063ad4ae59816af1718172"),
+        )
     extension.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=extension.parent) as directory:
         staged = Path(directory)
@@ -44,4 +52,5 @@ if __name__ == "__main__":
     parser.add_argument("duckdb_version")
     parser.add_argument("platform")
     parser.add_argument("extension_version")
+    parser.add_argument("--relate", action="store_true", help="Include third-party notices for the RelateDB build")
     package_mvp2(**vars(parser.parse_args()))

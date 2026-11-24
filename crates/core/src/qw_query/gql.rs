@@ -10,7 +10,7 @@ use super::is_identifier;
 
 pub type GqlParser = fn(&str) -> std::result::Result<ParsedRead, ParseError>;
 
-/// Compile one supported GQL read to the payload for the existing Ladybug admission path.
+/// Compile one supported GQL read to the Cypher admitted by the selected backend.
 pub fn compile_gql_query(query: &str, parser: Option<GqlParser>) -> Result<String> {
     let parser = parser.ok_or_else(|| frontend_error(ParseErrorKind::Unavailable, None))?;
     let parsed = parser(query).map_err(|error| frontend_error(error.kind, error.location))?;

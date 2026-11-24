@@ -55,6 +55,16 @@ void AttachWatch(OptimizerExtensionInput &input, LogicalOperator &op) {
 	    graph.dynamic_filters || graph.table_filters.HasFilters()) {
 		return;
 	}
+	// The same function dispatches to multiple providers. Only attach dynamic
+	// filters when the bound backend admitted this exact integer watch column.
+	if (!graph.bind_data || !graph.function.get_bind_info) {
+		return;
+	}
+	TableFunctionGetBindInfoInput bind_info_input(input.context, graph.bind_data.get());
+	auto info = graph.function.get_bind_info(bind_info_input);
+	if (info.options.find("qw_runtime_watch") == info.options.end()) {
+		return;
+	}
 	// DuckDB propagates dynamic filters to the physical scan only for
 	// projection_pushdown sources. The C API implementation writes a complete
 	// schema, so opt in only when the requested output is exactly that schema.

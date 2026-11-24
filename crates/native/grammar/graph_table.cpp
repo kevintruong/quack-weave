@@ -1,5 +1,6 @@
 #include "graph_table.hpp"
 #include "watchlist.hpp"
+#include "duckdb/common/unordered_map.hpp"
 #include "duckdb/parser/expression/comparison_expression.hpp"
 #include "duckdb/parser/expression/operator_expression.hpp"
 
@@ -42,7 +43,7 @@ struct Candidate {
 struct GraphBindings {
 	identifier_map_t<string> labels;
 	identifier_map_t<Identifier> variables;
-	identifier_map_t<identifier_map_t<Identifier>> properties;
+	identifier_map_t<unordered_map<string, Identifier>> properties;
 	vector<string> projections;
 
 	string Element(PEGTransformer &transformer, ParseResult &element, bool edge) {
@@ -120,12 +121,14 @@ struct GraphBindings {
 			throw BinderException("Unknown GRAPH_TABLE pattern variable %s", names[0]);
 		}
 		auto &bound = properties[variable->second];
-		auto entry = bound.find(names[1]);
+		// SQL matches the pattern variable, while the graph owns the property key.
+		const auto key = ProviderName(names[1]);
+		auto entry = bound.find(key);
 		if (entry == bound.end()) {
 			auto alias = Identifier("qw_col" + std::to_string(projections.size()));
-			auto property = ProviderName(variable->second) + "." + ProviderName(names[1]);
+			auto property = ProviderName(variable->second) + "." + key;
 			projections.push_back(property + " AS " + alias.GetIdentifierName());
-			entry = bound.emplace(names[1], std::move(alias)).first;
+			entry = bound.emplace(key, std::move(alias)).first;
 		}
 		names = {entry->second};
 	}

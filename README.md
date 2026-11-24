@@ -79,6 +79,45 @@ make mvp2-test DUCKDB=/path/to/duckdb-v2.0.1 LBUG=/path/to/lbug-v0.22.3
 
 The default build remains MVP1 and its Cypher-only artifact stays under `build/debug` or `build/release`.
 
+### Query a RelateDB graph alongside Ladybug
+
+The optional `relate-provider` build embeds RelateDB 1.2.0. On macOS arm64, build it with `make mvp2-deps` and `make mvp2-relate-release`. Start DuckDB 2.0.1 with `-unsigned` and point the extension at an existing, checkpointed, single-file `.rl` bundle. [Pinned RelateDB source](https://github.com/relatedb/relate/tree/v1.2.0)
+
+```sql
+LOAD '/absolute/path/to/quack-weave/build/mvp2-relate/release/extension/quack_weave/quack_weave.duckdb_extension';
+SET GLOBAL qw_relate_config = '{"alias":"relate_routes","path":"/absolute/path/to/routes.rl"}';
+SESSION SET GRAPH relate_routes;
+
+MATCH (o:airport)-[r:route]->(d:airport)
+WHERE o.code = 'OSL'
+RETURN d.code AS destination, r.dist AS miles;
+```
+
+Use `GRAPH_TABLE` to join the graph to a DuckDB table. Here the two watchlist entries for flight 201 produce two matches. The fixture's flight 203 has a missing distance and returns SQL `NULL`.
+
+```sql
+WITH watch(rid) AS (VALUES (201), (201), (203))
+SELECT g.rid, g.destination, g.miles
+FROM GRAPH_TABLE (
+    relate_routes MATCH (o:airport)-[r:route]->(d:airport)
+    COLUMNS (r.rid AS rid, d.code AS destination, r.dist AS miles)
+) AS g
+JOIN watch AS w ON w.rid = g.rid
+ORDER BY g.rid;
+```
+
+One Relate alias and one Ladybug alias can coexist. Give them distinct names and reference either alias in each `GRAPH_TABLE`, including both in the same SQL join. Standalone queries default to the extension's supported GQL subset. Select `SET SESSION qw_graph_dialect = 'cypher'` for Cypher. For a read with an explicit output schema, use `qw_query('relate_routes', 'cypher', query_text, schema := '...')`.
+
+Registration opens the bundle read-only and ordinarily discovers property types from stored values. Discovery distinguishes a node label from a relationship type with the same name. For an empty graph or a property whose type cannot be inferred, declare the catalog at registration, for example `"catalog":{"airport":{"code":"VARCHAR"},"route":{"rid":"BIGINT","dist":"BIGINT"}}` inside the configuration JSON. A declared entry applies to both kinds if they share a name. The provider returns nullable `BOOLEAN`, `BIGINT`, `DOUBLE` and `VARCHAR` columns and checks returned values against the bound types.
+
+Each Relate scan opens a read-only handle. RelateDB 1.2.0 materializes its query result before QuackWeave converts it to DuckDB batches. The optional `max_batch_bytes` limits that conversion. Configuring `timeout_ms` for this provider raises `QW_CONFIG`. [RelateDB execution and buffering](https://github.com/relatedb/relate/blob/v1.2.0/docs/adr/0319-bolt-execution-failures-at-pull.md)
+
+Run the integration suite with the pinned DuckDB SQLLogic runner and Ladybug CLI. It creates both real graph fixtures, checks the Relate rows through the native API, runs the DuckDB queries and verifies the fixture files after the reads. [SQLLogic cases](test/relate/provider.test) · [Fixture builder](crates/native/examples/relate_fixture.rs)
+
+```sh
+make mvp2-relate-test DUCKDB_UNITTEST=/path/to/duckdb-v2.0.1/unittest LBUG=/path/to/lbug-v0.22.3
+```
+
 ### Standalone graph queries
 
 The usage notebook runs the same air-routes query in GQL and Cypher and shows where to place a SQL join and a row limit. [Usage patterns and executable example](quack-weave-hybrid-usage-spec.ipynb)

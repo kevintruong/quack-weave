@@ -1,20 +1,16 @@
-//! Read-only Ladybug results exposed as a DuckDB table function.
+//! Read-only graph results exposed as DuckDB table functions.
 
 use std::{
     collections::{BTreeMap, HashSet},
     num::NonZeroUsize,
     path::Path,
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, atomic::AtomicU64},
 };
 
 use duckdb_neo::{
     DuckDBType, FromValue, Result, ToValue,
     bind_arguments::BindArguments,
-    connection::{Context, SettingScope},
-    custom_option::{CustomOptionBuilder, CustomOptionCallbacks},
+    connection::Context,
     data_chunk::DataChunk,
     error::Error,
     extension::Extension,
@@ -37,6 +33,8 @@ mod gql;
 mod graph_value;
 pub use graph_value::{GraphColumn, GraphValue};
 mod parameters;
+mod providers;
+use providers::{AliasReservations, GraphProvider, ProviderKind, resolve_alias};
 mod runtime_watch;
 use runtime_watch::{MAX_KEYS, RuntimeWatch};
 
@@ -44,10 +42,9 @@ pub use parameters::GraphParameter;
 
 pub use gql::{GqlParser, compile_gql_query};
 
-const CONFIG: &str = "qw_ladybug_config";
 static CONFIG_GENERATION: AtomicU64 = AtomicU64::new(0);
 
-/// Table and property names with their Ladybug logical types, captured at registration.
+/// Label and property names with their graph logical types, captured at registration.
 pub type GraphCatalog = BTreeMap<String, Vec<(String, String)>>;
 
 /// A backend that exclusively opens read-only database handles.
@@ -55,6 +52,15 @@ pub trait ReadBackend: Send + Sync {
     /// Read only catalog metadata while registering a graph generation.
     fn catalog(&self, _path: &Path) -> Option<GraphCatalog> {
         None
+    }
+
+    /// Open the admitted file read-only at registration and optionally capture its catalog.
+    fn registration_catalog(
+        &self,
+        path: &Path,
+        _declared: Option<&GraphCatalog>,
+    ) -> std::result::Result<Option<GraphCatalog>, BackendError> {
+        Ok(self.catalog(path))
     }
 
     /// Resolve the projection using the saved metadata, without opening the graph.
@@ -148,19 +154,15 @@ pub enum BackendError {
 
 fn backend_error(error: BackendError) -> Error {
     let message = match error {
-        BackendError::Open => "QW_OPEN: Could not open the configured Ladybug graph read-only",
+        BackendError::Open => "QW_OPEN: Could not open the configured graph read-only",
         BackendError::Admission => {
             "QW_ADMISSION: Expected a single supported read-only Cypher graph query"
         }
-        BackendError::Execution => "QW_EXECUTION: Ladybug could not execute the graph query",
-        BackendError::Schema => {
-            "QW_SCHEMA: Ladybug result does not match the declared scalar schema"
-        }
-        BackendError::Arrow => "QW_ARROW: Ladybug result batch could not be decoded",
-        BackendError::BatchBudget => {
-            "QW_BATCH_BUDGET: Ladybug result batch exceeds max_batch_bytes"
-        }
-        BackendError::Timeout => "QW_TIMEOUT: Ladybug graph query timed out",
+        BackendError::Execution => "QW_EXECUTION: The provider could not execute the graph query",
+        BackendError::Schema => "QW_SCHEMA: Graph result does not match the declared scalar schema",
+        BackendError::Arrow => "QW_ARROW: Graph result batch could not be decoded",
+        BackendError::BatchBudget => "QW_BATCH_BUDGET: Graph result batch exceeds max_batch_bytes",
+        BackendError::Timeout => "QW_TIMEOUT: Graph query timed out",
     };
     Error::invalid_input(message)
 }
@@ -323,13 +325,13 @@ struct ConfigInput {
     path: String,
     timeout_ms: Option<u64>,
     max_batch_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    catalog: Option<BTreeMap<String, BTreeMap<String, String>>>,
 }
 
 fn parse_config(text: &str) -> Result<ConfigInput> {
     let config: ConfigInput = serde_json::from_str(text).map_err(|_| {
-        Error::invalid_input(
-            "QW_CONFIG: Expected JSON with alias, path and optional timeout_ms and max_batch_bytes",
-        )
+        Error::invalid_input("QW_CONFIG: Expected a graph configuration object with alias and path")
     })?;
     if !is_identifier(&config.alias)
         || config.timeout_ms == Some(0)
@@ -402,7 +404,7 @@ struct ConfigSnapshot {
 fn admit_local_path(context: &Context, path: &str) -> Result<String> {
     fn denied() -> Error {
         Error::invalid_input(
-            "QW_ACCESS: The configured local Ladybug file requires DuckDB external access",
+            "QW_ACCESS: The configured local graph file requires DuckDB external access",
         )
     }
 
@@ -436,87 +438,18 @@ fn admit_local_path(context: &Context, path: &str) -> Result<String> {
     Ok(canonical.to_owned())
 }
 
-struct LadybugConfig<B>(Arc<B>);
-
-impl<B: ReadBackend + 'static> CustomOptionCallbacks for LadybugConfig<B> {
-    fn update(
-        &self,
-        context: &Context,
-        value: Value,
-        scope: SettingScope,
-        is_reset: bool,
-    ) -> Result<Value> {
-        if matches!(scope, SettingScope::Session) {
-            return Err(Error::invalid_input(
-                "QW_CONFIG: Use SET GLOBAL for qw_ladybug_config",
-            ));
-        }
-        if is_reset {
-            let value = Option::<String>::None.value(context)?;
-            self.0.set_generation(None);
-            return Ok(value);
-        }
-        let text = String::from_value(&value)?.ok_or_else(|| {
-            Error::invalid_input(
-                "QW_CONFIG: Expected JSON with alias, path and optional timeout_ms and max_batch_bytes",
-            )
-        })?;
-        let mut config = parse_config(&text)?;
-        config.path = admit_local_path(context, &config.path)?;
-        let generation = CONFIG_GENERATION
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
-                value.checked_add(1)
-            })
-            .map_err(|_| Error::internal("QW_CONFIG: Configuration generation exhausted"))?;
-        let path = Path::new(&config.path);
-        let registered = GraphGeneration::capture(generation, path)?;
-        let catalog = self.0.catalog(path);
-        registered.validate(path)?;
-        let serialized = serde_json::to_string(&ConfigSnapshot {
-            generation: registered,
-            config,
-            catalog,
-        })
-        .map_err(|_| {
-            Error::internal("QW_CONFIG: Could not store the validated graph configuration")
-        })?;
-        let value = serialized.value(context)?;
-        self.0.set_generation(Some(generation));
-        Ok(value)
-    }
-}
-
-fn current_config(context: &Context) -> Result<ConfigSnapshot> {
-    let (value, scope) = context.config()?.get_value(CONFIG)?;
-    if matches!(scope, SettingScope::Session) {
-        return Err(Error::invalid_input(
-            "QW_CONFIG: Use SET GLOBAL for qw_ladybug_config",
-        ));
-    }
-    let config = String::from_value(&value)?.ok_or_else(|| {
-        Error::invalid_input(
-            "QW_CONFIG: Configure an existing Ladybug graph with SET GLOBAL qw_ladybug_config",
-        )
-    })?;
-    serde_json::from_str(&config)
-        .map_err(|_| Error::invalid_input("QW_CONFIG: Invalid graph configuration"))
-}
-
-/// Validate a session graph selection against the provisioned name.
+/// Validate a session graph selection against this instance's provisioned names.
 pub fn validate_graph_alias(context: &Context, alias: &str) -> Result<()> {
-    if !current_config(context)?
-        .config
-        .alias
-        .eq_ignore_ascii_case(alias)
-    {
-        return Err(Error::invalid_input(
-            "QW_CONFIG: Unknown Ladybug graph alias",
-        ));
-    }
-    Ok(())
+    resolve_alias(
+        context,
+        alias,
+        [ProviderKind::Ladybug, ProviderKind::Relate],
+    )
+    .map(|_| ())
 }
 
 struct BoundRead {
+    provider: GraphProvider,
     watch: Option<RuntimeWatch>,
     params: Vec<(String, GraphParameter)>,
     config: ConfigSnapshot,
@@ -605,13 +538,13 @@ enum GraphQueryKind {
     RuntimeWatch,
 }
 
-struct GraphQuery<B> {
-    backend: Arc<B>,
+struct GraphQuery {
+    providers: Arc<[GraphProvider]>,
     kind: GraphQueryKind,
     gql_parser: Option<GqlParser>,
 }
 
-impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
+impl TableFunctionCallbacks for GraphQuery {
     type BindData = BoundRead;
     type LocalState = (Scan, Option<String>);
     type GlobalState = ();
@@ -654,17 +587,20 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
             ));
         }
         let language = GraphLanguage::parse(&dialect)?;
-        let config = current_config(context)?;
-        if !config.config.alias.eq_ignore_ascii_case(&alias) {
-            return Err(Error::invalid_input(
-                "QW_CONFIG: Unknown Ladybug graph alias",
-            ));
-        }
+        let (index, config) = resolve_alias(
+            context,
+            &alias,
+            self.providers.iter().map(|provider| provider.kind),
+        )?;
+        let provider = &self.providers[index];
+        let backend = &provider.backend;
         let mut watch = None;
-        if matches!(
-            self.kind,
-            GraphQueryKind::Filtered | GraphQueryKind::RuntimeWatch
-        ) {
+        if provider.kind == ProviderKind::Ladybug
+            && matches!(
+                self.kind,
+                GraphQueryKind::Filtered | GraphQueryKind::RuntimeWatch
+            )
+        {
             let label = required(3)?;
             let property = required(4)?;
             if config
@@ -693,7 +629,7 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
         }
         let cypher = match language {
             GraphLanguage::Gql if self.kind != GraphQueryKind::DeclaredSchema => {
-                self.backend.native_gql(query, self.gql_parser)?
+                backend.native_gql(query, self.gql_parser)?
             }
             _ => language.compile(query, self.gql_parser)?,
         };
@@ -702,10 +638,10 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
         } else {
             let catalog = config.catalog.as_ref().ok_or_else(|| {
                 Error::invalid_input(
-                    "QW_SCHEMA: Ladybug catalog metadata unavailable for this graph generation",
+                    "QW_SCHEMA: Catalog metadata unavailable for this graph generation",
                 )
             })?;
-            self.backend
+            backend
                 .projection(catalog, &cypher)
                 .map_err(|err| match err {
                     BackendError::Schema => {
@@ -728,6 +664,7 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
             Vec::new()
         };
         Ok(BoundRead {
+            provider: provider.clone(),
             watch,
             params,
             config,
@@ -743,10 +680,9 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
         _: Option<&()>,
         _: InitColumnData<'_>,
     ) -> Result<Option<Self::LocalState>> {
-        let filtered = bound
-            .watch
-            .as_ref()
-            .and_then(|watch| watch.query(&self.backend.runtime_watch_keys(watch.column)));
+        let filtered = bound.watch.as_ref().and_then(|watch| {
+            watch.query(&bound.provider.backend.runtime_watch_keys(watch.column))
+        });
         Ok(Some((Scan::Dormant, filtered)))
     }
 
@@ -777,20 +713,29 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
             capacity,
             bound.config.config.max_batch_bytes,
             || {
-                let current = current_config(context)?;
-                if current.generation.id != bound.config.generation.id {
-                    return Err(Error::invalid_input(
-                        "QW_CONFIG: Ladybug configuration changed after binding",
-                    ));
+                let current = bound.provider.kind.config(context)?;
+                if current.is_none_or(|c| c.generation.id != bound.config.generation.id) {
+                    return Err(Error::invalid_input(format!(
+                        "QW_CONFIG: {} configuration changed after binding",
+                        bound.provider.kind.name()
+                    )));
+                }
+                if self.providers.len() > 1 {
+                    bound
+                        .provider
+                        .kind
+                        .check_sibling(context, &bound.config.config.alias)?;
                 }
                 let path = admit_local_path(context, &bound.config.config.path)?;
                 if path != bound.config.config.path {
-                    return Err(Error::invalid_input(
-                        "QW_ACCESS: Configured Ladybug path changed after binding",
-                    ));
+                    return Err(Error::invalid_input(format!(
+                        "QW_ACCESS: Configured {} path changed after binding",
+                        bound.provider.kind.name()
+                    )));
                 }
                 bound.config.generation.validate(Path::new(&path))?;
-                let session = self
+                let session = bound
+                    .provider
                     .backend
                     .open_for_generation(
                         Path::new(&path),
@@ -823,7 +768,11 @@ impl<B: ReadBackend + 'static> TableFunctionCallbacks for GraphQuery<B> {
 
 /// Register the native graph query and its instance configuration for Cypher.
 pub fn register(extension: &Extension, backend: impl ReadBackend + 'static) -> Result<()> {
-    register_query(extension, backend, None)
+    register_query(
+        extension,
+        vec![GraphProvider::new(ProviderKind::Ladybug, backend)],
+        None,
+    )
 }
 
 /// Register the native graph query with a GQL parser in addition to Cypher.
@@ -832,27 +781,43 @@ pub fn register_with_gql(
     backend: impl ReadBackend + 'static,
     parser: GqlParser,
 ) -> Result<()> {
-    register_query(extension, backend, Some(parser))
+    register_query(
+        extension,
+        vec![GraphProvider::new(ProviderKind::Ladybug, backend)],
+        Some(parser),
+    )
+}
+
+/// Install both real providers behind the same public Cypher, GQL and SQL/PGQ entry points.
+pub fn register_with_relate(
+    extension: &Extension,
+    ladybug: impl ReadBackend + 'static,
+    relate: impl ReadBackend + 'static,
+    parser: GqlParser,
+) -> Result<()> {
+    register_query(
+        extension,
+        vec![
+            GraphProvider::new(ProviderKind::Ladybug, ladybug),
+            GraphProvider::new(ProviderKind::Relate, relate),
+        ],
+        Some(parser),
+    )
 }
 
 fn register_query(
     extension: &Extension,
-    backend: impl ReadBackend + 'static,
+    providers: Vec<GraphProvider>,
     gql_parser: Option<GqlParser>,
 ) -> Result<()> {
-    let backend = Arc::new(backend);
-    CustomOptionBuilder::new(
-        CONFIG,
-        "JSON configuration for the embedded read-only Ladybug graph",
-        String::logical_type(extension)?,
-        LadybugConfig(Arc::clone(&backend)),
-    )
-    .default_value(Option::<String>::None.value(extension)?)
-    .default_scope(SettingScope::Global)
-    .register(extension)?;
+    let providers: Arc<[GraphProvider]> = providers.into();
+    let aliases = (providers.len() > 1).then(|| Arc::new(AliasReservations::default()));
+    for provider in providers.iter() {
+        provider.register_option(extension, aliases.clone())?;
+    }
 
     let description = if gql_parser.is_some() {
-        "Read typed rows from an embedded Ladybug graph using read-only Cypher or a supported GQL subset."
+        "Read typed rows from a configured graph using read-only Cypher or a supported GQL subset."
     } else {
         "Read typed rows from one read-only Cypher query against an embedded Ladybug graph."
     };
@@ -869,7 +834,7 @@ fn register_query(
                     .add_category("quack_weave"),
             ),
         GraphQuery {
-            backend: Arc::clone(&backend),
+            providers: Arc::clone(&providers),
             kind: GraphQueryKind::DeclaredSchema,
             gql_parser,
         },
@@ -904,7 +869,7 @@ fn register_query(
             name,
             signature,
             GraphQuery {
-                backend: Arc::clone(&backend),
+                providers: Arc::clone(&providers),
                 kind,
                 gql_parser,
             },

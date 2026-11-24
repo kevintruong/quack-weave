@@ -1,3 +1,4 @@
+use crate::batch_budget::reserve_slots;
 use std::ffi::{CStr, c_char, c_void};
 use std::mem::size_of;
 use std::ops::Range;
@@ -230,18 +231,6 @@ fn graph_value(
             GraphValue::Children(items)
         }
     })
-}
-
-fn reserve_slots(
-    budget: &mut usize,
-    count: usize,
-    bytes_per_slot: usize,
-) -> Result<(), BackendError> {
-    let bytes = count
-        .checked_mul(bytes_per_slot)
-        .ok_or(BackendError::BatchBudget)?;
-    *budget = budget.checked_sub(bytes).ok_or(BackendError::BatchBudget)?;
-    Ok(())
 }
 
 struct ArrayReader<'a> {
