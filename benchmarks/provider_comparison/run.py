@@ -168,7 +168,7 @@ def worker(a):
         first = checked("gql_lookup", POINT)
         measurements = []
         for iteration in range(a.runs + 1):
-            names = [name for name in CASES if name not in request.get("failed", {})]
+            names = [name for name in request.get("cases", CASES) if name not in request.get("failed", {})]
             random.Random(7411 + 101 * a.block + iteration).shuffle(names)
             for name in names:
                 dialect, stmt = CASES[name]

@@ -1,0 +1,1547 @@
+{
+  "start_utc": "2026-11-24T23:48:33.529299+00:00",
+  "fixture": {
+    "source_sha256": "84cd660cac88e20b627b40f2adf8de0c2c6d8693237c0d9f422469825721693f",
+    "selection": "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE m.MessageId % 32 = 0 RETURN p.PersonId AS author, m.MessageId AS mid ORDER BY author, mid",
+    "modulus": 32,
+    "files": {
+      "edges.csv": {
+        "sha256": "86ee28c86fbc633d3f354721c7778ff404ccf41370d9a74b567717a78c2e9e0b",
+        "bytes": 3314137
+      },
+      "social.lbdb": {
+        "sha256": "da8116dc14c5048225b2c4a2e669ee5b830141f8ebb1119bd615401db7325104",
+        "bytes": 11538432
+      },
+      "social.rl": {
+        "sha256": "2d54c2b354860c657be2897c82d1926b2d24532b3eed20f64ae42a224c0247c7",
+        "bytes": 30392320
+      }
+    }
+  },
+  "oracle": {
+    "edges": 119052,
+    "people": 10223,
+    "messages": 119052,
+    "fanout": 190,
+    "watchlist_groups": [
+      [
+        4398046519825,
+        190,
+        93841153
+      ],
+      [
+        2435,
+        179,
+        83563585
+      ],
+      [
+        6575,
+        174,
+        87904670
+      ],
+      [
+        28587302326226,
+        162,
+        82973381
+      ]
+    ],
+    "scan": [
+      119052,
+      59809255373
+    ],
+    "partitions": [
+      [
+        14,
+        37383395355369,
+        [
+          119052,
+          "9de4bb1b0fb6e53a341b83cbbbe84b81423599cd5e62bcaef072db819614a277"
+        ]
+      ]
+    ],
+    "expected": {
+      "all_pairs": [
+        119052,
+        "9de4bb1b0fb6e53a341b83cbbbe84b81423599cd5e62bcaef072db819614a277"
+      ],
+      "gql_lookup": [
+        1,
+        "8b01ac121f147e12ecb6e29308cbbeddf445f2af83566950fc639e5766f8c5ee"
+      ],
+      "gql_fanout": [
+        190,
+        "23c2009666ec358c31e2b70799f0b37f830908f040e9c462dca9bafb4a8f65f0"
+      ],
+      "cypher_fanout": [
+        190,
+        "23c2009666ec358c31e2b70799f0b37f830908f040e9c462dca9bafb4a8f65f0"
+      ],
+      "graph_table_where": [
+        190,
+        "23c2009666ec358c31e2b70799f0b37f830908f040e9c462dca9bafb4a8f65f0"
+      ],
+      "table_watchlist": [
+        4,
+        "be0972d8ef17c32768d6ca63c6b5d5bc930c6fbc25684dd8465b949e0e20db5b"
+      ],
+      "full_scan_aggregate": [
+        1,
+        "66908dfb24a110c9cb2f674b21cc473fb20698058163f5bc9185782c3fc61142"
+      ]
+    }
+  },
+  "workspace_head": "e623d2d46febf548a41b9cf58eaf4433d9707448",
+  "platform": "macOS-26.7.1-arm64-arm-64bit-Mach-O",
+  "python": "3.14.5",
+  "duckdb": "v2.0.1 8d78114e90",
+  "versions": {
+    "pyarrow": "23.0.1",
+    "adbc-driver-manager": "1.9.0",
+    "ladybug": "0.22.3"
+  },
+  "relate": "1.2.0",
+  "duckdb_threads": 1,
+  "extension_sha256": "933742d94b9f0d92d5e482fc5c0f7d9e3f33885c76e538d35d83ac8bab1a0c3a",
+  "library_sha256": "aeaf2ab89938d40c4995ca478a1543a080ad180ea988ac4ba0793805e063c5dd",
+  "watchlist": [
+    4398046519825,
+    2435,
+    6575,
+    28587302326226,
+    -1
+  ],
+  "cases": {
+    "gql_lookup": [
+      "gql",
+      "MATCH (p:Person) WHERE p.PersonId = 4398046519825 RETURN p.PersonId AS id"
+    ],
+    "gql_fanout": [
+      "gql",
+      "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId = 4398046519825 RETURN m.MessageId AS id"
+    ],
+    "cypher_fanout": [
+      "cypher",
+      "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId = 4398046519825 RETURN m.MessageId AS id"
+    ],
+    "graph_table_where": [
+      "gql",
+      "SELECT mid FROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId = 4398046519825 COLUMNS (m.MessageId AS mid)) AS g"
+    ],
+    "table_watchlist": [
+      "gql",
+      "SELECT author, count(*), sum(mid % 1000003) FROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person)  COLUMNS (p.PersonId AS author, m.MessageId AS mid)) AS g JOIN watch USING (author) GROUP BY author ORDER BY author"
+    ],
+    "full_scan_aggregate": [
+      "gql",
+      "SELECT count(*), sum(mid % 1000003) FROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person)  COLUMNS (m.MessageId AS mid)) AS g"
+    ]
+  },
+  "runs": 4,
+  "blocks": 4,
+  "parity": {
+    "ladybug": {
+      "all_pairs": [
+        119052,
+        "9de4bb1b0fb6e53a341b83cbbbe84b81423599cd5e62bcaef072db819614a277"
+      ],
+      "verification": {
+        "mode": "one scan"
+      },
+      "provider_rows": {
+        "graph_table_where": 190,
+        "table_watchlist": 705,
+        "full_scan_aggregate": 1
+      },
+      "failed_queries": {}
+    },
+    "relate": {
+      "all_pairs": [
+        119052,
+        "9de4bb1b0fb6e53a341b83cbbbe84b81423599cd5e62bcaef072db819614a277"
+      ],
+      "verification": {
+        "mode": "one scan"
+      },
+      "provider_rows": {
+        "graph_table_where": 190,
+        "table_watchlist": 705,
+        "full_scan_aggregate": 1
+      },
+      "failed_queries": {}
+    }
+  },
+  "workers": [
+    {
+      "block": 0,
+      "provider": "ladybug",
+      "setup": {
+        "load_ms": 12.255375,
+        "register_ms": 61.023209
+      },
+      "first_lookup": {
+        "wall_ms": 34.361041,
+        "cpu_ms": 34.376
+      },
+      "samples": [
+        {
+          "case": "gql_lookup",
+          "iteration": 1,
+          "wall_ms": 3.43775,
+          "cpu_ms": 3.44
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 1,
+          "wall_ms": 1.09775,
+          "cpu_ms": 1.101
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 1,
+          "wall_ms": 4.373583,
+          "cpu_ms": 4.375
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 1,
+          "wall_ms": 3.217958,
+          "cpu_ms": 5.46
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 1,
+          "wall_ms": 1.334833,
+          "cpu_ms": 1.338
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 1,
+          "wall_ms": 15.676667,
+          "cpu_ms": 79.632
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 2,
+          "wall_ms": 14.737917,
+          "cpu_ms": 78.213
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 2,
+          "wall_ms": 3.449917,
+          "cpu_ms": 4.974
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 2,
+          "wall_ms": 5.1575,
+          "cpu_ms": 5.162
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 2,
+          "wall_ms": 1.328583,
+          "cpu_ms": 1.336
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 2,
+          "wall_ms": 1.120958,
+          "cpu_ms": 1.123
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 2,
+          "wall_ms": 3.573208,
+          "cpu_ms": 3.576
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 3,
+          "wall_ms": 14.351083,
+          "cpu_ms": 73.515
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 3,
+          "wall_ms": 4.907208,
+          "cpu_ms": 4.911
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 3,
+          "wall_ms": 3.099792,
+          "cpu_ms": 4.813
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 3,
+          "wall_ms": 1.184708,
+          "cpu_ms": 1.18
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 3,
+          "wall_ms": 1.191125,
+          "cpu_ms": 1.187
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 3,
+          "wall_ms": 3.489417,
+          "cpu_ms": 3.492
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 4,
+          "wall_ms": 1.009709,
+          "cpu_ms": 1.012
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 4,
+          "wall_ms": 3.035334,
+          "cpu_ms": 4.794
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 4,
+          "wall_ms": 3.663416,
+          "cpu_ms": 3.666
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 4,
+          "wall_ms": 4.48775,
+          "cpu_ms": 4.49
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 4,
+          "wall_ms": 1.119208,
+          "cpu_ms": 1.122
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 4,
+          "wall_ms": 13.693041,
+          "cpu_ms": 69.215
+        }
+      ],
+      "worker_peak_rss_mib": 192.421875
+    },
+    {
+      "block": 0,
+      "provider": "relate",
+      "setup": {
+        "load_ms": 11.263041,
+        "register_ms": 337.811375
+      },
+      "first_lookup": {
+        "wall_ms": 15.898709,
+        "cpu_ms": 16.053
+      },
+      "samples": [
+        {
+          "case": "gql_lookup",
+          "iteration": 1,
+          "wall_ms": 5.870666,
+          "cpu_ms": 5.83
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 1,
+          "wall_ms": 1.622791,
+          "cpu_ms": 1.741
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 1,
+          "wall_ms": 5.704667,
+          "cpu_ms": 5.842
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 1,
+          "wall_ms": 5.487625,
+          "cpu_ms": 5.622
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 1,
+          "wall_ms": 1.371625,
+          "cpu_ms": 1.462
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 1,
+          "wall_ms": 176.002083,
+          "cpu_ms": 174.989
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 2,
+          "wall_ms": 207.117333,
+          "cpu_ms": 206.191
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 2,
+          "wall_ms": 7.213167,
+          "cpu_ms": 7.395
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 2,
+          "wall_ms": 7.56425,
+          "cpu_ms": 7.72
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 2,
+          "wall_ms": 1.993209,
+          "cpu_ms": 2.137
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 2,
+          "wall_ms": 1.98125,
+          "cpu_ms": 2.15
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 2,
+          "wall_ms": 6.212584,
+          "cpu_ms": 6.322
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 3,
+          "wall_ms": 204.801667,
+          "cpu_ms": 203.877
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 3,
+          "wall_ms": 7.531625,
+          "cpu_ms": 7.734
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 3,
+          "wall_ms": 6.980125,
+          "cpu_ms": 7.098
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 3,
+          "wall_ms": 2.041208,
+          "cpu_ms": 2.141
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 3,
+          "wall_ms": 1.903542,
+          "cpu_ms": 2.075
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 3,
+          "wall_ms": 5.530958,
+          "cpu_ms": 5.7
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 4,
+          "wall_ms": 1.699375,
+          "cpu_ms": 1.853
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 4,
+          "wall_ms": 6.901458,
+          "cpu_ms": 7.046
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 4,
+          "wall_ms": 5.701125,
+          "cpu_ms": 5.877
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 4,
+          "wall_ms": 6.943292,
+          "cpu_ms": 7.127
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 4,
+          "wall_ms": 1.695833,
+          "cpu_ms": 1.827
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 4,
+          "wall_ms": 193.582167,
+          "cpu_ms": 193.38
+        }
+      ],
+      "worker_peak_rss_mib": 244.65625
+    },
+    {
+      "block": 1,
+      "provider": "relate",
+      "setup": {
+        "load_ms": 14.122458,
+        "register_ms": 375.404209
+      },
+      "first_lookup": {
+        "wall_ms": 16.234042,
+        "cpu_ms": 16.346
+      },
+      "samples": [
+        {
+          "case": "gql_lookup",
+          "iteration": 1,
+          "wall_ms": 3.543417,
+          "cpu_ms": 3.679
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 1,
+          "wall_ms": 4.548917,
+          "cpu_ms": 4.677
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 1,
+          "wall_ms": 145.348375,
+          "cpu_ms": 145.228
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 1,
+          "wall_ms": 4.804083,
+          "cpu_ms": 4.956
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 1,
+          "wall_ms": 1.317083,
+          "cpu_ms": 1.415
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 1,
+          "wall_ms": 1.175458,
+          "cpu_ms": 1.292
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 2,
+          "wall_ms": 1.157,
+          "cpu_ms": 1.263
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 2,
+          "wall_ms": 4.79775,
+          "cpu_ms": 4.939
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 2,
+          "wall_ms": 1.026875,
+          "cpu_ms": 1.162
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 2,
+          "wall_ms": 4.262917,
+          "cpu_ms": 4.4
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 2,
+          "wall_ms": 147.014917,
+          "cpu_ms": 146.753
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 2,
+          "wall_ms": 3.983334,
+          "cpu_ms": 4.112
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 3,
+          "wall_ms": 1.235,
+          "cpu_ms": 1.329
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 3,
+          "wall_ms": 3.731042,
+          "cpu_ms": 3.877
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 3,
+          "wall_ms": 1.214542,
+          "cpu_ms": 1.351
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 3,
+          "wall_ms": 4.70225,
+          "cpu_ms": 4.839
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 3,
+          "wall_ms": 4.689875,
+          "cpu_ms": 4.829
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 3,
+          "wall_ms": 145.454,
+          "cpu_ms": 145.51
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 4,
+          "wall_ms": 5.210792,
+          "cpu_ms": 5.17
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 4,
+          "wall_ms": 4.870416,
+          "cpu_ms": 4.938
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 4,
+          "wall_ms": 5.045166,
+          "cpu_ms": 5.151
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 4,
+          "wall_ms": 144.863417,
+          "cpu_ms": 144.888
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 4,
+          "wall_ms": 1.348291,
+          "cpu_ms": 1.495
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 4,
+          "wall_ms": 1.270041,
+          "cpu_ms": 1.381
+        }
+      ],
+      "worker_peak_rss_mib": 244.59375
+    },
+    {
+      "block": 1,
+      "provider": "ladybug",
+      "setup": {
+        "load_ms": 12.367209,
+        "register_ms": 52.737541
+      },
+      "first_lookup": {
+        "wall_ms": 35.154042,
+        "cpu_ms": 35.206
+      },
+      "samples": [
+        {
+          "case": "gql_lookup",
+          "iteration": 1,
+          "wall_ms": 3.8335,
+          "cpu_ms": 3.832
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 1,
+          "wall_ms": 4.663333,
+          "cpu_ms": 4.667
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 1,
+          "wall_ms": 15.157375,
+          "cpu_ms": 81.375
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 1,
+          "wall_ms": 3.434125,
+          "cpu_ms": 5.255
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 1,
+          "wall_ms": 1.2725,
+          "cpu_ms": 1.281
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 1,
+          "wall_ms": 1.515917,
+          "cpu_ms": 1.486
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 2,
+          "wall_ms": 1.348708,
+          "cpu_ms": 1.337
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 2,
+          "wall_ms": 4.849958,
+          "cpu_ms": 4.853
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 2,
+          "wall_ms": 1.125833,
+          "cpu_ms": 1.129
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 2,
+          "wall_ms": 3.296125,
+          "cpu_ms": 5.399
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 2,
+          "wall_ms": 14.993292,
+          "cpu_ms": 78.384
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 2,
+          "wall_ms": 4.016375,
+          "cpu_ms": 4.02
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 3,
+          "wall_ms": 1.317334,
+          "cpu_ms": 1.304
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 3,
+          "wall_ms": 4.303375,
+          "cpu_ms": 4.275
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 3,
+          "wall_ms": 1.128584,
+          "cpu_ms": 1.132
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 3,
+          "wall_ms": 4.773,
+          "cpu_ms": 4.756
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 3,
+          "wall_ms": 3.258875,
+          "cpu_ms": 4.99
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 3,
+          "wall_ms": 14.589417,
+          "cpu_ms": 79.082
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 4,
+          "wall_ms": 4.084666,
+          "cpu_ms": 4.064
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 4,
+          "wall_ms": 3.694792,
+          "cpu_ms": 5.46
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 4,
+          "wall_ms": 4.790167,
+          "cpu_ms": 4.793
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 4,
+          "wall_ms": 14.670333,
+          "cpu_ms": 78.116
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 4,
+          "wall_ms": 1.242333,
+          "cpu_ms": 1.249
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 4,
+          "wall_ms": 1.099541,
+          "cpu_ms": 1.102
+        }
+      ],
+      "worker_peak_rss_mib": 192.578125
+    },
+    {
+      "block": 2,
+      "provider": "ladybug",
+      "setup": {
+        "load_ms": 12.982458,
+        "register_ms": 56.704875
+      },
+      "first_lookup": {
+        "wall_ms": 37.66225,
+        "cpu_ms": 37.59
+      },
+      "samples": [
+        {
+          "case": "graph_table_where",
+          "iteration": 1,
+          "wall_ms": 1.193292,
+          "cpu_ms": 1.197
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 1,
+          "wall_ms": 3.746417,
+          "cpu_ms": 3.749
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 1,
+          "wall_ms": 3.517334,
+          "cpu_ms": 5.423
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 1,
+          "wall_ms": 1.39725,
+          "cpu_ms": 1.401
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 1,
+          "wall_ms": 17.616959,
+          "cpu_ms": 92.013
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 1,
+          "wall_ms": 6.141792,
+          "cpu_ms": 6.139
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 2,
+          "wall_ms": 4.278667,
+          "cpu_ms": 6.091
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 2,
+          "wall_ms": 1.436833,
+          "cpu_ms": 1.447
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 2,
+          "wall_ms": 4.305333,
+          "cpu_ms": 4.308
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 2,
+          "wall_ms": 5.460167,
+          "cpu_ms": 5.451
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 2,
+          "wall_ms": 16.897709,
+          "cpu_ms": 86.453
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 2,
+          "wall_ms": 1.555292,
+          "cpu_ms": 1.559
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 3,
+          "wall_ms": 1.261125,
+          "cpu_ms": 1.267
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 3,
+          "wall_ms": 16.585667,
+          "cpu_ms": 82.279
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 3,
+          "wall_ms": 4.878416,
+          "cpu_ms": 4.883
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 3,
+          "wall_ms": 6.255167,
+          "cpu_ms": 6.252
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 3,
+          "wall_ms": 1.53475,
+          "cpu_ms": 1.54
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 3,
+          "wall_ms": 3.838,
+          "cpu_ms": 5.77
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 4,
+          "wall_ms": 1.533917,
+          "cpu_ms": 1.538
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 4,
+          "wall_ms": 5.980583,
+          "cpu_ms": 5.97
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 4,
+          "wall_ms": 4.413917,
+          "cpu_ms": 4.354
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 4,
+          "wall_ms": 15.750292,
+          "cpu_ms": 65.627
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 4,
+          "wall_ms": 1.713125,
+          "cpu_ms": 1.722
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 4,
+          "wall_ms": 3.75925,
+          "cpu_ms": 5.291
+        }
+      ],
+      "worker_peak_rss_mib": 194.984375
+    },
+    {
+      "block": 2,
+      "provider": "relate",
+      "setup": {
+        "load_ms": 15.194042,
+        "register_ms": 446.060792
+      },
+      "first_lookup": {
+        "wall_ms": 20.279709,
+        "cpu_ms": 20.435
+      },
+      "samples": [
+        {
+          "case": "graph_table_where",
+          "iteration": 1,
+          "wall_ms": 1.5,
+          "cpu_ms": 1.585
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 1,
+          "wall_ms": 4.747791,
+          "cpu_ms": 4.887
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 1,
+          "wall_ms": 6.014708,
+          "cpu_ms": 6.113
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 1,
+          "wall_ms": 2.285583,
+          "cpu_ms": 2.367
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 1,
+          "wall_ms": 200.702709,
+          "cpu_ms": 199.85
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 1,
+          "wall_ms": 8.537667,
+          "cpu_ms": 8.571
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 2,
+          "wall_ms": 7.264125,
+          "cpu_ms": 7.274
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 2,
+          "wall_ms": 2.114959,
+          "cpu_ms": 2.269
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 2,
+          "wall_ms": 5.50725,
+          "cpu_ms": 5.671
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 2,
+          "wall_ms": 6.57775,
+          "cpu_ms": 6.737
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 2,
+          "wall_ms": 202.501125,
+          "cpu_ms": 202.045
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 2,
+          "wall_ms": 1.962083,
+          "cpu_ms": 2.068
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 3,
+          "wall_ms": 1.758125,
+          "cpu_ms": 1.905
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 3,
+          "wall_ms": 201.469292,
+          "cpu_ms": 200.239
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 3,
+          "wall_ms": 6.66875,
+          "cpu_ms": 6.808
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 3,
+          "wall_ms": 7.696292,
+          "cpu_ms": 7.871
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 3,
+          "wall_ms": 1.721625,
+          "cpu_ms": 1.853
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 3,
+          "wall_ms": 6.970125,
+          "cpu_ms": 7.118
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 4,
+          "wall_ms": 1.817542,
+          "cpu_ms": 1.978
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 4,
+          "wall_ms": 7.273,
+          "cpu_ms": 7.415
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 4,
+          "wall_ms": 5.271375,
+          "cpu_ms": 5.476
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 4,
+          "wall_ms": 172.878416,
+          "cpu_ms": 172.921
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 4,
+          "wall_ms": 1.670084,
+          "cpu_ms": 1.847
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 4,
+          "wall_ms": 5.620209,
+          "cpu_ms": 5.785
+        }
+      ],
+      "worker_peak_rss_mib": 249.328125
+    },
+    {
+      "block": 3,
+      "provider": "relate",
+      "setup": {
+        "load_ms": 12.289959,
+        "register_ms": 386.858708
+      },
+      "first_lookup": {
+        "wall_ms": 16.040042,
+        "cpu_ms": 16.198
+      },
+      "samples": [
+        {
+          "case": "cypher_fanout",
+          "iteration": 1,
+          "wall_ms": 1.392208,
+          "cpu_ms": 1.536
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 1,
+          "wall_ms": 4.663208,
+          "cpu_ms": 4.798
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 1,
+          "wall_ms": 1.149542,
+          "cpu_ms": 1.246
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 1,
+          "wall_ms": 4.641542,
+          "cpu_ms": 4.775
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 1,
+          "wall_ms": 3.616,
+          "cpu_ms": 3.742
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 1,
+          "wall_ms": 138.467875,
+          "cpu_ms": 138.558
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 2,
+          "wall_ms": 131.489125,
+          "cpu_ms": 131.57
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 2,
+          "wall_ms": 1.232291,
+          "cpu_ms": 1.322
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 2,
+          "wall_ms": 4.268666,
+          "cpu_ms": 4.389
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 2,
+          "wall_ms": 4.008292,
+          "cpu_ms": 4.124
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 2,
+          "wall_ms": 0.935416,
+          "cpu_ms": 1.053
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 2,
+          "wall_ms": 3.156875,
+          "cpu_ms": 3.277
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 3,
+          "wall_ms": 0.820125,
+          "cpu_ms": 0.93
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 3,
+          "wall_ms": 3.726708,
+          "cpu_ms": 3.843
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 3,
+          "wall_ms": 3.093334,
+          "cpu_ms": 3.207
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 3,
+          "wall_ms": 119.725375,
+          "cpu_ms": 119.826
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 3,
+          "wall_ms": 4.295583,
+          "cpu_ms": 4.403
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 3,
+          "wall_ms": 0.988,
+          "cpu_ms": 1.079
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 4,
+          "wall_ms": 2.997583,
+          "cpu_ms": 3.116
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 4,
+          "wall_ms": 3.811459,
+          "cpu_ms": 3.93
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 4,
+          "wall_ms": 0.885417,
+          "cpu_ms": 0.98
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 4,
+          "wall_ms": 0.841,
+          "cpu_ms": 0.955
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 4,
+          "wall_ms": 3.679292,
+          "cpu_ms": 3.794
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 4,
+          "wall_ms": 120.118208,
+          "cpu_ms": 120.135
+        }
+      ],
+      "worker_peak_rss_mib": 247.9375
+    },
+    {
+      "block": 3,
+      "provider": "ladybug",
+      "setup": {
+        "load_ms": 11.172584,
+        "register_ms": 48.519084
+      },
+      "first_lookup": {
+        "wall_ms": 32.69775,
+        "cpu_ms": 32.692
+      },
+      "samples": [
+        {
+          "case": "cypher_fanout",
+          "iteration": 1,
+          "wall_ms": 1.224459,
+          "cpu_ms": 1.228
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 1,
+          "wall_ms": 3.012667,
+          "cpu_ms": 4.788
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 1,
+          "wall_ms": 1.197416,
+          "cpu_ms": 1.177
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 1,
+          "wall_ms": 4.222417,
+          "cpu_ms": 4.226
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 1,
+          "wall_ms": 3.018458,
+          "cpu_ms": 3.02
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 1,
+          "wall_ms": 14.044625,
+          "cpu_ms": 75.938
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 2,
+          "wall_ms": 15.108541,
+          "cpu_ms": 78.96
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 2,
+          "wall_ms": 1.38675,
+          "cpu_ms": 1.39
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 2,
+          "wall_ms": 4.923542,
+          "cpu_ms": 4.914
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 2,
+          "wall_ms": 3.046209,
+          "cpu_ms": 4.418
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 2,
+          "wall_ms": 1.3795,
+          "cpu_ms": 1.366
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 2,
+          "wall_ms": 4.447375,
+          "cpu_ms": 4.338
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 3,
+          "wall_ms": 1.150583,
+          "cpu_ms": 1.153
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 3,
+          "wall_ms": 3.041583,
+          "cpu_ms": 4.484
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 3,
+          "wall_ms": 3.679208,
+          "cpu_ms": 3.682
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 3,
+          "wall_ms": 12.45125,
+          "cpu_ms": 46.037
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 3,
+          "wall_ms": 5.620125,
+          "cpu_ms": 5.608
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 3,
+          "wall_ms": 1.190375,
+          "cpu_ms": 1.193
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 4,
+          "wall_ms": 4.022584,
+          "cpu_ms": 4.013
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 4,
+          "wall_ms": 4.858417,
+          "cpu_ms": 4.821
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 4,
+          "wall_ms": 1.454041,
+          "cpu_ms": 1.451
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 4,
+          "wall_ms": 1.3985,
+          "cpu_ms": 1.374
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 4,
+          "wall_ms": 5.042292,
+          "cpu_ms": 6.455
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 4,
+          "wall_ms": 14.513667,
+          "cpu_ms": 53.467
+        }
+      ],
+      "worker_peak_rss_mib": 194.796875
+    }
+  ],
+  "summary": [
+    {
+      "case": "gql_lookup",
+      "ladybug": {
+        "n": 16,
+        "p50_ms": 3.9249375,
+        "p95_ms": 4.878416,
+        "median_cpu_ms": 3.9225
+      },
+      "relate": {
+        "n": 16,
+        "p50_ms": 4.9792915,
+        "p95_ms": 6.66875,
+        "median_cpu_ms": 5.028499999999999
+      },
+      "relate_over_ladybug": 1.2686295004697528
+    },
+    {
+      "case": "gql_fanout",
+      "ladybug": {
+        "n": 16,
+        "p50_ms": 4.8828125,
+        "p95_ms": 6.255167,
+        "median_cpu_ms": 4.882
+      },
+      "relate": {
+        "n": 16,
+        "p50_ms": 5.374916499999999,
+        "p95_ms": 8.537667,
+        "median_cpu_ms": 5.496499999999999
+      },
+      "relate_over_ladybug": 1.1007828992
+    },
+    {
+      "case": "cypher_fanout",
+      "ladybug": {
+        "n": 16,
+        "p50_ms": 1.233396,
+        "p95_ms": 1.713125,
+        "median_cpu_ms": 1.2385000000000002
+      },
+      "relate": {
+        "n": 16,
+        "p50_ms": 1.5074995,
+        "p95_ms": 2.285583,
+        "median_cpu_ms": 1.6385
+      },
+      "relate_over_ladybug": 1.222234789151254
+    },
+    {
+      "case": "graph_table_where",
+      "ladybug": {
+        "n": 16,
+        "p50_ms": 1.3229585,
+        "p95_ms": 1.555292,
+        "median_cpu_ms": 1.32
+      },
+      "relate": {
+        "n": 16,
+        "p50_ms": 1.344354,
+        "p95_ms": 2.041208,
+        "median_cpu_ms": 1.4385
+      },
+      "relate_over_ladybug": 1.0161724649715014
+    },
+    {
+      "case": "table_watchlist",
+      "ladybug": {
+        "n": 16,
+        "p50_ms": 3.365125,
+        "p95_ms": 5.042292,
+        "median_cpu_ms": 5.273
+      },
+      "relate": {
+        "n": 16,
+        "p50_ms": 5.1790205,
+        "p95_ms": 7.264125,
+        "median_cpu_ms": 5.289
+      },
+      "relate_over_ladybug": 1.5390276735633892
+    },
+    {
+      "case": "full_scan_aggregate",
+      "ladybug": {
+        "n": 16,
+        "p50_ms": 14.8656045,
+        "p95_ms": 17.616959,
+        "median_cpu_ms": 78.29849999999999
+      },
+      "relate": {
+        "n": 16,
+        "p50_ms": 159.9466665,
+        "p95_ms": 207.117333,
+        "median_cpu_ms": 159.837
+      },
+      "relate_over_ladybug": 10.759513109608156
+    }
+  ],
+  "finish_utc": "2026-11-24T23:48:44.497492+00:00"
+}

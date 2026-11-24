@@ -1,0 +1,55 @@
+# name: test/relate/benchmark_contract.test
+# description: Execute both providers on one connection with SQL watchlists and native scalar aggregates
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_RELATE UNSET_QW_RELATE
+
+test-env QW_LADYBUG UNSET_QW_LADYBUG
+
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"lady","path":"{QW_LADYBUG}"}';
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"rel","path":"{QW_RELATE}"}';
+
+statement ok
+CREATE VIEW lady_edges AS SELECT * FROM GRAPH_TABLE (
+    lady MATCH (o:airport)-[r:route]->(d:airport) COLUMNS(r.rid AS id)
+) g;
+
+statement ok
+CREATE VIEW relate_edges AS SELECT * FROM GRAPH_TABLE (
+    rel MATCH (o:airport)-[r:route]->(d:airport) COLUMNS(r.rid AS id)
+) g;
+
+statement ok
+CREATE VIEW both_totals AS
+SELECT 'lady' AS provider, count(*) AS n, sum(id % 11) AS checksum FROM lady_edges
+UNION ALL
+SELECT 'rel', count(*), sum(id % 11) FROM relate_edges;
+
+query TII rowsort
+FROM both_totals;
+----
+lady	5	20
+rel	3	12
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) FROM both_totals;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 1,[^{}]*"name": "QW_QUERY".*"intermediate_rows": 1,[^{}]*"name": "QW_QUERY".*
+
+statement ok
+CREATE TABLE watch AS SELECT * FROM (VALUES (101::BIGINT),(101),(203),(NULL)) v(id);
+
+query II rowsort
+SELECT id, count(*) FROM lady_edges JOIN watch USING(id) GROUP BY id UNION ALL
+SELECT id, count(*) FROM relate_edges JOIN watch USING(id) GROUP BY id;
+----
+101	2
+203	1
