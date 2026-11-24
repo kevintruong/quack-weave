@@ -1,4 +1,5 @@
 #include "graph_table.hpp"
+#include "watchlist.hpp"
 
 #include "duckdb/main/capi_v2/capi_v2_internal.hpp"
 #include "duckdb/main/client_config.hpp"
@@ -150,6 +151,7 @@ extern "C" const char *qw_register_graph_grammar(duckdb_v2_factory_handle handle
 		if (!context) {
 			throw duckdb::InternalException("Graph grammar registration requires the loading connection");
 		}
+		duckdb::QwRegisterWatchlistGuard(db);
 		duckdb::GrammarExtension::Register(db, duckdb::make_shared_ptr<duckdb::GraphGrammar>());
 		duckdb::Activate(*context);
 		duckdb::ExtensionCallbackManager::Get(db).Register(duckdb::make_shared_ptr<duckdb::GraphConnections>());

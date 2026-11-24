@@ -1,4 +1,5 @@
 #include "graph_table.hpp"
+#include "watchlist.hpp"
 #include "duckdb/parser/expression/comparison_expression.hpp"
 #include "duckdb/parser/expression/operator_expression.hpp"
 
@@ -130,11 +131,23 @@ struct GraphBindings {
 	}
 };
 
-arena_ptr<TransformResultValue> TransformGraphTable(PEGTransformer &transformer, ParseResult &parse_result) {
-	auto &rule = parse_result.Cast<ListParseResult>();
-	auto graph = transformer.Transform<Identifier>(rule, 2);
+// Keep the graph's parsed projections until DuckDB has transformed the join
+// suffix. This preserves source-order parameter binding in both subtrees.
+struct ParsedGraphTable {
+	Identifier graph;
 	GraphBindings bindings;
-	string query = "MATCH " + bindings.Element(transformer, rule.GetChild(4), false);
+	string query;
+	unique_ptr<SelectNode> result;
+	TableAlias table_alias;
+
+	ParsedGraphTable(PEGTransformer &transformer, ParseResult &parse_result);
+	unique_ptr<TableRef> Lower(const JoinRef *join);
+};
+
+ParsedGraphTable::ParsedGraphTable(PEGTransformer &transformer, ParseResult &parse_result) {
+	auto &rule = parse_result.Cast<ListParseResult>();
+	graph = transformer.Transform<Identifier>(rule, 2);
+	query = "MATCH " + bindings.Element(transformer, rule.GetChild(4), false);
 	auto &steps = rule.Child<OptionalParseResult>(5);
 	if (steps.HasResult()) {
 		for (auto &step : steps.GetResult().Cast<RepeatParseResult>().GetChildren()) {
@@ -144,10 +157,26 @@ arena_ptr<TransformResultValue> TransformGraphTable(PEGTransformer &transformer,
 		}
 	}
 
-	auto result = make_uniq<SelectNode>();
+	result = make_uniq<SelectNode>();
 	result->aggregate_handling = AggregateHandling::NO_AGGREGATES_ALLOWED;
 	transformer.TransformOptional(rule, 6, result->where_clause);
 	result->select_list = transformer.Transform<vector<unique_ptr<ParsedExpression>>>(rule, 9);
+	auto &alias = rule.Child<OptionalParseResult>(12);
+	if (alias.HasResult()) {
+		table_alias = transformer.Transform<TableAlias>(alias.GetResult());
+	}
+}
+
+unique_ptr<TableRef> ParsedGraphTable::Lower(const JoinRef *join) {
+	Candidate candidate;
+	if (result->where_clause) {
+		candidate = bindings.Prefilter(*result->where_clause);
+	} else if (join) {
+		auto predicate = QwWatchlistPredicate(*result, table_alias, *join, MAX_PREFILTER_KEYS);
+		if (predicate) {
+			candidate = bindings.Prefilter(*predicate);
+		}
+	}
 	for (auto &expression : result->select_list) {
 		// The provider's private projection names must never become SQL output names.
 		if (!expression->HasAlias()) {
@@ -155,9 +184,7 @@ arena_ptr<TransformResultValue> TransformGraphTable(PEGTransformer &transformer,
 		}
 		bindings.BindProperties(*expression);
 	}
-	Candidate candidate;
 	if (result->where_clause) {
-		candidate = bindings.Prefilter(*result->where_clause);
 		bindings.BindProperties(*result->where_clause);
 	}
 	// A constant projection still returns one row per pattern match.
@@ -173,7 +200,9 @@ arena_ptr<TransformResultValue> TransformGraphTable(PEGTransformer &transformer,
 		function = "qw_graph_query_filtered";
 		args.push_back(ConstantExpression::String(candidate.label));
 		args.push_back(ConstantExpression::String(candidate.property));
-		args.push_back(ConstantExpression::String(query + " WHERE " + candidate.predicate + projection));
+		auto filtered = query + " WHERE " + candidate.predicate + projection;
+		args.push_back(join && !result->where_clause ? QwGuardWatchlistQuery(query + projection, filtered)
+		                                             : ConstantExpression::String(std::move(filtered)));
 	}
 	auto scan = make_uniq<TableFunctionRef>();
 	scan->function = make_uniq<FunctionExpression>(QualifiedName("system", "main", function), std::move(args));
@@ -181,13 +210,74 @@ arena_ptr<TransformResultValue> TransformGraphTable(PEGTransformer &transformer,
 	auto statement = make_uniq<SelectStatement>();
 	statement->node = std::move(result);
 	auto ref = make_uniq<SubqueryRef>(std::move(statement));
-	auto &alias = rule.Child<OptionalParseResult>(12);
-	if (alias.HasResult()) {
-		auto table_alias = transformer.Transform<TableAlias>(alias.GetResult());
-		ref->alias = std::move(table_alias.name);
-		ref->column_name_alias = std::move(table_alias.column_name_alias);
+	ref->alias = std::move(table_alias.name);
+	ref->column_name_alias = std::move(table_alias.column_name_alias);
+	return std::move(ref);
+}
+
+arena_ptr<TransformResultValue> TransformGraphTable(PEGTransformer &transformer, ParseResult &parse_result) {
+	return transformer.MakeResult<unique_ptr<TableRef>>(ParsedGraphTable(transformer, parse_result).Lower(nullptr));
+}
+
+ParseResult *LeadingGraph(ParseResult &node) {
+	auto child = &node;
+	bool is_graph = false;
+	while (true) {
+		is_graph = is_graph || child->Name() == "QwGraphTable";
+		if (child->type == ParseResultType::CHOICE) {
+			child = &child->Cast<ChoiceParseResult>().GetResult();
+		} else if (child->type == ParseResultType::LIST && child->Cast<ListParseResult>().GetChildren().size() == 1) {
+			child = &child->Cast<ListParseResult>().GetChild(0);
+		} else {
+			return is_graph && child->type == ParseResultType::LIST ? child : nullptr;
+		}
 	}
-	return transformer.MakeResult<unique_ptr<TableRef>>(std::move(ref));
+}
+
+// Schedule the ordinary join and pivot subtrees on DuckDB's transform stack.
+// Recursing through nested joins here would bypass DuckDB's trampoline.
+class JoinedGraphProcess final : public TransformProcess {
+public:
+	JoinedGraphProcess(PEGTransformer &transformer, ParseResult &graph, RepeatParseResult &joins)
+	    : transformer(transformer), graph(transformer, graph), joins(joins) {
+	}
+	TransformStep Resume(arena_ptr<TransformResultValue> child) override {
+		if (child) {
+			auto value = TryGetTransformResult<unique_ptr<TableRef>>(*child);
+			if (!value) {
+				throw InternalException("Expected a join or pivot table reference");
+			}
+			suffixes.push_back(std::move(*value));
+		}
+		const auto entries = joins.GetChildren();
+		if (suffixes.size() < entries.size()) {
+			return TransformStep::Child({entries[suffixes.size()].get()});
+		}
+		const auto &first = *suffixes[0];
+		auto left = graph.Lower(first.type == TableReferenceType::JOIN ? &first.Cast<JoinRef>() : nullptr);
+		return TransformStep::Complete(transformer.MakeResult<unique_ptr<TableRef>>(
+		    PEGTransformerFactory::TransformJoinedTableRefChain(transformer, std::move(left), std::move(suffixes))));
+	}
+
+private:
+	PEGTransformer &transformer;
+	ParsedGraphTable graph;
+	RepeatParseResult &joins;
+	vector<unique_ptr<TableRef>> suffixes;
+};
+
+arena_ptr<TransformProcess> StartTableChain(PEGTransformer &transformer, ParseResult &parse_result,
+                                            const TransformFrameOps &native) {
+	auto &list = parse_result.Cast<ListParseResult>();
+	auto &joins = list.GetChild(1);
+	if (joins.type != ParseResultType::OPTIONAL || joins.Cast<OptionalParseResult>().HasResult()) {
+		if (auto graph = LeadingGraph(list.GetChild(0))) {
+			auto &repeat =
+			    joins.type == ParseResultType::OPTIONAL ? joins.Cast<OptionalParseResult>().GetResult() : joins;
+			return transformer.MakeProcess<JoinedGraphProcess>(transformer, *graph, repeat.Cast<RepeatParseResult>());
+		}
+	}
+	return transformer.MakeProcess<GeneratedTransformProcess>(transformer, TransformInput {parse_result}, native);
 }
 
 arena_ptr<TransformProcess> StartGraphTable(PEGTransformer &transformer, ParseResult &parse_result) {
@@ -205,6 +295,14 @@ void QwAddGraphTableRules(vector<GrammarChange> &changes) {
 	changes.push_back(GrammarChange::AddRule("QwPgqEdge <- '[' Identifier ':' Identifier ']'"));
 	changes.push_back(GrammarChange::AddRule("QwPgqStep <- '-' QwPgqEdge '->' QwPgqVertex"));
 	changes.push_back(GrammarChange::PrependChoice("InnerTableRef", "QwGraphTable"));
+	// Inspect joins only at their native chain boundary. InnerTableRef can also
+	// appear to the right of CROSS JOIN, where consuming a suffix would regroup SQL.
+	for (const string rule : {"TableRef", "JoinedTableRefChain"}) {
+		const auto native = PEGTransformerFactory::GeneratedTransformFrameOps().at(rule);
+		changes.push_back(GrammarChange::SetTransformProcess(
+		    rule, [native](PEGTransformer &t, ParseResult &r) { return StartTableChain(t, r, *native); },
+		    rule == "TableRef"));
+	}
 }
 
 } // namespace duckdb

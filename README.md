@@ -132,6 +132,21 @@ The SQL/PGQ read surface supports named, labeled vertices and named, typed edges
 
 For a selective graph scan, write the predicate inside `GRAPH_TABLE`, for example `WHERE e.rid = 101` or `WHERE e.rid IN (101, 104)`. QuackWeave sends these predicates to Ladybug when the property is registered as `INT64` and the list contains at most 64 signed integer literals. DuckDB evaluates the original SQL predicate on the returned rows. Expressions, parameter values, and lists containing NULL use the ordinary DuckDB filter.
 
+You can also supply the keys once in an SQL watchlist. In this example Ladybug reads matches for route IDs 101 and 104. DuckDB joins those matches to the original watchlist, so the two entries for 101 produce two result rows.
+
+```sql
+SELECT g.route_id, g.miles
+FROM GRAPH_TABLE (
+    air_routes MATCH (o:airport)-[e:route]->(d:airport)
+    COLUMNS (e.rid AS route_id, e.dist AS miles)
+) AS g
+JOIN (VALUES (101::BIGINT), (104::BIGINT), (101::BIGINT)) AS w(id)
+    ON w.id = g.route_id
+ORDER BY g.route_id;
+```
+
+This optimization recognizes a graph on the left of an inner equality join to a single-column literal `VALUES` list of up to 64 rows. Use qualified keys and project graph properties directly. A graph-local predicate takes precedence. Computed graph projections, table-backed watchlists, and graph-preserving outer joins keep their ordinary DuckDB plans. The [SF1 benchmark](benchmarks/lsqb_sf1/watchlist.py) compares result groups with direct Ladybug and checks the executed graph scan's row count.
+
 To reuse an existing GQL or Cypher query verbatim, execute it on a graph-enabled connection and ingest its Arrow result into the SQL consumer. This example uses two ADBC cursors. A limit inside `graph_statement` applies before the directory join.
 
 ```python

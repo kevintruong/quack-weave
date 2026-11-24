@@ -71,6 +71,140 @@ SELECT COUNT(*) FROM atl_routes r JOIN directory a ON a.code = r.destination;
 ----
 6
 
+# A graph-external literal watchlist retains SQL join multiplicity. One absent
+# ID and one NULL cannot match. DuckDB still sees two equal watch rows.
+query II
+SELECT g.route_id, count(*) FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS (e.rid AS route_id)
+) AS g JOIN (VALUES (101::BIGINT), (104::BIGINT), (101::BIGINT), (NULL::BIGINT), (-1::BIGINT))
+  AS watch(id) ON watch.id = g.route_id
+GROUP BY g.route_id ORDER BY g.route_id;
+----
+101	2
+104	1
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT g.route_id FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS (e.rid AS route_id)
+) AS g JOIN (VALUES (101::BIGINT), (104::BIGINT), (101::BIGINT), (NULL::BIGINT), (-1::BIGINT))
+  AS watch(id) ON watch.id = g.route_id;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 2,[^{}]*"name": "QW_GRAPH_QUERY_FILTERED".*
+
+query III
+SELECT count(*), count(w.id), count(g.miles) FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS (e.dist AS miles)
+) AS g LEFT JOIN (VALUES (946::BIGINT), (NULL::BIGINT)) AS w(id) ON g.miles = w.id;
+----
+5	2	4
+
+query I
+SELECT count(*) FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS (e.dist AS miles)
+) AS g JOIN (VALUES (NULL::BIGINT)) AS w(id) ON g.miles = w.id;
+----
+0
+
+query I
+SELECT g.route_id FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS (e.rid AS route_id)
+) AS g JOIN (VALUES (100+1), (NULL)) AS w(id) ON g.route_id = w.id;
+----
+101
+
+query I
+SELECT count(*) FROM (GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS (e.rid AS route_id)
+) AS g JOIN (VALUES (101::BIGINT)) AS w(id) ON g.route_id = w.id) AS joined;
+----
+1
+
+
+# Keep native join association and bind positional parameters in their source order.
+query I
+SELECT count(*) FROM (VALUES (104::BIGINT)) AS src(id) CROSS JOIN GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS (e.rid AS id)) AS g
+JOIN (VALUES (101::BIGINT), (104::BIGINT)) AS w(id) ON src.id = w.id;
+----
+5
+
+query I
+SELECT count(*) FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS (e.rid AS id)) AS g
+JOIN (VALUES (101::BIGINT), (101::BIGINT)) AS w(id) ON g.id = w.id
+JOIN (VALUES (101::BIGINT), (104::BIGINT)) AS another(id) ON g.id = another.id;
+----
+2
+
+statement ok
+PREPARE joined_params AS SELECT g.id, g.shift FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport)
+  WHERE e.rid > ? COLUMNS (e.rid AS id, CAST(? AS BIGINT) AS shift)
+) AS g JOIN (VALUES (CAST(? AS BIGINT))) AS w(id) ON g.id + ? = w.id;
+
+query II
+EXECUTE joined_params(100, 77, 114, 10);
+----
+104	77
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT g.id, g.x FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS (e.rid AS id, random() AS x)
+) AS g JOIN (VALUES (101::BIGINT)) AS w(id) ON g.id = w.id;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 5,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+# DuckDB uniquifies duplicate derived column names from left to right.
+query I
+SELECT count(*) FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport)
+  COLUMNS (e.rid AS a, e.dist AS a, e.rid AS a_1)
+) AS g JOIN (VALUES (946::BIGINT)) AS w(k) ON g.a_1 = w.k;
+----
+2
+
+query I
+SELECT count(*) FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport)
+  COLUMNS (e.rid AS z, e.dist AS x, e.rid AS q)
+) AS g(a,a,a_1) JOIN (VALUES (946::BIGINT)) AS w(k) ON g.a_1 = w.k;
+----
+2
+
+# Unary minus outside a cast is resolved using DuckDB's function search path.
+statement ok
+CREATE TEMP MACRO "-"(x) AS 104;
+
+query I
+SELECT g.id FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS (e.rid AS id)
+) AS g JOIN (VALUES (-1::BIGINT)) AS w(id) ON g.id = w.id;
+----
+104
+
+statement ok
+DROP MACRO temp.main."-";
+
+statement ok
+CREATE SCHEMA watch_schema;
+
+statement ok
+CREATE MACRO watch_schema."-"(x) AS 103;
+
+statement ok
+SET search_path=watch_schema;
+
+statement ok
+CREATE VIEW stored_watch AS SELECT g.id FROM GRAPH_TABLE (
+  air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS (e.rid AS id)
+) AS g JOIN (VALUES (-1::BIGINT)) AS w(id) ON g.id = w.id;
+
+statement ok
+SET search_path=main;
+
+query I
+SELECT id FROM watch_schema.stored_watch;
+----
+103
+
 # case: hybrid.sets Membership, bags, distinct sets and aggregates over the projected columns
 query T
 SELECT a.code FROM airport_directory a WHERE EXISTS
