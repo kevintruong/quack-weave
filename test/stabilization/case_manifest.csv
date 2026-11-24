@@ -89,3 +89,11 @@ usage.membership,usage_relations.test,mvp2-debug|mvp2-release,1
 usage.set_operations,usage_relations.test,mvp2-debug|mvp2-release,2
 usage.ordinality,usage_relations.test,mvp2-debug|mvp2-release,1
 usage.table_position,usage_relations.test,mvp2-debug|mvp2-release,1
+usage_binding.setup,usage_binding.test,mvp2-debug|mvp2-release,2
+usage_binding.fresh_view,usage_binding.test,mvp2-debug|mvp2-release,5
+usage_binding.prepared_view,usage_binding.test,mvp2-debug|mvp2-release,5
+usage_binding.literal_guard,usage_binding.test,mvp2-debug|mvp2-release,5
+usage_binding.deferred_arguments,usage_binding.test,mvp2-debug|mvp2-release,5
+usage_binding.host_parameter,usage_binding.test,mvp2-debug|mvp2-release,3
+usage_binding.graph_parameters,usage_binding.test,mvp2-debug|mvp2-release,3
+usage_binding.host_macro,usage_binding.test,mvp2-debug|mvp2-release,2

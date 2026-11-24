@@ -12,7 +12,7 @@ test-env QW_PACKAGE UNSET_QW_PACKAGE
 statement ok
 CREATE TEMP TABLE package AS SELECT * FROM read_csv('{QW_PACKAGE}', header = true, all_varchar = true);
 
-# case: fixture.graph Graph data, catalog and the independent DuckGQL fixture are unchanged
+# case: fixture.graph Graph data, catalog and the independent DuckGQL and replacement fixtures are unchanged
 query I
 SELECT count(*) FROM read_text('{QW_BEFORE}') a, read_text('{QW_AFTER}') b
 WHERE a.content = b.content AND a.size > 2;

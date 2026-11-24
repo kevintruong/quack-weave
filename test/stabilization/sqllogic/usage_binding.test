@@ -1,0 +1,165 @@
+# name: test/stabilization/sqllogic/usage_binding.test
+# description: Graph identity across DuckDB binding, view expansion, and SQL value substitution
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_GRAPH UNSET_QW_GRAPH
+
+test-env QW_GRAPH_REPLACEMENT UNSET_QW_GRAPH_REPLACEMENT
+
+# case: usage_binding.setup Load the package and provision the original graph
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+# case: usage_binding.fresh_view Fresh view expansion resolves the current graph
+statement ok
+CREATE VIEW linked AS
+SELECT id FROM qw_query('kg', 'cypher',
+    $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$,
+    schema := 'id BIGINT');
+
+query I
+SELECT id FROM linked;
+----
+101
+101
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH_REPLACEMENT}"}';
+
+query I
+SELECT id FROM linked;
+----
+201
+201
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+# case: usage_binding.prepared_view Prepared execution through a view can resolve the replacement
+statement ok
+PREPARE read_view AS SELECT id FROM linked;
+
+query I
+EXECUTE read_view;
+----
+101
+101
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH_REPLACEMENT}"}';
+
+query I
+EXECUTE read_view;
+----
+201
+201
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+# case: usage_binding.literal_guard A directly bound literal scan rejects a stale generation
+statement ok
+PREPARE read_literal AS
+SELECT id FROM qw_query('kg', 'cypher',
+    $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$,
+    schema := 'id BIGINT');
+
+query I
+EXECUTE read_literal;
+----
+101
+101
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH_REPLACEMENT}"}';
+
+statement error
+EXECUTE read_literal;
+----
+QW_CONFIG: Ladybug configuration changed after binding
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+# case: usage_binding.deferred_arguments SQL can supply the entire payload and schema at EXECUTE
+statement ok
+PREPARE read_deferred AS
+SELECT id FROM qw_query('kg', 'cypher', $1, schema := $2);
+
+query I
+EXECUTE read_deferred(
+    $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$,
+    'id BIGINT');
+----
+101
+101
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH_REPLACEMENT}"}';
+
+query I
+EXECUTE read_deferred(
+    $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$,
+    'id BIGINT');
+----
+201
+201
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+# case: usage_binding.host_parameter A SQL parameter filters the rows returned by a fixed graph query
+statement ok
+PREPARE read_filtered AS
+SELECT count(*) FROM qw_query('kg', 'cypher',
+    $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$,
+    schema := 'id BIGINT')
+WHERE id = $1;
+
+query I
+EXECUTE read_filtered(101);
+----
+2
+
+query I
+EXECUTE read_filtered(999);
+----
+0
+
+# case: usage_binding.graph_parameters Row-correlated payloads and a graph parameter map are unavailable
+statement error
+SELECT * FROM (VALUES ($$MATCH (d:Document) RETURN d.id AS id$$)) AS source(payload),
+    LATERAL qw_query('kg', 'cypher', source.payload, schema := 'id BIGINT');
+----
+does not support lateral join column parameters
+
+statement error
+SELECT * FROM qw_query('kg', 'cypher', $$MATCH (d:Document) RETURN d.id AS id$$,
+    schema := 'id BIGINT', params := '{"id":100}');
+----
+Invalid named parameter "params"
+
+statement error
+SELECT * FROM qw_query('kg', 'cypher', $$MATCH (d:Document {id: $id}) RETURN d.id AS id$$,
+    schema := 'id BIGINT');
+----
+QW_EXECUTION
+
+# case: usage_binding.host_macro A macro parameter can filter graph rows in SQL
+statement ok
+CREATE MACRO count_linked(key) AS (
+    SELECT count(*) FROM qw_query('kg', 'cypher',
+        $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$,
+        schema := 'id BIGINT')
+    WHERE id = key
+);
+
+query II
+SELECT count_linked(101), count_linked(999);
+----
+2	0

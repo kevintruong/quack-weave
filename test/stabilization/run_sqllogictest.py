@@ -51,12 +51,15 @@ def report_artifact(path):
     print("[QW_ARTIFACT] " + json.dumps(identity), flush=True)
 
 
-def snapshot(binary, graph, duckgql_graph, target):
-    with duckgql_graph.open("rb") as source:
-        duckgql_digest = hashlib.file_digest(source, "sha256").hexdigest()
+def snapshot(binary, graph, duckgql_graph, replacement_graph, target):
+    with duckgql_graph.open("rb") as duckgql, replacement_graph.open("rb") as replacement:
+        fixture_hashes = {
+            "duckgql_fixture_sha256": hashlib.file_digest(duckgql, "sha256").hexdigest(),
+            "replacement_fixture_sha256": hashlib.file_digest(replacement, "sha256").hexdigest(),
+        }
     write_json(target, {
         "graph_rows": ladybug(binary, graph, SNAPSHOT, read_only=True),
-        "duckgql_fixture_sha256": duckgql_digest,
+        **fixture_hashes,
     })
 
 
@@ -162,18 +165,22 @@ def main():
         ladybug(lbug, duckgql_graph, (HERE / "fixtures/duckgql_reads.cypher").read_text(encoding="utf-8"))
         variables["QW_DUCKGQL_GRAPH"] = duckgql_graph
 
+        replacement_graph = scratch / "replacement.lbdb"
+        ladybug(lbug, replacement_graph, (HERE / "fixtures/usage_replacement.cypher").read_text(encoding="utf-8"))
+        variables["QW_GRAPH_REPLACEMENT"] = replacement_graph
+
         before = scratch / "before.json"
         after = scratch / "after.json"
         observations = scratch / "package.csv"
-        snapshot(lbug, graph, duckgql_graph, before)
+        snapshot(lbug, graph, duckgql_graph, replacement_graph, before)
         run_cases(unittest, scratch, variables, [test_dir / name for name in (
-            "reads.test", "gql_compatibility.test", "usage_relations.test", "bind.test", "admission.test", "scan.test",
-            "host_access.test", "limits.test",
+            "reads.test", "gql_compatibility.test", "usage_relations.test", "usage_binding.test",
+            "bind.test", "admission.test", "scan.test", "host_access.test", "limits.test",
             "timeout.test_slow", "artifact.test",
             "duckgql_admission.test", "duckgql_aggregates.test", "duckgql_basic.test",
             "duckgql_paths.test", "duckgql_reachability.test", "duckgql_scalars.test",
         )])
-        snapshot(lbug, graph, duckgql_graph, after)
+        snapshot(lbug, graph, duckgql_graph, replacement_graph, after)
         write_package_observations(package, export, observations)
         run_cases(unittest, scratch, {"QW_BEFORE": before, "QW_AFTER": after, "QW_PACKAGE": observations},
                   [test_dir / "fixture_audit.test"])

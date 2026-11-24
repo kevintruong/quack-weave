@@ -85,6 +85,24 @@ Graph results follow DuckDB's relational semantics. Joins can multiply duplicate
 
 Use `AS MATERIALIZED` when a CTE should share a graph result across references. Inlining can produce separate graph scans. `WITH ORDINALITY` numbers rows in one scan's output. Use an outer `ORDER BY` with stable keys for reproducible ordering. [Relational SQLLogicTests](test/stabilization/sqllogic/usage_relations.test)
 
+Bind input values in the host SQL whenever the graph query can remain fixed.
+
+```sql
+PREPARE count_linked AS
+SELECT count(*)
+FROM qw_query('kg', 'cypher',
+    $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document)
+      RETURN b.id AS document_id$$,
+    schema := 'document_id BIGINT')
+WHERE document_id = $1;
+
+EXECUTE count_linked(101);
+```
+
+Host macros can apply an argument to a SQL filter in the same way. DuckDB can also resolve placeholders for the complete graph payload and schema during `EXECUTE`. Those placeholders supply table-function arguments. Graph-language value parameters and row-correlated graph payloads are outside the current interface.
+
+Views store the SQL definition and resolve the current alias when DuckDB binds them. Repointing an alias can change the graph read by a view, including a prepared query through it. The generation check rejects an already-bound graph scan with `QW_CONFIG` if its configuration changes before the scan opens. A prepared call that binds its graph payload at `EXECUTE` can resolve the replacement graph. [Binding SQLLogicTests](test/stabilization/sqllogic/usage_binding.test)
+
 ### Native stabilization
 
 The macOS arm64 CI gate runs the pinned native DuckDB SQLLogicTest runner against the MVP2 debug and release packages and the Cypher-only MVP1 package. It also runs the native observer audit against MVP2 release. The DuckDB CLI serves other test targets, while this gate requires the `unittest` executable and `libduckdb.dylib` from the same DuckDB `v2.0.1` build at commit `8d78114e90a53823803660bf821f6073ac87da8c`. When configuring that checkout with CMake, use `-DDUCKDB_EXPLICIT_VERSION=v2.0.1 -DBUILD_UNITTESTS=ON`.
@@ -97,7 +115,7 @@ make mvp2-stabilization-test \
   LBUG=/path/to/lbug-v0.22.3
 ```
 
-The gate writes profile logs, raw observer evidence, and `stabilization-coverage.json` under `build/stabilization-reports/`. The coverage check requires all 90 named cases across their assigned profiles and verifies the SQL source hashes against the checked-out files. Set `STABILIZATION_REPORT_DIR` to choose a different destination.
+The gate writes profile logs, raw observer evidence, and `stabilization-coverage.json` under `build/stabilization-reports/`. The coverage check requires all 98 named cases across their assigned profiles and verifies the SQL source hashes against the checked-out files. Set `STABILIZATION_REPORT_DIR` to choose a different destination.
 
 The [Ladybug GQL compatibility bench](test/stabilization/sqllogic/gql_compatibility.test) checks scalar results, row-bag equality with native Cypher, and the read-only GQL boundary. Both MVP2 profiles also run the [DuckGQL SQLLogicTest ports](test/stabilization/duckgql-porting.md) against a separate native Ladybug fixture. The runner compares the Ladybug fixtures before and after the suite.
 
