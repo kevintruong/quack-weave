@@ -1,5 +1,6 @@
 //! The graph registration owns its metadata. Binding an empty or nonempty result
 //! uses the same Ladybug parse tree and never opens the graph's execution path.
+use std::collections::BTreeMap;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::path::Path;
 
@@ -20,18 +21,29 @@ type Visit =
     unsafe extern "C" fn(*mut c_void, u8, *const c_char, *const c_char, *const c_char) -> bool;
 
 unsafe extern "C" {
+    fn qw_ladybug_table_population(
+        connection: *const ffi::ConnectionHandle,
+        label: *const c_char,
+        rows: *mut u64,
+    ) -> bool;
     fn qw_ladybug_project(query: *const c_char, visit: Visit, output: *mut c_void) -> bool;
 }
 
-pub(super) fn snapshot(path: &Path) -> Option<GraphCatalog> {
+pub(super) fn snapshot(path: &Path) -> Option<(GraphCatalog, BTreeMap<String, u64>)> {
     let mut db = Database::open(path, true).ok()?;
     let mut connection = Connection::open(&mut db).ok()?;
     // A single read transaction covers table enumeration and per-label property metadata.
     // Dropping the private connection rolls it back, including on any error.
     catalog_query(&mut connection, "BEGIN TRANSACTION READ ONLY")?;
     let mut catalog = GraphCatalog::new();
+    let mut populations = BTreeMap::new();
     for names in catalog_rows(&mut connection, "CALL show_tables() RETURN name AS label")? {
         let label = names.first()?;
+        let name = CString::new(label.as_str()).ok()?;
+        let mut count = 0;
+        if unsafe { qw_ladybug_table_population(&connection.0, name.as_ptr(), &mut count) } {
+            populations.insert(label.clone(), count);
+        }
         let quoted = label.replace('\\', "\\\\").replace('\'', "\\\'");
         let query = format!(
             "CALL table_info('{quoted}') RETURN name AS property_name, type AS property_type ORDER BY `property id`"
@@ -44,7 +56,7 @@ pub(super) fn snapshot(path: &Path) -> Option<GraphCatalog> {
             properties.push((name.clone(), ty.clone()));
         }
     }
-    Some(catalog)
+    Some((catalog, populations))
 }
 
 fn catalog_query(connection: &mut Connection, query: &str) -> Option<QueryResult> {

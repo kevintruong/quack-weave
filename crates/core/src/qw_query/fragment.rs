@@ -2,7 +2,7 @@
 //! alphabet as the grammar, so the versioned descriptor needs no quoting rules.
 use std::collections::HashMap;
 
-use super::is_identifier;
+use super::{GraphPopulations, is_identifier};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum EntityKind {
@@ -23,6 +23,7 @@ pub(super) struct GraphFragment {
     projection: String,
     slots: Vec<GraphProperty>,
     steps: usize,
+    population_label: String,
 }
 
 impl GraphFragment {
@@ -34,6 +35,7 @@ impl GraphFragment {
         let mut pattern = String::from("MATCH ");
         let mut bindings = HashMap::new();
         let mut element_count = 0;
+        let mut population_label = String::new();
         for (index, token) in path.split(',').enumerate() {
             let (tag, names) = token.split_once(':')?;
             let (variable, label) = names.split_once(':')?;
@@ -51,6 +53,9 @@ impl GraphFragment {
                 }
                 _ => return None,
             };
+            if index <= 1 {
+                population_label = label.to_owned();
+            }
             bindings
                 .entry(variable)
                 .and_modify(|(_, _, unique)| *unique = false)
@@ -93,6 +98,7 @@ impl GraphFragment {
             projection,
             slots,
             steps: element_count / 2,
+            population_label,
         })
     }
 
@@ -106,6 +112,17 @@ impl GraphFragment {
 
     pub(super) fn steps(&self) -> usize {
         self.steps
+    }
+
+    pub(super) fn estimate(&self, populations: &GraphPopulations) -> Option<u64> {
+        match (self.steps, populations) {
+            (0 | 1, GraphPopulations::ByTable(tables)) => {
+                tables.get(&self.population_label).copied()
+            }
+            (0, GraphPopulations::ByEntity { nodes, .. }) => Some(*nodes),
+            (1, GraphPopulations::ByEntity { edges, .. }) => Some(*edges),
+            _ => None,
+        }
     }
 
     pub(super) fn property(&self, index: usize) -> Option<&GraphProperty> {

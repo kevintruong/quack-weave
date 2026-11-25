@@ -51,9 +51,9 @@ impl ReadBackend for RelateBackend {
         } else {
             None
         };
-        let single_pattern_row_bound = catalog
+        let populations = catalog
             .as_ref()
-            .and_then(|_| catalog::single_pattern_row_bound(&mut connection));
+            .and_then(|_| catalog::populations(&mut connection));
         let registered = RegisteredDatabase {
             generation,
             path: path.into(),
@@ -61,7 +61,10 @@ impl ReadBackend for RelateBackend {
         };
         Ok(PreparedRegistration {
             catalog,
-            single_pattern_row_bound,
+            single_pattern_row_bound: populations.map(|(nodes, edges)| nodes.max(edges)),
+            populations: populations.map(|(nodes, edges)| {
+                rusty_quack_core::qw_query::GraphPopulations::ByEntity { nodes, edges }
+            }),
             activate: Box::new(move || {
                 *self
                     .registered

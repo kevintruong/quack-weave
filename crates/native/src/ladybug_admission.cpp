@@ -1,4 +1,12 @@
 #include "c_api/lbug.h"
+#include "catalog/catalog.h"
+#include "catalog/catalog_entry/rel_group_catalog_entry.h"
+#include "main/connection.h"
+#include "main/database_manager.h"
+#include "storage/storage_manager.h"
+#include "storage/table/table.h"
+#include "transaction/transaction.h"
+#include <limits>
 #include "cypher_lexer.h"
 #include "parser/expression/parsed_literal_expression.h"
 #include "parser/expression/parsed_property_expression.h"
@@ -208,5 +216,38 @@ extern "C" bool qw_cypher_parameters(const char* text, size_t length,
         return true;
     } catch (...) {
         return false;
+    }
+}
+
+
+// Registration already owns the read transaction that enumerated this table.
+// Fetch the planner's storage population without executing a data query.
+extern "C" bool qw_ladybug_table_population(const lbug_connection* connection, const char* label,
+    uint64_t* rows) noexcept {
+    try {
+        auto& context = *static_cast<lbug::main::Connection*>(connection->_connection)->getClientContext();
+        auto* txn = lbug::transaction::Transaction::Get(context);
+        auto* entry = lbug::catalog::Catalog::Get(context)->getTableCatalogEntry(txn, label);
+        auto count = [&](lbug::common::table_id_t id) {
+            auto [catalog, storage] = lbug::main::DatabaseManager::resolveTableStorage(context, id);
+            return storage->getTable(id)->getNumTotalRows(txn);
+        };
+        if (entry->getType() == lbug::catalog::CatalogEntryType::NODE_TABLE_ENTRY) {
+            *rows = count(entry->getTableID());
+            return true;
+        }
+        if (entry->getType() == lbug::catalog::CatalogEntryType::REL_GROUP_ENTRY) {
+            uint64_t total = 0;
+            for (const auto& rel : entry->ptrCast<lbug::catalog::RelGroupCatalogEntry>()->getRelEntryInfos()) {
+                auto part = count(rel.oid);
+                if (part > std::numeric_limits<uint64_t>::max() - total) return false;
+                total += part;
+            }
+            *rows = total;
+            return true;
+        }
+        return false;
+    } catch (...) {
+        return false; // A missing estimate leaves DuckDB's ordinary costing in effect.
     }
 }

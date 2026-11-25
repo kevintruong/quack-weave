@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use rusty_quack_core::qw_query::{
-    BackendError, Batch, BatchReader, ColumnData, ColumnSpec, GraphGeneration, GraphParameter,
-    ReadBackend, ReadSession, ScalarType,
+    BackendError, Batch, BatchReader, ColumnData, ColumnSpec, GraphCatalog, GraphGeneration,
+    GraphParameter, GraphPopulations, PreparedRegistration, ReadBackend, ReadSession, ScalarType,
 };
 
 mod arrow;
@@ -62,7 +62,22 @@ impl ReadBackend for LadybugBackend {
     }
 
     fn catalog(&self, path: &Path) -> Option<rusty_quack_core::qw_query::GraphCatalog> {
-        catalog::snapshot(path)
+        catalog::snapshot(path).map(|(catalog, _)| catalog)
+    }
+
+    fn prepare_registration<'a>(
+        &'a self,
+        path: &Path,
+        _: Option<&GraphCatalog>,
+        generation: u64,
+    ) -> Result<PreparedRegistration<'a>, BackendError> {
+        let (catalog, populations) = catalog::snapshot(path).unzip();
+        Ok(PreparedRegistration {
+            catalog,
+            populations: populations.map(GraphPopulations::ByTable),
+            single_pattern_row_bound: None,
+            activate: Box::new(move || self.set_generation(Some(generation))),
+        })
     }
 
     fn projection(

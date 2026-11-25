@@ -39,11 +39,16 @@ fn main() {
     require_file(&ssl.join("libssl.a"));
     require_file(&ssl.join("libcrypto.a"));
 
+    ladybug_config_header(&library, &out);
     let object = out.join("ladybug_admission.o");
     run(
         Command::new(env::var_os("CXX").as_deref().unwrap_or(OsStr::new("c++")))
             .args(["-std=c++20", "-fPIC", "-fvisibility=hidden", "-I"])
             .arg(source.join("src/include"))
+            .arg("-I")
+            .arg(&out)
+            .arg("-I")
+            .arg(source.join("third_party/alp/include"))
             .arg("-I")
             .arg(source.join("third_party/antlr4_cypher/include"))
             .arg("-I")
@@ -91,6 +96,32 @@ fn main() {
         "stdc++"
     };
     println!("cargo:rustc-link-lib=dylib={cpp_runtime}");
+}
+
+// The release ships its configured storage constants in the amalgamated C++
+// header. Supply exactly those constants when compiling against its private
+// storage headers, which otherwise require a local Ladybug CMake build.
+fn ladybug_config_header(library: &Path, out: &Path) {
+    let header = library.join("lbug.hpp");
+    println!("cargo:rerun-if-changed={}", header.display());
+    let release = std::fs::read_to_string(&header).expect("Ladybug release lbug.hpp");
+    let start = release
+        .find("#define BOTH_REL_STORAGE")
+        .expect("Ladybug storage config");
+    let end_marker = "#undef BWD_REL_STORAGE";
+    let end = start
+        + release[start..]
+            .find(end_marker)
+            .expect("end of storage config")
+        + end_marker.len();
+    let common = out.join("common");
+    std::fs::create_dir_all(&common).unwrap();
+    let includes = "#pragma once\n#include <algorithm>\n#include <cstdint>\n#include \"common/enums/extend_direction.h\"\n";
+    std::fs::write(
+        common.join("system_config.h"),
+        format!("{includes}{}\n", &release[start..end]),
+    )
+    .unwrap();
 }
 
 fn build_graph_grammar(manifest: &Path, out: &Path) {

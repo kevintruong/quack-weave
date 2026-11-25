@@ -243,6 +243,7 @@ impl CustomOptionCallbacks for GraphConfig {
             config,
             catalog: declared.or(prepared.catalog),
             single_pattern_row_bound: prepared.single_pattern_row_bound,
+            populations: prepared.populations,
         };
         let json = serde_json::to_string(&snapshot).map_err(|_| {
             Error::internal("QW_CONFIG: Could not store the validated graph configuration")

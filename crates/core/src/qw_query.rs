@@ -52,11 +52,20 @@ static CONFIG_GENERATION: AtomicU64 = AtomicU64::new(0);
 /// Label and property names with their graph logical types, captured at registration.
 pub type GraphCatalog = BTreeMap<String, Vec<(String, String)>>;
 
+/// Registration-time input sizes for DuckDB's cost model. A labeled match
+/// can emit fewer rows than its storage table or its provider-wide population.
+#[derive(Debug, Deserialize, Serialize)]
+pub enum GraphPopulations {
+    ByTable(BTreeMap<String, u64>),
+    ByEntity { nodes: u64, edges: u64 },
+}
+
 /// Resources prepared for a registration are published only after every
 /// configuration, file identity and alias check succeeds.
 pub struct PreparedRegistration<'a> {
     pub catalog: Option<GraphCatalog>,
     pub single_pattern_row_bound: Option<u64>,
+    pub populations: Option<GraphPopulations>,
     pub activate: Box<dyn FnOnce() + 'a>,
 }
 
@@ -85,6 +94,7 @@ pub trait ReadBackend: Send + Sync {
         Ok(PreparedRegistration {
             catalog: self.registration_catalog(path, declared)?,
             single_pattern_row_bound: None,
+            populations: None,
             activate: Box::new(move || self.set_generation(Some(generation))),
         })
     }
@@ -427,6 +437,8 @@ struct ConfigSnapshot {
     catalog: Option<GraphCatalog>,
     #[serde(default)]
     single_pattern_row_bound: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    populations: Option<GraphPopulations>,
 }
 
 fn admit_local_path(context: &Context, path: &str) -> Result<String> {
@@ -676,11 +688,6 @@ impl TableFunctionCallbacks for GraphQuery {
                     let var = required(5)?;
                     let column = required(6)?;
                     watch = RuntimeWatch::from_scan(&query, &label, &property, &var, &column);
-                    if watch.is_some() {
-                        // The default estimate is one row. Give bounded watchlists an
-                        // opportunity to build the hash table when graph size is unknown.
-                        handle.set_cardinality(MAX_KEYS + 1, false)?;
-                    }
                 } else {
                     let candidate = required(5)?;
                     if runtime_watch::filtered_column(&query, &candidate, &label, &property)
@@ -745,9 +752,6 @@ impl TableFunctionCallbacks for GraphQuery {
                     &required(6)?,
                 )
                 .filter(|w| is_integer(w.column));
-                if watch.is_some() {
-                    handle.set_cardinality(MAX_KEYS + 1, false)?;
-                }
             } else {
                 let candidate = required(5)?;
                 if runtime_watch::filtered_column(&cypher, &candidate, &label, &property)
@@ -756,6 +760,12 @@ impl TableFunctionCallbacks for GraphQuery {
                     cypher = candidate;
                 }
             }
+        }
+        if let Some(rows) = fragment
+            .as_ref()
+            .and_then(|f| f.estimate(config.populations.as_ref()?))
+        {
+            handle.set_cardinality(rows.try_into().unwrap_or(usize::MAX), false)?;
         }
         for column in &schema {
             handle.add_result_column(&column.name, &column.data_type.logical_type(context)?)?;

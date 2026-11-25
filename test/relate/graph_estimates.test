@@ -1,0 +1,69 @@
+# name: test/relate/graph_estimates.test
+# description: DuckDB sees registration-time populations for fixed PGQ scans and ordinary views
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_RELATE UNSET_QW_RELATE
+
+test-env QW_LADYBUG UNSET_QW_LADYBUG
+
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"lg","path":"{QW_LADYBUG}"}';
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"rl","path":"{QW_RELATE}"}';
+
+statement ok
+CREATE VIEW flights AS SELECT * FROM GRAPH_TABLE (
+  lg MATCH (a:airport)-[e:route]->(b:airport) COLUMNS(e.rid AS id)
+) g;
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT id FROM flights;
+----
+analyzed_plan	<REGEX>:.*"Estimated Cardinality": "5"[^}]*\},[^{}]*"intermediate_rows": 5,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM GRAPH_TABLE (lg MATCH (a:airport) COLUMNS(a.code)) g;
+----
+analyzed_plan	<REGEX>:.*"Estimated Cardinality": "6"[^}]*\},[^{}]*"intermediate_rows": 6,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+# Relate reports global populations at registration: 6 nodes, 4 edges in the fixture.
+# A query restricted to :airport or :route is estimated, so its actual rows may differ.
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM GRAPH_TABLE (rl MATCH (a:airport) COLUMNS(a.code)) g;
+----
+analyzed_plan	<REGEX>:.*"Estimated Cardinality": "6"[^}]*\},[^{}]*"intermediate_rows": 4,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM GRAPH_TABLE (rl MATCH (a:airport)-[r:route]->(b:airport)
+ COLUMNS(r.rid)) g;
+----
+analyzed_plan	<REGEX>:.*"Estimated Cardinality": "4"[^}]*\},[^{}]*"intermediate_rows": 3,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+# Opaque explicit-schema reads can return a different cardinality from the entire graph.
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM qw_query('rl','cypher',
+ 'MATCH (n:airport) RETURN n.code AS code LIMIT 2', schema:='code VARCHAR');
+----
+analyzed_plan	<REGEX>:.*"Estimated Cardinality": "1"[^}]*\},[^{}]*"intermediate_rows": 2,[^{}]*"name": "QW_QUERY".*
+
+# Multi-hop expansion depends on endpoint degrees. Each destination here has outdegree zero.
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM GRAPH_TABLE (
+ lg MATCH (a:airport)-[r:route]->(b:airport)-[s:route]->(c:airport) COLUMNS(s.rid)) g;
+----
+analyzed_plan	<REGEX>:.*"Estimated Cardinality": "1"[^}]*\},[^{}]*"intermediate_rows": 0,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+# A declared Relate schema skips discovery, including population measurements.
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"rl","path":"{QW_RELATE}","catalog":{"airport":{"code":"VARCHAR"}}}';
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM GRAPH_TABLE (rl MATCH (a:airport) COLUMNS(a.code)) g;
+----
+analyzed_plan	<REGEX>:.*"Estimated Cardinality": "1"[^}]*\},[^{}]*"intermediate_rows": 4,[^{}]*"name": "QW_GRAPH_QUERY".*

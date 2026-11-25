@@ -12,14 +12,10 @@ const NODE_PROPERTIES: &str = "CALL db.schema.nodeTypeProperties() \
 const EDGE_PROPERTIES: &str = "CALL db.schema.relTypeProperties() \
     YIELD relType, propertyName, propertyTypes RETURN relType, propertyName, propertyTypes";
 
-/// A single directed step emits at most one row per edge, a vertex match one
-/// per node. Take both counts from the registered immutable read snapshot.
-pub(super) fn single_pattern_row_bound(connection: &mut Connection) -> Option<u64> {
-    let mut bound = 0;
-    for query in [
-        "MATCH (n) RETURN count(*) AS n",
-        "MATCH ()-[r]->() RETURN count(*) AS n",
-    ] {
+/// Global node and edge populations from the same frozen snapshot used for
+/// discovered types. Reuse these two counts for both costing and the SUM bound.
+pub(super) fn populations(connection: &mut Connection) -> Option<(u64, u64)> {
+    let mut count = |query| {
         let result = connection.query(query).ok()?;
         let [row] = result.rows.as_slice() else {
             return None;
@@ -27,9 +23,12 @@ pub(super) fn single_pattern_row_bound(connection: &mut Connection) -> Option<u6
         let [Value::Int(n)] = row.as_slice() else {
             return None;
         };
-        bound = bound.max(u64::try_from(*n).ok()?);
-    }
-    Some(bound)
+        u64::try_from(*n).ok()
+    };
+    Some((
+        count("MATCH (n) RETURN count(*) AS n")?,
+        count("MATCH ()-[r]->() RETURN count(*) AS n")?,
+    ))
 }
 
 pub(super) fn discover(connection: &mut Connection) -> Result<GraphCatalog, BackendError> {
