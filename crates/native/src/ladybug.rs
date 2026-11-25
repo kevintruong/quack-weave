@@ -4,7 +4,8 @@ use std::sync::{Arc, Mutex};
 
 use rusty_quack_core::qw_query::{
     BackendError, Batch, BatchReader, ColumnData, ColumnSpec, GraphCatalog, GraphGeneration,
-    GraphParameter, GraphPopulations, PreparedRegistration, ReadBackend, ReadSession, ScalarType,
+    GraphParameter, GraphPopulations, PreparedRegistration, ReadBackend, ReadSession,
+    RetiredRegistration, ScalarType,
 };
 
 mod arrow;
@@ -13,13 +14,12 @@ mod ffi;
 
 #[derive(Default)]
 pub(crate) struct LadybugBackend {
-    cache: Mutex<DatabaseCache>,
+    cache: Mutex<Option<Arc<DatabaseCache>>>,
 }
 
-#[derive(Default)]
 struct DatabaseCache {
-    generation: Option<u64>,
-    database: Option<(PathBuf, Arc<Mutex<Database>>)>,
+    generation: u64,
+    database: Mutex<Option<(PathBuf, Arc<Mutex<Database>>)>>,
 }
 
 impl LadybugBackend {
@@ -28,14 +28,20 @@ impl LadybugBackend {
         path: &Path,
         generation: &GraphGeneration,
     ) -> Result<Arc<Mutex<Database>>, BackendError> {
-        let mut cache = self.cache.lock().map_err(|_| BackendError::Open)?;
-        // A scan admitted just before RESET/SET can finish, but must never repopulate
-        // an evicted generation or replace the handle for the new registration.
-        if cache.generation != Some(generation.id()) {
-            drop(cache);
+        let cache = self
+            .cache
+            .lock()
+            .map_err(|_| BackendError::Open)?
+            .as_ref()
+            .filter(|cache| cache.generation == generation.id())
+            .cloned();
+        // An admitted scan can keep its generation owner across SET/RESET. Its
+        // lazy open cannot block the registry or replace the new generation's handle.
+        let Some(cache) = cache else {
             return Ok(Arc::new(Mutex::new(Database::open(path, true)?)));
-        }
-        if let Some((cached_path, handle)) = &cache.database
+        };
+        let mut database = cache.database.lock().map_err(|_| BackendError::Open)?;
+        if let Some((cached_path, handle)) = &*database
             && cached_path == path
         {
             return Ok(Arc::clone(handle));
@@ -43,7 +49,7 @@ impl LadybugBackend {
         let handle = Arc::new(Mutex::new(Database::open(path, true)?));
         // Never publish an open that raced a replacement of the registered file.
         generation.validate(path).map_err(|_| BackendError::Open)?;
-        cache.database = Some((path.to_owned(), Arc::clone(&handle)));
+        *database = Some((path.to_owned(), Arc::clone(&handle)));
         Ok(handle)
     }
 }
@@ -54,11 +60,15 @@ impl ReadBackend for LadybugBackend {
         crate::graph_entry::runtime_watch_keys(column)
     }
 
-    fn set_generation(&self, generation: Option<u64>) {
-        *self.cache.lock().unwrap_or_else(|err| err.into_inner()) = DatabaseCache {
-            generation,
-            database: None,
-        };
+    fn set_generation(&self, generation: Option<u64>) -> Option<RetiredRegistration> {
+        let next = generation.map(|generation| {
+            Arc::new(DatabaseCache {
+                generation,
+                database: Mutex::new(None),
+            })
+        });
+        let mut cache = self.cache.lock().unwrap_or_else(|err| err.into_inner());
+        std::mem::replace(&mut *cache, next).map(|retired| Box::new(retired) as RetiredRegistration)
     }
 
     fn catalog(&self, path: &Path) -> Option<rusty_quack_core::qw_query::GraphCatalog> {

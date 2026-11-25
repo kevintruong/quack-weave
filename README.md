@@ -79,6 +79,15 @@ make mvp2-test DUCKDB=/path/to/duckdb-v2.0.1 LBUG=/path/to/lbug-v0.22.3
 
 The default build remains MVP1 and its Cypher-only artifact stays under `build/debug` or `build/release`.
 
+`qw_graph_providers()` lists the enabled graph providers. Its `active_alias` column
+reports the alias currently used by graph reads, or `NULL` for an empty registration slot.
+Aliases are case-insensitive and unique across providers within one DuckDB instance.
+A `SET GLOBAL` that loses a race with another `SET` or `RESET` of its registration slot
+fails with `QW_CONFIG` and leaves the winning registration in place. DuckDB publishes
+`current_setting()` after the extension callback, so competing writes can leave an older
+configuration value there until the setting is written again. Use the inventory to inspect
+effective routing.
+
 ### Query a RelateDB graph alongside Ladybug
 
 The optional `relate-provider` build embeds RelateDB 1.2.0. On Linux or macOS arm64, build it with `make mvp2-deps` and `make mvp2-relate-release`. Start DuckDB 2.0.1 with `-unsigned` and point the extension at an existing, checkpointed, single-file `.rl` bundle. [Pinned RelateDB source](https://github.com/relatedb/relate/tree/v1.2.0)

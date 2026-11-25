@@ -51,7 +51,7 @@ impl CustomOptionCallbacks for GraphOption {
             .ok_or_else(|| Error::invalid_input("QW_ARGUMENT: Expected a name"))?;
         match self {
             Self::Graph(providers) => {
-                providers.validate_graph_alias(context, &text)?;
+                providers.validate_graph_alias(&text)?;
                 Ok(value)
             }
             Self::Dialect => match text.to_ascii_lowercase().as_str() {

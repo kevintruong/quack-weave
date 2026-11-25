@@ -16,7 +16,8 @@ use duckdb_neo::{
 
 use super::{
     CONFIG_GENERATION, ConfigSnapshot, DeclaredCatalog, GraphCatalog, GraphGeneration, ReadBackend,
-    RegisteredConfig, admit_local_path, backend_error, is_identifier, parse_config, remote,
+    RegisteredConfig, RetiredRegistration, admit_local_path, backend_error, is_identifier,
+    parse_config, remote,
 };
 
 /// Describes the catalog evidence needed to rewrite a graph read.
@@ -67,32 +68,63 @@ impl GraphProvider {
             backend: Arc::new(backend),
         }
     }
-
-    pub(super) fn config(&self, context: &Context) -> Result<Option<ConfigSnapshot>> {
-        let Some((value, scope)) = context.config()?.try_get_value(self.descriptor.option)? else {
-            return Ok(None);
-        };
-        if matches!(scope, SettingScope::Session) {
-            return Err(self.descriptor.scope_error());
-        }
-        String::from_value(&value)?
-            .map(|json| {
-                serde_json::from_str(&json)
-                    .map_err(|_| Error::invalid_input("QW_CONFIG: Invalid graph configuration"))
-            })
-            .transpose()
-    }
 }
 
 fn alias_collision() -> Error {
     Error::invalid_input("QW_CONFIG: Graph alias must be unique across providers")
 }
 
+#[derive(Default)]
+struct ProviderSlot {
+    revision: u64,
+    active: Option<Arc<ConfigSnapshot>>,
+}
+
+struct RegistryState {
+    slots: HashMap<&'static str, ProviderSlot>,
+    aliases: HashMap<String, &'static str>,
+}
+
+impl RegistryState {
+    fn slot(&self, provider_id: &str) -> Result<&ProviderSlot> {
+        self.slots.get(provider_id).ok_or_else(unknown_provider)
+    }
+
+    fn replace(
+        &mut self,
+        provider_id: &'static str,
+        snapshot: Option<Arc<ConfigSnapshot>>,
+        alias: Option<String>,
+    ) -> Result<Option<Arc<ConfigSnapshot>>> {
+        let slot = self
+            .slots
+            .get_mut(provider_id)
+            .ok_or_else(unknown_provider)?;
+        slot.revision = slot
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| Error::internal("QW_CONFIG: Graph registration revision exhausted"))?;
+        let previous = std::mem::replace(&mut slot.active, snapshot);
+        if let Some(previous) = &previous {
+            self.aliases
+                .remove(&previous.config.alias().to_ascii_lowercase());
+        }
+        if let Some(alias) = alias {
+            self.aliases.insert(alias, provider_id);
+        }
+        Ok(previous)
+    }
+}
+
+fn unknown_provider() -> Error {
+    Error::internal("QW_CONFIG: Unknown graph provider")
+}
+
 /// The same registry backs configuration, lookup, session selection, and inventory.
 #[derive(Clone)]
 pub struct ProviderRegistry {
     providers: Arc<[GraphProvider]>,
-    reservations: Arc<Mutex<HashMap<&'static str, String>>>,
+    state: Arc<Mutex<RegistryState>>,
 }
 
 impl ProviderRegistry {
@@ -111,10 +143,23 @@ impl ProviderRegistry {
                 ));
             }
         }
+        let slots = providers
+            .iter()
+            .map(|provider| (provider.descriptor.id, ProviderSlot::default()))
+            .collect();
         Ok(Self {
             providers: providers.into(),
-            reservations: Arc::default(),
+            state: Arc::new(Mutex::new(RegistryState {
+                slots,
+                aliases: HashMap::new(),
+            })),
         })
+    }
+
+    fn state(&self) -> Result<std::sync::MutexGuard<'_, RegistryState>> {
+        self.state
+            .lock()
+            .map_err(|_| Error::internal("QW_CONFIG: Graph registry unavailable"))
     }
 
     pub(super) fn register_options(&self, extension: &Extension) -> Result<()> {
@@ -146,88 +191,113 @@ impl ProviderRegistry {
     }
 
     /// Validate a session graph selection against this instance's provisioned names.
-    pub fn validate_graph_alias(&self, context: &Context, alias: &str) -> Result<()> {
-        self.resolve_alias(context, alias).map(|_| ())
+    pub fn validate_graph_alias(&self, alias: &str) -> Result<()> {
+        self.resolve_alias(alias).map(|_| ())
     }
 
     pub(super) fn resolve_alias(
         &self,
-        context: &Context,
         alias: &str,
-    ) -> Result<(&GraphProvider, ConfigSnapshot)> {
-        let mut matched = None;
-        let mut configured = 0;
-        let mut unknown_alias_error = None;
-        for provider in self.providers.iter() {
-            let Some(snapshot) = provider.config(context)? else {
-                continue;
-            };
-            configured += 1;
-            unknown_alias_error = provider.descriptor.unknown_alias_error;
-            if snapshot.config.alias().eq_ignore_ascii_case(alias)
-                && matched.replace((provider, snapshot)).is_some()
-            {
-                return Err(alias_collision());
-            }
+    ) -> Result<(&GraphProvider, Arc<ConfigSnapshot>)> {
+        let alias = alias.to_ascii_lowercase();
+        let state = self.state()?;
+        if let Some(id) = state.aliases.get(&alias) {
+            let provider = self
+                .providers
+                .iter()
+                .find(|provider| provider.descriptor.id == *id)
+                .ok_or_else(unknown_provider)?;
+            let snapshot = state
+                .slot(id)?
+                .active
+                .clone()
+                .ok_or_else(unknown_provider)?;
+            return Ok((provider, snapshot));
         }
-        matched.ok_or_else(|| {
-            let message = match configured {
-                0 => "QW_CONFIG: Configure an existing graph before selecting its alias",
-                1 => unknown_alias_error.unwrap_or("QW_CONFIG: Unknown graph alias"),
-                _ => "QW_CONFIG: Unknown graph alias",
-            };
-            Error::invalid_input(message)
-        })
+        let message = match state.aliases.len() {
+            0 => "QW_CONFIG: Configure an existing graph before selecting its alias",
+            1 => self
+                .providers
+                .iter()
+                .find(|provider| state.slots[provider.descriptor.id].active.is_some())
+                .and_then(|provider| provider.descriptor.unknown_alias_error)
+                .unwrap_or("QW_CONFIG: Unknown graph alias"),
+            _ => "QW_CONFIG: Unknown graph alias",
+        };
+        Err(Error::invalid_input(message))
     }
 
-    pub(super) fn check_alias_available(
-        &self,
-        context: &Context,
-        provider_id: &str,
-        alias: &str,
-    ) -> Result<()> {
-        for other in self
+    pub(super) fn active_aliases(&self) -> Result<Vec<Option<String>>> {
+        let state = self.state()?;
+        Ok(self
             .providers
             .iter()
-            .filter(|item| item.descriptor.id != provider_id)
-        {
-            if other
-                .config(context)?
-                .is_some_and(|snapshot| snapshot.config.alias().eq_ignore_ascii_case(alias))
+            .map(|provider| {
+                state.slots[provider.descriptor.id]
+                    .active
+                    .as_ref()
+                    .map(|snapshot| snapshot.config.alias().to_owned())
+            })
+            .collect())
+    }
+
+    fn snapshot(&self, provider_id: &str) -> Result<Option<Arc<ConfigSnapshot>>> {
+        Ok(self.state()?.slot(provider_id)?.active.clone())
+    }
+
+    pub(super) fn check_generation(&self, provider_id: &str, generation: u64) -> Result<bool> {
+        Ok(self
+            .snapshot(provider_id)?
+            .is_some_and(|snapshot| snapshot.generation.id() == generation))
+    }
+
+    fn revision(&self, provider_id: &str) -> Result<u64> {
+        Ok(self.state()?.slot(provider_id)?.revision)
+    }
+
+    fn commit(
+        &self,
+        provider_id: &'static str,
+        expected_revision: u64,
+        snapshot: Arc<ConfigSnapshot>,
+        activate: impl FnOnce() -> Option<RetiredRegistration>,
+    ) -> Result<()> {
+        let alias = snapshot.config.alias().to_ascii_lowercase();
+        let (previous, retired) = {
+            let mut state = self.state()?;
+            if state.slot(provider_id)?.revision != expected_revision {
+                return Err(Error::invalid_input(
+                    "QW_CONFIG: Graph registration changed during preparation",
+                ));
+            }
+            if state
+                .aliases
+                .get(&alias)
+                .is_some_and(|owner| *owner != provider_id)
             {
                 return Err(alias_collision());
             }
-        }
+            let previous = state.replace(provider_id, Some(snapshot), Some(alias))?;
+            (previous, activate())
+        };
+        drop(previous);
+        drop(retired);
         Ok(())
     }
 
-    fn reserve_alias(
+    fn reset(
         &self,
-        context: &Context,
         provider_id: &'static str,
-        alias: Option<&str>,
+        deactivate: impl FnOnce() -> Option<RetiredRegistration>,
     ) -> Result<()> {
-        if self.providers.len() < 2 {
-            return Ok(());
-        }
-        let mut reservations = self
-            .reservations
-            .lock()
-            .map_err(|_| Error::internal("QW_CONFIG: Graph alias reservations unavailable"))?;
-        // Option callbacks return before DuckDB publishes the value. Keep the
-        // reservation until replacement or reset, and check published values at bind and scan start.
-        if let Some(alias) = alias {
-            if reservations
-                .iter()
-                .any(|(id, other)| *id != provider_id && other.eq_ignore_ascii_case(alias))
-            {
-                return Err(alias_collision());
-            }
-            self.check_alias_available(context, provider_id, alias)?;
-            reservations.insert(provider_id, alias.to_owned());
-        } else {
-            reservations.remove(provider_id);
-        }
+        let (previous, retired) = {
+            let mut state = self.state()?;
+            // Keep the tombstone revision even for an empty slot to cancel in-flight preparation.
+            let previous = state.replace(provider_id, None, None)?;
+            (previous, deactivate())
+        };
+        drop(previous);
+        drop(retired);
         Ok(())
     }
 }
@@ -252,10 +322,11 @@ impl CustomOptionCallbacks for GraphConfig {
         let backend = &self.provider.backend;
         if is_reset {
             let value = Option::<String>::None.value(context)?;
-            self.registry.reserve_alias(context, descriptor.id, None)?;
-            backend.set_generation(None);
+            self.registry
+                .reset(descriptor.id, || backend.set_generation(None))?;
             return Ok(value);
         }
+        let expected_revision = self.registry.revision(descriptor.id)?;
         let value = String::from_value(&value)?;
         if descriptor.source == ProviderSource::RemoteEndpoint {
             let text = value.ok_or_else(|| {
@@ -284,7 +355,7 @@ impl CustomOptionCallbacks for GraphConfig {
                 single_pattern_row_bound: None,
                 populations: None,
             };
-            return self.publish(context, &snapshot);
+            return self.publish(context, expected_revision, snapshot, || None);
         }
         let text = value
             .ok_or_else(|| Error::invalid_input("QW_CONFIG: Expected JSON with alias and path"))?;
@@ -327,22 +398,29 @@ impl CustomOptionCallbacks for GraphConfig {
             single_pattern_row_bound: prepared.single_pattern_row_bound,
             populations: prepared.populations,
         };
-        let value = self.publish(context, &snapshot)?;
-        (prepared.activate)();
-        Ok(value)
+        self.publish(context, expected_revision, snapshot, prepared.activate)
     }
 }
 
 impl GraphConfig {
-    fn publish(&self, context: &Context, snapshot: &ConfigSnapshot) -> Result<Value> {
-        let json = serde_json::to_string(snapshot).map_err(|_| {
+    fn publish(
+        &self,
+        context: &Context,
+        expected_revision: u64,
+        snapshot: ConfigSnapshot,
+        activate: impl FnOnce() -> Option<RetiredRegistration>,
+    ) -> Result<Value> {
+        // DuckDB copies this value into its setting after the callback returns. It
+        // mirrors sequential writes, but scan authority lives in the registry.
+        let json = serde_json::to_string(&snapshot).map_err(|_| {
             Error::internal("QW_CONFIG: Could not store the validated graph configuration")
         })?;
         let value = json.value(context)?;
-        self.registry.reserve_alias(
-            context,
+        self.registry.commit(
             self.provider.descriptor.id,
-            Some(snapshot.config.alias()),
+            expected_revision,
+            Arc::new(snapshot),
+            activate,
         )?;
         Ok(value)
     }
@@ -401,4 +479,102 @@ fn normalize_catalog(labels: DeclaredCatalog, kind_qualified: bool) -> Result<Gr
             Ok((label, fields))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        sync::{Barrier, atomic::AtomicBool},
+        thread,
+    };
+
+    struct FixtureBackend;
+    impl ReadBackend for FixtureBackend {}
+
+    fn fixture_provider(id: &'static str, option: &'static str) -> GraphProvider {
+        GraphProvider::new(
+            ProviderDescriptor {
+                id,
+                name: id,
+                option,
+                source: ProviderSource::RemoteEndpoint,
+                unknown_alias_error: None,
+                accepts_declared_catalog: false,
+                supports_timeout: true,
+                rewrite: ProviderRewrite::Disabled,
+            },
+            FixtureBackend,
+        )
+    }
+
+    fn fixture_snapshot(generation: u64, alias: &str) -> Arc<ConfigSnapshot> {
+        let config = remote::RemoteConfig::parse(
+            &serde_json::json!({
+                "alias": alias,
+                "endpoint": "https://fixture.invalid",
+                "database": "test",
+                "credential_ref": "test",
+                "timeout_ms": 1,
+                "max_response_bytes": 1,
+            })
+            .to_string(),
+        )
+        .unwrap();
+        Arc::new(ConfigSnapshot {
+            generation: GraphGeneration::remote(generation),
+            config: RegisteredConfig::Remote(config),
+            catalog: None,
+            observed_catalog: false,
+            single_pattern_row_bound: None,
+            populations: None,
+        })
+    }
+
+    #[test]
+    fn reset_invalidates_pending_registration_before_peer_claims_alias() {
+        let registry = ProviderRegistry::new(vec![
+            fixture_provider("first", "first_config"),
+            fixture_provider("second", "second_config"),
+        ])
+        .unwrap();
+        let prepared = Barrier::new(2);
+        let peer_registered = Barrier::new(2);
+        let stale_activated = AtomicBool::new(false);
+        let revision = registry.revision("first").unwrap();
+        let snapshot = fixture_snapshot(1, "Shared");
+        thread::scope(|scope| {
+            let pending = scope.spawn(|| {
+                prepared.wait();
+                peer_registered.wait();
+                registry.commit("first", revision, snapshot, || {
+                    stale_activated.store(true, Ordering::Relaxed);
+                    None
+                })
+            });
+            prepared.wait();
+            let reset = registry.reset("first", || None);
+            let competing = registry.revision("second").and_then(|revision| {
+                registry.commit("second", revision, fixture_snapshot(2, "sHARED"), || None)
+            });
+            peer_registered.wait();
+            reset.unwrap();
+            competing.unwrap();
+            let error = pending.join().unwrap().unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("registration changed during preparation")
+            );
+        });
+        assert!(!stale_activated.load(Ordering::Relaxed));
+        assert!(registry.snapshot("first").unwrap().is_none());
+        assert_eq!(
+            registry.snapshot("second").unwrap().unwrap().config.alias(),
+            "sHARED"
+        );
+        assert!(registry.check_generation("second", 2).unwrap());
+        registry.reset("second", || None).unwrap();
+        assert!(!registry.check_generation("second", 2).unwrap());
+    }
 }

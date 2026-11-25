@@ -66,13 +66,16 @@ pub enum GraphPopulations {
     ByEntity { nodes: u64, edges: u64 },
 }
 
+/// A retired native resource to drop outside the registry mutex.
+pub type RetiredRegistration = Box<dyn Send>;
+
 /// Resources prepared for a registration are published only after every
 /// configuration, file identity and alias check succeeds.
 pub struct PreparedRegistration<'a> {
     pub catalog: Option<GraphCatalog>,
     pub single_pattern_row_bound: Option<u64>,
     pub populations: Option<GraphPopulations>,
-    pub activate: Box<dyn FnOnce() + 'a>,
+    pub activate: Box<dyn FnOnce() -> Option<RetiredRegistration> + 'a>,
 }
 
 /// A backend that exclusively opens read-only database handles.
@@ -123,9 +126,11 @@ pub trait ReadBackend: Send + Sync {
         Vec::new()
     }
 
-    /// Publish the active registration after its metadata is captured. Readers that
-    /// already own their sessions remain valid when the registration changes.
-    fn set_generation(&self, _generation: Option<u64>) {}
+    /// Swap the active native cache owner without opening or dropping resources.
+    /// Readers that already own their sessions remain valid across registration changes.
+    fn set_generation(&self, _generation: Option<u64>) -> Option<RetiredRegistration> {
+        None
+    }
 
     /// Open a scan for an admitted graph generation. Stateless backends can
     /// keep implementing only `open_projected` or `open`.
@@ -568,7 +573,7 @@ struct BoundRead {
     provider: GraphProvider,
     watch: Option<RuntimeWatch>,
     params: Vec<(String, GraphParameter)>,
-    config: ConfigSnapshot,
+    config: Arc<ConfigSnapshot>,
     cypher: String,
     schema: Vec<ColumnSpec>,
 }
@@ -732,7 +737,7 @@ impl TableFunctionCallbacks for GraphQuery {
             ));
         }
         let language = GraphLanguage::parse(&dialect)?;
-        let (provider, config) = self.providers.resolve_alias(context, &alias)?;
+        let (provider, config) = self.providers.resolve_alias(&alias)?;
         let remote = provider.descriptor.source == ProviderSource::RemoteEndpoint;
         if remote
             && (!matches!(language, GraphLanguage::Cypher)
@@ -922,7 +927,7 @@ impl TableFunctionCallbacks for GraphQuery {
             capacity,
             bound.config.config.max_batch_bytes(),
             || {
-                self.check_scan_registration(context, bound)?;
+                self.check_scan_registration(bound)?;
                 let session = match &bound.config.config {
                     RegisteredConfig::Local(config) => {
                         let generation = &bound.config.generation;
@@ -959,7 +964,7 @@ impl TableFunctionCallbacks for GraphQuery {
                                 projection.schema(bound),
                             )
                             .map_err(backend_error)?;
-                        self.check_scan_registration(context, bound)?;
+                        self.check_scan_registration(bound)?;
                         remote::admit_remote(context)?;
                         session
                     }
@@ -983,19 +988,17 @@ impl TableFunctionCallbacks for GraphQuery {
 }
 
 impl GraphQuery {
-    fn check_scan_registration(&self, context: &Context, bound: &BoundRead) -> Result<()> {
-        let current = bound.provider.config(context)?;
-        if current.is_none_or(|c| c.generation.id() != bound.config.generation.id()) {
+    fn check_scan_registration(&self, bound: &BoundRead) -> Result<()> {
+        if !self
+            .providers
+            .check_generation(bound.provider.descriptor.id, bound.config.generation.id())?
+        {
             return Err(Error::invalid_input(format!(
                 "QW_CONFIG: {} configuration changed after binding",
                 bound.provider.descriptor.name
             )));
         }
-        self.providers.check_alias_available(
-            context,
-            bound.provider.descriptor.id,
-            bound.config.config.alias(),
-        )
+        Ok(())
     }
 }
 
@@ -1099,7 +1102,7 @@ pub fn register_query(
 impl TableFunctionCallbacks for ProviderRegistry {
     type BindData = ();
     type GlobalState = ();
-    type LocalState = usize;
+    type LocalState = (Vec<Option<String>>, usize);
 
     fn bind(
         &self,
@@ -1110,6 +1113,7 @@ impl TableFunctionCallbacks for ProviderRegistry {
         let text = String::logical_type(context)?;
         handle.add_result_column("provider_id", &text)?;
         handle.add_result_column("setting_name", &text)?;
+        handle.add_result_column("active_alias", &text)?;
         handle.set_cardinality(self.descriptors().len(), true)
     }
 
@@ -1119,21 +1123,21 @@ impl TableFunctionCallbacks for ProviderRegistry {
         _: &(),
         _: Option<&()>,
         _: InitColumnData<'_>,
-    ) -> Result<Option<usize>> {
-        Ok(Some(0))
+    ) -> Result<Option<Self::LocalState>> {
+        Ok(Some((self.active_aliases()?, 0)))
     }
 
     fn exec(
         &self,
         _: &Context,
         _: &(),
-        offset: Option<&mut usize>,
+        state: Option<&mut Self::LocalState>,
         _: Option<&()>,
         output: &mut DataChunk<'_>,
         _: ExecColumnInfo<'_>,
     ) -> Result<()> {
-        let offset =
-            offset.ok_or_else(|| Error::internal("qw_graph_providers: missing scan state"))?;
+        let (active_aliases, offset) =
+            state.ok_or_else(|| Error::internal("qw_graph_providers: missing scan state"))?;
         let descriptors = self.descriptors().skip(*offset).take(output.capacity()?);
         let len = descriptors.len();
         if len == 0 {
@@ -1141,6 +1145,10 @@ impl TableFunctionCallbacks for ProviderRegistry {
         }
         write_column::<String>(output, 0, descriptors.clone().map(|item| Some(item.id)))?;
         write_column::<String>(output, 1, descriptors.map(|item| Some(item.option)))?;
+        let aliases = active_aliases[*offset..*offset + len]
+            .iter()
+            .map(Option::as_deref);
+        write_column::<String>(output, 2, aliases)?;
         *offset += len;
         Ok(())
     }
