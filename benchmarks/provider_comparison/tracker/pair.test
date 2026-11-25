@@ -1,0 +1,34 @@
+# name: benchmarks/provider_comparison/tracker/pair.test
+# description: Check that both releases ran the same workers on the same machine in alternating order
+# group: [quack_weave]
+
+require json
+
+test-env QW_TRACKER_SNAPSHOT UNSET_QW_TRACKER_SNAPSHOT
+
+test-env QW_TRACKER_BASELINE UNSET_QW_TRACKER_BASELINE
+
+statement ok
+CREATE TEMP TABLE candidate AS FROM read_json_auto('{QW_TRACKER_SNAPSHOT}');
+
+statement ok
+CREATE TEMP TABLE baseline AS FROM read_json_auto('{QW_TRACKER_BASELINE}');
+
+query I
+SELECT count(*) FROM candidate c, baseline b
+WHERE c.pair_id = b.pair_id AND c.host_id = b.host_id AND c.id <> b.id
+  AND c.workspace_head <> b.workspace_head AND c.blocks = b.blocks AND c.runs = b.runs
+  AND c.fixture = b.fixture AND c.statements = b.statements AND c.expected = b.expected;
+----
+1
+
+query I
+WITH c AS (SELECT unnest(workers, recursive := false) AS w FROM candidate),
+     b AS (SELECT unnest(workers, recursive := false) AS w FROM baseline)
+SELECT count(*) FROM c FULL JOIN b ON
+    (c.w.block, c.w.provider, c.w.route) = (b.w.block, b.w.provider, b.w.route)
+WHERE c.w.block IS NULL OR b.w.block IS NULL
+   OR b.w.pair_position IS DISTINCT FROM b.w.block % 2
+   OR c.w.pair_position IS DISTINCT FROM 1 - b.w.block % 2;
+----
+0

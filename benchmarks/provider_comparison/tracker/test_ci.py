@@ -95,9 +95,13 @@ class TrackerCI(unittest.TestCase):
 
     def test_judge_displays_and_archives_the_same_tables_on_regression(self):
         previous = json.loads((HERE / "sf1.json").read_text())
+        previous["pair_id"] = "one-job"
+        selection = {"baseline_sha": previous["workspace_head"], "artifact_id": "17",
+                     "extension_sha256": previous["binaries"]["extension"]}
         current = deepcopy(previous)
         sha = "b" * 40
         current["workspace_head"] = sha
+        current["id"] = "candidate-run"
         slow = next(r for r in current["summary"] if r["case"] == "full_scan_aggregate")
         slow.update(p50_ms=slow["p50_ms"] * 2, p95_ms=slow["p95_ms"] * 2)
         with tempfile.TemporaryDirectory() as tmp:
@@ -105,12 +109,18 @@ class TrackerCI(unittest.TestCase):
             folder.mkdir()
             summary = Path(tmp) / "summary.md"
             (folder / "snapshot.json").write_text(json.dumps(current))
+            (folder / "baseline.json").write_text(json.dumps(previous))
+            selected = Path(tmp) / "selection.json"
+            selected.write_text(json.dumps(selection))
             env = {k: "fixture" for k in ("QW_RUNNER_CLASS", "QW_CPU", "QW_CORES", "QW_MEMORY")}
-            with (patch.dict(os.environ, {**env, "GITHUB_STEP_SUMMARY": str(summary)}, clear=True),
-                  patch.object(sys, "argv", ["ci.py", "judge", str(folder)]),
-                  patch.object(ci, "find_baseline", return_value=previous)):
+            env.update(GITHUB_STEP_SUMMARY=str(summary), HOST_ARTIFACT_ID="20",
+                       QW_DUCKDB_ARCHIVE_SHA256="d"*64, QW_RELEASE_ARTIFACT_ID="21")
+            with (patch.dict(os.environ, env, clear=True),
+                  patch.object(sys, "argv", ["ci.py", "judge", str(folder), "--selection", str(selected)])):
                 self.assertEqual(ci.main(), 1)
             report = summary.read_text()
+            self.assertIn("same runner", report)
+            self.assertEqual(report.count("Baseline p50 (ms)"), 2)
             self.assertIn("| Provider | Route | Workload | Samples |", report)
             self.assertIn("+100.0%", report)
             self.assertIn("600 warm samples", report)
@@ -118,11 +128,41 @@ class TrackerCI(unittest.TestCase):
                 self.assertEqual(report.count(f"| {r['provider']} | {r['route']} | {r['case']} | {r['n']} |"), 1)
             record = json.loads((folder / "record.json").read_text())
             base = f"main/{sha}/100-1/"
-            files = {base + name: (folder / name).read_bytes() for name in ("record.json", "snapshot.json")}
+            self.assertFalse((folder / "baseline.json").exists())
+            names = ("record.json", "snapshot.json")
+            entries = {f"{sha}/{name}": json.loads((folder / name).read_text()) for name in names}
+            files = dict(archive.records(pack(entries), "main", 100, 1, sha))
+            self.assertIn(base + "baseline.json", files)
+            for wrong in ("host_id", "pair_id", "tracker_sha256", "workspace_head", "binaries"):
+                corrupt = deepcopy(entries)
+                corrupt[f"{sha}/snapshot.json"]["paired_baseline_snapshot"][wrong] = (
+                    {"extension": "0"*64} if wrong == "binaries" else "other")
+                with self.subTest(wrong=wrong), self.assertRaises(ValueError):
+                    list(archive.records(pack(corrupt), "main", 100, 1, sha))
+            del entries[f"{sha}/snapshot.json"]["paired_baseline_snapshot"]
+            with self.assertRaises(ValueError):
+                list(archive.records(pack(entries), "main", 100, 1, sha))
             archive.add_reports(files)
             self.assertEqual(files[base + "README.md"].decode(), report)
             output = subprocess.check_output([sys.executable, HERE / "ci.py", "report", folder], text=True)
             self.assertEqual(output, report)
+
+    def test_no_replayable_release_seeds_without_a_cross_host_verdict(self):
+        old = json.loads((HERE / "sf1.json").read_text())
+        with tempfile.TemporaryDirectory() as tmp, patch.object(ci, "compatible_baselines", return_value=[old]):
+            selection = ci.select_pair(old, "a"*40, Path(tmp))
+        self.assertEqual(selection, {"unavailable_sha": old["workspace_head"]})
+        record = {"commit": old["workspace_head"], **ci.judge(old, None, 20, .25), **selection}
+        self.assertIn("artifact unavailable", ci.markdown_report(record, old))
+
+    def test_expired_nearest_release_uses_the_next_retained_attempt(self):
+        sample = json.loads((HERE / "sf1.json").read_text())
+        attempts = [{**sample, "actions_artifacts": {"release": artifact}} for artifact in ("1", "2")]
+        with (tempfile.TemporaryDirectory() as tmp,
+              patch.object(ci, "compatible_baselines", return_value=attempts),
+              patch("artifacts.restore_previous", side_effect=[None, Path(tmp)/"release"])):
+            selected = ci.select_pair(sample, None, Path(tmp))
+        self.assertEqual(selected["artifact_id"], "2")
 
     def test_reports_show_seed_and_missing_measurements(self):
         sample = json.loads((HERE / "sf1.json").read_text())
@@ -190,12 +230,13 @@ class TrackerCI(unittest.TestCase):
                 other = {**candidate, "ci_runner": {"cpu": "different"}}
                 archive.append(evidence(tip, "baseline", other, attempt=3), remote)
                 git("fetch", "-q", remote, f"{archive.REF}:{ci.HISTORY}")
+                self.assertIsNone(next(ci.compatible_baselines(sample, base), None))
                 candidate["fixture"]["files"]["social.rl"]["sha256"] = "regenerated"
-                self.assertEqual(ci.find_baseline(candidate, tip)["workspace_head"], base)
+                self.assertEqual(next(ci.compatible_baselines(candidate, tip), None)["workspace_head"], base)
                 for field in ("versions", "ci_runner"):
-                    self.assertIsNone(ci.find_baseline({**candidate, field: {}}, tip))
+                    self.assertIsNone(next(ci.compatible_baselines({**candidate, field: {}}, tip), None))
                 candidate["fixture"]["files"]["edges.csv"]["sha256"] = "different logical input"
-                self.assertIsNone(ci.find_baseline(candidate, tip))
+                self.assertIsNone(next(ci.compatible_baselines(candidate, tip), None))
 
     def test_latest_main_table_survives_late_publication_and_pr_runs(self):
         with tempfile.TemporaryDirectory() as tmp:

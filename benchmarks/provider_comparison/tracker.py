@@ -1,6 +1,7 @@
 """Verify and time standalone graph clients and QuackWeave hybrid queries on SF1."""
 import argparse
 from contextlib import ExitStack
+from copy import copy
 from datetime import datetime, timezone
 from hashlib import sha256
 from importlib.metadata import version
@@ -177,17 +178,25 @@ def publish(path, report):
         os.link(tmp.name, path)
 
 
+def release_metadata(a, common, binaries):
+    source_commit = subprocess.check_output(
+        ["git", "rev-parse", "--verify", "--end-of-options", a.source_revision + "^{commit}"],
+        cwd=a.source_checkout, text=True).strip()
+    return {**common, "workspace_head": source_commit, "binaries": {**binaries, "extension": run.digest(a.extension)}}
+
+
 def benchmark(a):
     supported_host = (platform.system(), platform.machine()) in {("Darwin", "arm64"), ("Linux", "aarch64")}
     if not supported_host or a.runs < 1 or a.blocks < 2 or a.blocks % 2 or a.timeout <= 0:
         raise ValueError("Use native ARM64 Linux or macOS, positive runs/worker timeout and an even number of blocks >= 2")
     cases = [name for name in CASES if not a.case or name in a.case]
     providers = sorted(set(a.provider or run.ENGINES))
-    started = datetime.now(timezone.utc)
-    run_id = f"{started:%Y%m%dT%H%M%SZ}-{uuid4().hex[:8]}"
-    path = a.out or HISTORY / (run_id + ".json")
-    if path.exists():
-        raise FileExistsError(f"Choose a new snapshot path: {path}")
+    pairing = (a.baseline_extension, a.baseline_revision, a.baseline_out)
+    supplied = [arg is not None for arg in pairing]
+    if any(supplied) and not all(supplied):
+        raise ValueError("Supply baseline extension, revision and output together")
+    if a.describe and (a.out or any(supplied)):
+        raise ValueError("Use --describe alone to write the candidate workload description")
     fixture = json.loads((a.fixture / "fixture.json").read_text())
     verify_fixture(a.fixture, fixture)
     oracle = run.oracle(a.fixture)
@@ -196,7 +205,7 @@ def benchmark(a):
     expected = {**oracle["expected"], "lookup_miss": run.signature([[]])}
     expected = {CASES[n][1]: expected[CASES[n][1]] for n in cases}
     routes = {k: [n for n in cases if n in group] for k, group in ROUTES.items()}
-    binaries = {"extension": run.digest(a.extension), "duckdb_library": run.digest(a.library)}
+    binaries = {"duckdb_library": run.digest(a.library)}
     if "relate" in providers and routes["direct_cypher"]:
         import relate._native
         if version("relate-db") != "1.2.0":
@@ -207,34 +216,68 @@ def benchmark(a):
         if version("ladybug") != "0.22.3":
             raise ValueError("The native Ladybug comparison requires ladybug==0.22.3")
         binaries["ladybug_driver"] = run.digest(Path(ladybug._lbug.__file__))
-    source_commit = subprocess.check_output(
-        ["git", "rev-parse", "--verify", "--end-of-options", a.source_revision + "^{commit}"],
-        cwd=a.source_checkout, text=True).strip()
-    report = {"protocol": PROTOCOL, "id": run_id, "started_utc": started.isoformat(),
+    common = {"protocol": PROTOCOL,
               "tracker_sha256": run.digest(Path(__file__)),
-              "workspace_head": source_commit,
               "platform": platform.platform(), "machine": platform.machine(),
               "host_id": sha256(platform.node().encode()).hexdigest()[:16],
               "versions": {"python": platform.python_version(), "duckdb": "2.0.1/8d78114e90",
                            "relate": "1.2.0", **{k: version(k) for k in ("ladybug", "pyarrow", "adbc-driver-manager", "numpy")}},
-              "binaries": binaries, "fixture": fixture, "edge_count": oracle["edges"], "duckdb_threads": 1,
+              "fixture": fixture, "edge_count": oracle["edges"], "duckdb_threads": 1,
               "blocks": a.blocks, "runs": a.runs, "expected": expected,
-              "statements": {n: CASES[n][0] for n in cases}, "watchlist": run.KEYS, "workers": []}
+              "statements": {n: CASES[n][0] for n in cases}, "watchlist": run.KEYS}
+    if a.describe:
+        description = release_metadata(a, common, binaries)
+        description["summary"] = [{"provider": provider, "route": route, "case": name}
+                                  for provider in providers for route in routes for name in routes[route]]
+        publish(a.describe, description)
+        return
+    releases = [a]
+    if all(supplied):
+        baseline = copy(a)
+        baseline.extension, baseline.source_revision, baseline.out = pairing
+        releases.insert(0, baseline)
+        common["pair_id"] = uuid4().hex
+    subjects = []
+    for release in releases:
+        started = datetime.now(timezone.utc)
+        run_id = f"{started:%Y%m%dT%H%M%SZ}-{uuid4().hex[:8]}"
+        path = release.out or HISTORY / (run_id + ".json")
+        if path.exists():
+            raise FileExistsError(f"Choose a new snapshot path: {path}")
+        report = release_metadata(release, common, binaries)
+        report.update(id=run_id, started_utc=started.isoformat(), workers=[])
+        subjects.append((release, path, report))
+    if len({path.resolve() for _, path, _ in subjects}) != len(subjects):
+        raise ValueError("Use distinct snapshot outputs for baseline and candidate")
     for block in range(a.blocks):
         order = 1 if block % 2 == 0 else -1
-        for provider in providers[::order]:
-            for route in list(routes)[::order]:
-                if routes[route]:
+        for position, (release, _, report) in enumerate(subjects[::order]):
+            for provider in providers[::order]:
+                for route in list(routes)[::order]:
+                    if not routes[route]:
+                        continue
                     try:
-                        worker = measure_worker(a, provider, route, block, routes[route], expected)
+                        worker = measure_worker(release, provider, route, block, routes[route], expected)
                     except (ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
-                        raise RuntimeError(f"{provider} {route}, block {block + 1}: {error}") from error
+                        raise RuntimeError(f"{report['workspace_head']} {provider} {route}, block {block + 1}: {error}") from error
+                    if "pair_id" in report:
+                        worker["pair_position"] = position
                     report["workers"].append(worker)
-                    print(f"Verified block {block + 1}/{a.blocks} {provider} {route}", flush=True)
+                    print(f"Verified block {block + 1}/{a.blocks} {report['workspace_head'][:12]} {provider} {route}", flush=True)
     verify_fixture(a.fixture, fixture)
-    report["summary"] = summarize(report["workers"])
-    report["finished_utc"] = datetime.now(timezone.utc).isoformat()
-    publish(path, report)
+    for _, _, report in subjects:
+        report["summary"] = summarize(report["workers"])
+        report["finished_utc"] = datetime.now(timezone.utc).isoformat()
+    with ExitStack() as rollback:
+        for _, path, report in subjects:
+            publish(path, report)
+            rollback.callback(path.unlink)
+        rollback.pop_all()
+    for _, path, report in subjects:
+        print_summary(path, report)
+
+
+def print_summary(path, report):
     print(path)
     print("provider\troute\tcase\tn\tp50_ms\tp95_ms\tqw_over_direct")
     for row in report["summary"]:
@@ -282,6 +325,10 @@ def main():
     measure.add_argument("--provider", action="append", choices=run.ENGINES)
     measure.add_argument("--case", action="append", choices=CASES)
     measure.add_argument("--out", type=Path, help="New JSON file (default: timestamped history)")
+    measure.add_argument("--describe", type=Path, help="Write candidate workload metadata before measuring")
+    measure.add_argument("--baseline-extension", type=Path, help="Verified baseline extension to alternate with the candidate")
+    measure.add_argument("--baseline-revision", help="Git revision of the baseline artifact")
+    measure.add_argument("--baseline-out", type=Path, help="New JSON file for the paired baseline measurements")
     measure.add_argument("--source-revision", default="HEAD", help="Git revision of the verified release artifact")
     measure.add_argument("--source-checkout", type=Path, default=run.ROOT,
                          help="Git checkout used to build the measured extension")

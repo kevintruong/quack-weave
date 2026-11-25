@@ -10,7 +10,7 @@ import tempfile
 import time
 import zipfile
 
-from ci import RESULTS, checked_sha, markdown_report
+from ci import RESULTS, checked_sha, markdown_report, verify_pair
 
 
 REF = "refs/heads/benchmark-history"
@@ -54,6 +54,13 @@ def records(archive, event, run_id, attempt, head):
         measured = record["status"] in {"baseline", "passed", "regression"}
         if measured != ("snapshot" in pair) or (measured and pair["snapshot"]["workspace_head"] != sha):
             raise ValueError("Benchmark snapshot and commit status disagree")
+        paired = "paired_baseline" in record
+        snapshot = pair.get("snapshot", {})
+        if paired != ("paired_baseline_snapshot" in snapshot) or paired != ("pair_id" in snapshot):
+            raise ValueError("Incomplete paired benchmark evidence")
+        if paired:
+            pair["baseline"] = snapshot.pop("paired_baseline_snapshot")
+            verify_pair(snapshot, pair["baseline"], {**record["paired_baseline"], "baseline_sha": record["baseline_sha"]})
         record.update(event=event, run_id=run_id, run_attempt=attempt, head_sha=head)
         for kind, obj in pair.items():
             name = f"{event}/{sha}/{run_id}-{attempt}/{kind}.json"
@@ -82,8 +89,10 @@ def add_reports(files):
         folder = path.removesuffix("record.json")
         record = json.loads(files[path])
         snapshot = files.get(folder + "snapshot.json")
+        baseline = files.get(folder + "baseline.json")
         try:
-            report = markdown_report(record, json.loads(snapshot) if snapshot else None)
+            report = markdown_report(record, json.loads(snapshot) if snapshot else None,
+                                     json.loads(baseline) if baseline else None)
         except (KeyError, TypeError, ValueError, ArithmeticError):
             # Keep the original evidence even when an older or invalid schema cannot render.
             report = (f"### Benchmark `{checked_sha(record['commit'])[:12]}` · {record['status']}\n\n"

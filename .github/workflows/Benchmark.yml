@@ -10,6 +10,7 @@ on:
       native-artifact: {type: string, required: true}
 permissions:
   contents: read
+  actions: read
 
 jobs:
   historical:
@@ -132,6 +133,7 @@ jobs:
           bash benchmarks/provider_comparison/tracker/activate_host.sh
           echo "QW_BUILD_TOOLCHAIN=$(cat build/native/toolchain.txt)" >> "$GITHUB_ENV"
           python -m pip install --only-binary=:all: --require-hashes -r benchmarks/provider_comparison/tracker/requirements.txt
+          python -B -m unittest discover -s benchmarks/provider_comparison -p 'test_tracker_pair.py'
       - uses: actions/cache@v4
         id: fixture
         with:
@@ -144,6 +146,8 @@ jobs:
             https://huggingface.co/datasets/ladybugdb/lsqb-sf1/resolve/8283a51fa16c4d9fbc3c53ebde66252f7a41f3f6/lbdb/sf1.lbdb
           python benchmarks/provider_comparison/prepare.py --modulus 1 --source "$RUNNER_TEMP/sf1.lbdb"
       - name: Measure, verify and compare each commit
+        env:
+          QW_ARTIFACT_TOKEN: ${{ github.token }}
         run: |
           fixture=build/perf/provider-comparison/mod1/edges.csv
           echo "4d7204dd0c29cfb2f058a6bb4f870dc5805f5aa77bff2a4e8e29a86ecfb7ba2b  $fixture" | shasum -a 256 --check
