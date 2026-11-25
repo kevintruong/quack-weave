@@ -39,7 +39,11 @@ mod parameters;
 mod projection;
 use projection::ScanProjection;
 mod providers;
-pub use providers::{GraphProvider, ProviderDescriptor, ProviderRegistry, ProviderRewrite};
+pub use providers::{
+    GraphProvider, ProviderDescriptor, ProviderRegistry, ProviderRewrite, ProviderSource,
+};
+mod remote;
+pub use remote::{RemoteSource, ScanLimits};
 mod runtime_watch;
 use runtime_watch::{MAX_KEYS, RuntimeWatch};
 
@@ -144,9 +148,26 @@ pub trait ReadBackend: Send + Sync {
 
     fn open(
         &self,
-        path: &Path,
-        timeout_ms: Option<u64>,
-    ) -> std::result::Result<Box<dyn ReadSession>, BackendError>;
+        _path: &Path,
+        _timeout_ms: Option<u64>,
+    ) -> std::result::Result<Box<dyn ReadSession>, BackendError> {
+        Err(BackendError::Open)
+    }
+
+    /// Check the connector-specific endpoint and credential reference without network I/O.
+    fn validate_remote(&self, _source: &RemoteSource) -> std::result::Result<(), BackendError> {
+        Err(BackendError::RemoteConfig)
+    }
+
+    /// Construct the session locally. Submit the remote read only in `execute_with_params`.
+    fn open_remote(
+        &self,
+        _source: &RemoteSource,
+        _limits: &ScanLimits,
+        _schema: &[ColumnSpec],
+    ) -> std::result::Result<Box<dyn ReadSession>, BackendError> {
+        Err(BackendError::Open)
+    }
 }
 
 pub trait ReadSession: Send {
@@ -186,6 +207,10 @@ pub enum BackendError {
     Arrow,
     BatchBudget,
     Timeout,
+    RemoteConfig,
+    RemoteAuth,
+    RemoteTransport,
+    ResponseBudget,
 }
 
 fn backend_error(error: BackendError) -> Error {
@@ -199,6 +224,12 @@ fn backend_error(error: BackendError) -> Error {
         BackendError::Arrow => "QW_ARROW: Graph result batch could not be decoded",
         BackendError::BatchBudget => "QW_BATCH_BUDGET: Graph result batch exceeds max_batch_bytes",
         BackendError::Timeout => "QW_TIMEOUT: Graph query timed out",
+        BackendError::RemoteConfig => "QW_CONFIG: Invalid or unapproved remote graph endpoint",
+        BackendError::RemoteAuth => "QW_AUTH: Remote graph credentials unavailable or rejected",
+        BackendError::RemoteTransport => "QW_TRANSPORT: Remote graph request failed",
+        BackendError::ResponseBudget => {
+            "QW_RESPONSE_BUDGET: Remote graph response exceeds max_response_bytes"
+        }
     };
     Error::invalid_input(message)
 }
@@ -390,15 +421,28 @@ fn parse_config(text: &str) -> Result<ConfigInput> {
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
 pub struct GraphGeneration {
     id: u64,
-    length: u64,
-    modified_ns: i128,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    length: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    modified_ns: Option<i128>,
     #[cfg(unix)]
-    device_inode: (u64, u64),
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    device_inode: Option<(u64, u64)>,
 }
 
 impl GraphGeneration {
     pub fn id(&self) -> u64 {
         self.id
+    }
+
+    fn remote(id: u64) -> Self {
+        Self {
+            id,
+            length: None,
+            modified_ns: None,
+            #[cfg(unix)]
+            device_inode: None,
+        }
     }
 
     pub fn capture(id: u64, path: &Path) -> Result<Self> {
@@ -415,12 +459,12 @@ impl GraphGeneration {
         };
         Ok(Self {
             id,
-            length: metadata.len(),
-            modified_ns,
+            length: Some(metadata.len()),
+            modified_ns: Some(modified_ns),
             #[cfg(unix)]
             device_inode: {
                 use std::os::unix::fs::MetadataExt;
-                (metadata.dev(), metadata.ino())
+                Some((metadata.dev(), metadata.ino()))
             },
         })
     }
@@ -436,9 +480,39 @@ impl GraphGeneration {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+enum RegisteredConfig {
+    Local(ConfigInput),
+    Remote(remote::RemoteConfig),
+}
+
+impl RegisteredConfig {
+    fn alias(&self) -> &str {
+        match self {
+            Self::Local(config) => &config.alias,
+            Self::Remote(config) => &config.alias,
+        }
+    }
+
+    fn max_batch_bytes(&self) -> Option<usize> {
+        match self {
+            Self::Local(config) => config.max_batch_bytes,
+            Self::Remote(config) => config.max_batch_bytes,
+        }
+    }
+
+    fn has_resource_limit(&self) -> bool {
+        match self {
+            Self::Local(config) => config.has_resource_limit(),
+            Self::Remote(_) => true,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 struct ConfigSnapshot {
     generation: GraphGeneration,
-    config: ConfigInput,
+    config: RegisteredConfig,
     #[serde(default)]
     catalog: Option<GraphCatalog>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -657,6 +731,14 @@ impl TableFunctionCallbacks for GraphQuery {
         }
         let language = GraphLanguage::parse(&dialect)?;
         let (provider, config) = self.providers.resolve_alias(context, &alias)?;
+        if provider.descriptor.source == ProviderSource::RemoteEndpoint
+            && (!matches!(language, GraphLanguage::Cypher)
+                || self.kind != GraphQueryKind::DeclaredSchema)
+        {
+            return Err(Error::invalid_input(
+                "QW_ARGUMENT: Remote graph reads require qw_query with an explicit Cypher schema",
+            ));
+        }
         let backend = &provider.backend;
         let mut watch = None;
         if provider.descriptor.rewrite == ProviderRewrite::LabelCatalog
@@ -820,39 +902,50 @@ impl TableFunctionCallbacks for GraphQuery {
         let Some(batch) = scan.next(
             projection.schema(bound),
             capacity,
-            bound.config.config.max_batch_bytes,
+            bound.config.config.max_batch_bytes(),
             || {
-                let current = bound.provider.config(context)?;
-                if current.is_none_or(|c| c.generation.id != bound.config.generation.id) {
-                    return Err(Error::invalid_input(format!(
-                        "QW_CONFIG: {} configuration changed after binding",
-                        bound.provider.descriptor.name
-                    )));
-                }
-                self.providers.check_alias_available(
-                    context,
-                    bound.provider.descriptor.id,
-                    &bound.config.config.alias,
-                )?;
-                let path = admit_local_path(context, &bound.config.config.path)?;
-                if path != bound.config.config.path {
-                    return Err(Error::invalid_input(format!(
-                        "QW_ACCESS: Configured {} path changed after binding",
-                        bound.provider.descriptor.name
-                    )));
-                }
-                bound.config.generation.validate(Path::new(&path))?;
-                let session = bound
-                    .provider
-                    .backend
-                    .open_for_generation(
-                        Path::new(&path),
-                        bound.config.config.timeout_ms,
-                        projection.schema(bound),
-                        &bound.config.generation,
-                    )
-                    .map_err(backend_error)?;
-                bound.config.generation.validate(Path::new(&path))?;
+                self.check_scan_registration(context, bound)?;
+                let session = match &bound.config.config {
+                    RegisteredConfig::Local(config) => {
+                        let generation = &bound.config.generation;
+                        let path = admit_local_path(context, &config.path)?;
+                        if path != config.path {
+                            return Err(Error::invalid_input(format!(
+                                "QW_ACCESS: Configured {} path changed after binding",
+                                bound.provider.descriptor.name
+                            )));
+                        }
+                        let path = Path::new(&path);
+                        generation.validate(path)?;
+                        let session = bound
+                            .provider
+                            .backend
+                            .open_for_generation(
+                                path,
+                                config.timeout_ms,
+                                projection.schema(bound),
+                                generation,
+                            )
+                            .map_err(backend_error)?;
+                        generation.validate(path)?;
+                        session
+                    }
+                    RegisteredConfig::Remote(config) => {
+                        remote::admit_remote(context)?;
+                        let session = bound
+                            .provider
+                            .backend
+                            .open_remote(
+                                &config.source(),
+                                &config.limits(),
+                                projection.schema(bound),
+                            )
+                            .map_err(backend_error)?;
+                        self.check_scan_registration(context, bound)?;
+                        remote::admit_remote(context)?;
+                        session
+                    }
+                };
                 session
                     .execute_with_params(projection.query(bound), &bound.params)
                     .map_err(backend_error)
@@ -871,6 +964,23 @@ impl TableFunctionCallbacks for GraphQuery {
     }
 }
 
+impl GraphQuery {
+    fn check_scan_registration(&self, context: &Context, bound: &BoundRead) -> Result<()> {
+        let current = bound.provider.config(context)?;
+        if current.is_none_or(|c| c.generation.id() != bound.config.generation.id()) {
+            return Err(Error::invalid_input(format!(
+                "QW_CONFIG: {} configuration changed after binding",
+                bound.provider.descriptor.name
+            )));
+        }
+        self.providers.check_alias_available(
+            context,
+            bound.provider.descriptor.id,
+            bound.config.config.alias(),
+        )
+    }
+}
+
 /// Install the graph queries and settings for the providers enabled by the native extension.
 pub fn register_query(
     extension: &Extension,
@@ -878,6 +988,7 @@ pub fn register_query(
     gql_parser: Option<GqlParser>,
 ) -> Result<ProviderRegistry> {
     let providers = ProviderRegistry::new(providers)?;
+    remote::register(extension)?;
     providers.register_options(extension)?;
     TableFunctionBuilder::new(
         "qw_graph_providers",

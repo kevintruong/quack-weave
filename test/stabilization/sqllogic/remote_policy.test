@@ -1,0 +1,48 @@
+# name: test/stabilization/sqllogic/remote_policy.test
+# description: Guard the remote host policy independently of provider registration
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+# case: remote_policy.host_access Remote scans require a global opt in and host permission
+statement ok
+LOAD '{QW_EXT}';
+
+query T
+SELECT current_setting('qw_enable_remote_graphs')::VARCHAR;
+----
+false
+
+statement error
+SET SESSION qw_enable_remote_graphs = true;
+----
+QW_CONFIG: Use SET GLOBAL for qw_enable_remote_graphs
+
+statement ok
+SET GLOBAL qw_enable_remote_graphs = true;
+
+query T
+SELECT current_setting('qw_enable_remote_graphs')::VARCHAR;
+----
+true
+
+statement ok
+RESET GLOBAL qw_enable_remote_graphs;
+
+query T
+SELECT current_setting('qw_enable_remote_graphs')::VARCHAR;
+----
+false
+
+statement ok
+SET enable_external_access = false;
+
+statement error
+SET GLOBAL qw_enable_remote_graphs = true;
+----
+QW_ACCESS: Remote graph reads require DuckDB external access
+
+query T
+SELECT current_setting('qw_enable_remote_graphs')::VARCHAR;
+----
+false

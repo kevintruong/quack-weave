@@ -16,7 +16,7 @@ use duckdb_neo::{
 
 use super::{
     CONFIG_GENERATION, ConfigSnapshot, GraphCatalog, GraphGeneration, ReadBackend,
-    admit_local_path, backend_error, is_identifier, parse_config,
+    RegisteredConfig, admit_local_path, backend_error, is_identifier, parse_config, remote,
 };
 
 /// Describes the catalog evidence needed to rewrite a graph read.
@@ -27,12 +27,20 @@ pub enum ProviderRewrite {
     ObservedCatalog,
 }
 
+/// Resource class whose host authorization applies to the provider.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProviderSource {
+    LocalFile,
+    RemoteEndpoint,
+}
+
 /// Native-supplied identity, option name, and planner capabilities.
 #[derive(Clone, Copy)]
 pub struct ProviderDescriptor {
     pub id: &'static str,
     pub name: &'static str,
     pub option: &'static str,
+    pub source: ProviderSource,
     pub unknown_alias_error: Option<&'static str>,
     pub accepts_declared_catalog: bool,
     pub supports_timeout: bool,
@@ -156,7 +164,7 @@ impl ProviderRegistry {
             };
             configured += 1;
             unknown_alias_error = provider.descriptor.unknown_alias_error;
-            if snapshot.config.alias.eq_ignore_ascii_case(alias)
+            if snapshot.config.alias().eq_ignore_ascii_case(alias)
                 && matched.replace((provider, snapshot)).is_some()
             {
                 return Err(alias_collision());
@@ -185,7 +193,7 @@ impl ProviderRegistry {
         {
             if other
                 .config(context)?
-                .is_some_and(|snapshot| snapshot.config.alias.eq_ignore_ascii_case(alias))
+                .is_some_and(|snapshot| snapshot.config.alias().eq_ignore_ascii_case(alias))
             {
                 return Err(alias_collision());
             }
@@ -248,7 +256,27 @@ impl CustomOptionCallbacks for GraphConfig {
             backend.set_generation(None);
             return Ok(value);
         }
-        let text = String::from_value(&value)?
+        let value = String::from_value(&value)?;
+        if descriptor.source == ProviderSource::RemoteEndpoint {
+            let text = value.ok_or_else(|| {
+                Error::invalid_input("QW_CONFIG: Expected remote graph configuration")
+            })?;
+            let config = remote::RemoteConfig::parse(&text)?;
+            remote::admit_remote(context)?;
+            backend
+                .validate_remote(&config.source())
+                .map_err(backend_error)?;
+            let snapshot = ConfigSnapshot {
+                generation: GraphGeneration::remote(next_generation()?),
+                config: RegisteredConfig::Remote(config),
+                catalog: None,
+                observed_catalog: false,
+                single_pattern_row_bound: None,
+                populations: None,
+            };
+            return self.publish(context, &snapshot);
+        }
+        let text = value
             .ok_or_else(|| Error::invalid_input("QW_CONFIG: Expected JSON with alias and path"))?;
         let mut config = parse_config(&text)?;
         if !descriptor.accepts_declared_catalog && config.catalog.is_some() {
@@ -266,9 +294,7 @@ impl CustomOptionCallbacks for GraphConfig {
         let declared = config.catalog.take().map(normalize_catalog).transpose()?;
         config.path = admit_local_path(context, &config.path)?;
         let path = Path::new(&config.path);
-        let generation = CONFIG_GENERATION
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_add(1))
-            .map_err(|_| Error::internal("QW_CONFIG: Configuration generation exhausted"))?;
+        let generation = next_generation()?;
         let registered = GraphGeneration::capture(generation, path)?;
         let prepared = backend
             .prepare_registration(path, declared.as_ref(), generation)
@@ -281,21 +307,37 @@ impl CustomOptionCallbacks for GraphConfig {
                 .is_some_and(|catalog| !catalog.is_empty());
         let snapshot = ConfigSnapshot {
             generation: registered,
-            config,
+            config: RegisteredConfig::Local(config),
             catalog: declared.or(prepared.catalog),
             observed_catalog,
             single_pattern_row_bound: prepared.single_pattern_row_bound,
             populations: prepared.populations,
         };
-        let json = serde_json::to_string(&snapshot).map_err(|_| {
-            Error::internal("QW_CONFIG: Could not store the validated graph configuration")
-        })?;
-        let value = json.value(context)?;
-        self.registry
-            .reserve_alias(context, descriptor.id, Some(&snapshot.config.alias))?;
+        let value = self.publish(context, &snapshot)?;
         (prepared.activate)();
         Ok(value)
     }
+}
+
+impl GraphConfig {
+    fn publish(&self, context: &Context, snapshot: &ConfigSnapshot) -> Result<Value> {
+        let json = serde_json::to_string(snapshot).map_err(|_| {
+            Error::internal("QW_CONFIG: Could not store the validated graph configuration")
+        })?;
+        let value = json.value(context)?;
+        self.registry.reserve_alias(
+            context,
+            self.provider.descriptor.id,
+            Some(snapshot.config.alias()),
+        )?;
+        Ok(value)
+    }
+}
+
+fn next_generation() -> Result<u64> {
+    CONFIG_GENERATION
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| v.checked_add(1))
+        .map_err(|_| Error::internal("QW_CONFIG: Configuration generation exhausted"))
 }
 
 fn normalize_catalog(labels: BTreeMap<String, BTreeMap<String, String>>) -> Result<GraphCatalog> {

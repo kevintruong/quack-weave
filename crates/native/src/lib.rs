@@ -2,7 +2,7 @@ use duckdb_neo::{Result, duckdb_entrypoint_c_api_v2, extension::Extension};
 
 #[cfg(not(feature = "template-compat"))]
 use rusty_quack_core::qw_query::{
-    GqlParser, GraphProvider, ProviderDescriptor, ProviderRewrite, register_query,
+    GqlParser, GraphProvider, ProviderDescriptor, ProviderRewrite, ProviderSource, register_query,
 };
 
 #[cfg(all(feature = "gql", not(feature = "template-compat")))]
@@ -32,6 +32,7 @@ pub fn entrypoint(extension: &Extension) -> Result<()> {
             id: "ladybug",
             name: "Ladybug",
             option: "qw_ladybug_config",
+            source: ProviderSource::LocalFile,
             unknown_alias_error: Some("QW_CONFIG: Unknown Ladybug graph alias"),
             accepts_declared_catalog: false,
             supports_timeout: true,
@@ -47,6 +48,7 @@ pub fn entrypoint(extension: &Extension) -> Result<()> {
                 id: "relate",
                 name: "RelateDB",
                 option: "qw_relate_config",
+                source: ProviderSource::LocalFile,
                 unknown_alias_error: None,
                 accepts_declared_catalog: true,
                 supports_timeout: false,
