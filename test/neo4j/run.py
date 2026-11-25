@@ -21,9 +21,12 @@ from run_sqllogictest import PIN_PROBE_SQL, report_artifact, run_cases
 
 USERNAME = "fixture-user"
 PASSWORD = "fixture-password"
-AUTHORIZATION = "Basic " + base64.b64encode(f"{USERNAME}:{PASSWORD}".encode()).decode()
 MEDIA_TYPE = "application/vnd.neo4j.query.v1.2"
 DATA_PATH = "/db/neo4j/query/v2"
+
+
+def basic_authorization(username, password):
+    return "Basic " + base64.b64encode(f"{username}:{password}".encode()).decode()
 
 
 def rows(fields, values):
@@ -57,6 +60,25 @@ RESPONSES = {
                                           "message": "Synthetic failure for SQLLogicTest"}]},
     "RETURN 1 AS wrong_type": rows(["wrong_type"], [[scalar("String", "1")]]),
     "RETURN 'large' AS oversized": rows(["oversized"], [[scalar("String", "x" * 4096)]]),
+}
+
+
+LEGACY_AUTH = basic_authorization(USERNAME, PASSWORD)
+MANAGED_AUTH = basic_authorization("managed-user", "managed-test-password")
+ROTATED_AUTH = basic_authorization("managed-user", "managed-rotated-password")
+PEER_AUTH = basic_authorization("peer-user", "peer-test-password")
+DENIAL_RESPONSE = {"errors": [{"message": "managed-user managed-test-password"}]}
+
+# Keying responses by the full header detects a stale header after secret rotation
+# and verifies that two connections can use different credentials for one graph.
+REQUESTS = {
+    **{(query, LEGACY_AUTH): (202, response, 1) for query, response in RESPONSES.items()},
+    ("RETURN 1 AS id", MANAGED_AUTH): (202, rows(["id"], [[scalar("Integer", "11")]]), 2),
+    ("RETURN 1 AS id", ROTATED_AUTH): (202, rows(["id"], [[scalar("Integer", "22")]]), 1),
+    ("RETURN 1 AS id", PEER_AUTH): (202, rows(["id"], [[scalar("Integer", "33")]]), 2),
+    (HYBRID_QUERY, MANAGED_AUTH): (202, RESPONSES[HYBRID_QUERY], 1),
+    ("RETURN 1 AS unauthorized", MANAGED_AUTH): (401, DENIAL_RESPONSE, 1),
+    ("RETURN 1 AS forbidden", MANAGED_AUTH): (403, DENIAL_RESPONSE, 1),
 }
 
 
@@ -107,8 +129,8 @@ def main():
             self.reject("expected POST")
 
         def do_POST(self):
-            if self.path != DATA_PATH or self.headers.get("Authorization") != AUTHORIZATION:
-                self.reject("wrong path or test authorization")
+            if self.path != DATA_PATH:
+                self.reject("wrong path")
                 return
             if self.headers.get("Accept") != MEDIA_TYPE:
                 self.reject("missing Typed JSON Accept header")
@@ -122,13 +144,14 @@ def main():
                 expected = {"id": scalar("Integer", "9007199254740993")} if statement == BINDING_QUERY else {}
                 if request.get("parameters", {}) != expected:
                     raise ValueError("unexpected parameters")
-                response = RESPONSES[statement]
+                key = (statement, self.headers.get("Authorization"))
+                status, response, _ = REQUESTS[key]
             except (AttributeError, KeyError, TypeError, ValueError):
-                self.reject("unexpected query request")
+                self.reject("unexpected query or test authorization")
                 return
-            seen[statement] += 1
+            seen[key] += 1
             payload = json.dumps(response, separators=(",", ":")).encode()
-            self.send_response(202)
+            self.send_response(status)
             self.send_header("Content-Type", MEDIA_TYPE)
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
@@ -158,10 +181,11 @@ def main():
                 server.shutdown()
                 server_thread.join()
 
-        if unexpected or seen != Counter(dict.fromkeys(RESPONSES, 1)):
+        expected_traffic = Counter({key: count for key, (_, _, count) in REQUESTS.items()})
+        if unexpected or seen != expected_traffic:
             raise AssertionError(
-                f"Unexpected fixture traffic: {unexpected}; expected {len(RESPONSES)} requests, "
-                f"saw {sum(seen.values())}"
+                f"Unexpected fixture traffic: {unexpected}; expected {sum(expected_traffic.values())} "
+                f"requests with specific test credentials, saw {sum(seen.values())}"
             )
 
 

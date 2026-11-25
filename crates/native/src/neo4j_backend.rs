@@ -6,14 +6,15 @@ use std::{
 };
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use duckdb_neo::connection::Context;
 use rusty_quack_core::qw_query::{
-    BackendError, BatchReader, ColumnSpec, GraphParameter, ReadBackend, ReadSession, RemoteSource,
-    ScanLimits,
+    BackendError, BatchReader, ColumnSpec, GraphParameter, ReadBackend, ReadSession,
+    RemoteCredential, RemoteSource, ScanLimits,
 };
 use serde_json::{Map, Value, json};
 use ureq::http::header::{ACCEPT, ACCEPT_ENCODING, AUTHORIZATION, CONTENT_TYPE, HeaderValue};
 
-use crate::cypher_read::admit;
+use crate::{cypher_read::admit, neo4j_secret};
 
 mod rows;
 
@@ -22,26 +23,18 @@ const AURA_DOMAIN: &str = ".databases.neo4j.io";
 
 pub(crate) struct Neo4jBackend;
 
-enum EndpointPolicy {
-    Aura,
+#[derive(Debug, PartialEq, Eq)]
+enum Origin {
+    Aura(String),
     #[cfg(feature = "neo4j-test-fixture")]
-    Fixture,
+    Fixture(u16),
 }
 
-struct Endpoint {
-    query_url: String,
-    credential_prefix: String,
-    policy: EndpointPolicy,
-}
-
-impl Endpoint {
-    fn new(source: &RemoteSource) -> Result<Self, BackendError> {
-        let authority = source
-            .endpoint
-            .strip_prefix("https://")
-            .ok_or(BackendError::RemoteConfig)?;
+impl Origin {
+    fn parse(value: &str) -> Option<Self> {
+        let authority = value.strip_prefix("https://")?;
         let host = authority.strip_suffix(":443").unwrap_or(authority);
-        let policy = if host.strip_suffix(AURA_DOMAIN).is_some_and(|instance| {
+        if host.strip_suffix(AURA_DOMAIN).is_some_and(|instance| {
             !instance.is_empty()
                 && !instance.starts_with('-')
                 && !instance.ends_with('-')
@@ -49,24 +42,69 @@ impl Endpoint {
                     .bytes()
                     .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
         }) {
-            EndpointPolicy::Aura
-        } else {
-            #[cfg(feature = "neo4j-test-fixture")]
-            {
-                if source.credential_ref != "fixture"
-                    || authority
-                        .strip_prefix("127.0.0.1:")
-                        .and_then(|port| port.parse::<u16>().ok())
-                        .is_none_or(|port| port == 0)
-                {
-                    return Err(BackendError::RemoteConfig);
-                }
-                EndpointPolicy::Fixture
-            }
-            #[cfg(not(feature = "neo4j-test-fixture"))]
-            return Err(BackendError::RemoteConfig);
-        };
+            return Some(Self::Aura(host.to_owned()));
+        }
+        #[cfg(feature = "neo4j-test-fixture")]
+        if let Some(port) = authority.strip_prefix("127.0.0.1:")
+            && port.bytes().all(|byte| byte.is_ascii_digit())
+            && let Ok(port) = port.parse::<u16>()
+            && port != 0
+        {
+            return Some(Self::Fixture(port));
+        }
+        None
+    }
+}
 
+enum CredentialReference<'a> {
+    Environment(String),
+    Secret(&'a str),
+}
+
+enum Authorization {
+    Environment(String),
+    Secret(HeaderValue),
+}
+
+impl Authorization {
+    fn header(self) -> Result<HeaderValue, BackendError> {
+        match self {
+            Self::Environment(prefix) => {
+                let read = |name| {
+                    env::var(format!("{prefix}_{name}"))
+                        .ok()
+                        .filter(|value| !value.is_empty())
+                        .ok_or(BackendError::RemoteAuth)
+                };
+                let username = read("USERNAME")?;
+                if username.contains(':') {
+                    return Err(BackendError::RemoteAuth);
+                }
+                basic_authorization(&username, &read("PASSWORD")?)
+            }
+            Self::Secret(header) => Ok(header),
+        }
+    }
+}
+
+fn basic_authorization(username: &str, password: &str) -> Result<HeaderValue, BackendError> {
+    let mut header = HeaderValue::from_str(&format!(
+        "Basic {}",
+        STANDARD.encode(format!("{username}:{password}"))
+    ))
+    .map_err(|_| BackendError::RemoteAuth)?;
+    header.set_sensitive(true);
+    Ok(header)
+}
+
+struct Endpoint {
+    query_url: String,
+    origin: Origin,
+}
+
+impl Endpoint {
+    fn configured(source: &RemoteSource) -> Result<(Self, CredentialReference<'_>), BackendError> {
+        let origin = Origin::parse(&source.endpoint).ok_or(BackendError::RemoteConfig)?;
         if !source
             .database
             .starts_with(|c: char| c.is_ascii_alphanumeric())
@@ -75,49 +113,63 @@ impl Endpoint {
                 .database
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
-            || source.credential_ref.is_empty()
-            || !source
-                .credential_ref
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'_')
         {
             return Err(BackendError::RemoteConfig);
         }
-        let credential_prefix = format!("QW_NEO4J_{}", source.credential_ref.to_ascii_uppercase());
-        // Pin each host-supplied credential reference to an exact origin before lookup or send.
-        if env::var(format!("{credential_prefix}_ENDPOINT"))
-            .ok()
-            .as_deref()
-            != Some(source.endpoint.as_str())
-        {
-            return Err(BackendError::RemoteConfig);
-        }
-        Ok(Self {
-            query_url: format!("{}/db/{}/query/v2", source.endpoint, source.database),
-            credential_prefix,
-            policy,
-        })
+        let credential = match &source.credential {
+            RemoteCredential::Environment(reference) => {
+                #[cfg(feature = "neo4j-test-fixture")]
+                if matches!(origin, Origin::Fixture(_)) && reference != "fixture" {
+                    return Err(BackendError::RemoteConfig);
+                }
+                if reference.is_empty()
+                    || !reference
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+                {
+                    return Err(BackendError::RemoteConfig);
+                }
+                let prefix = format!("QW_NEO4J_{}", reference.to_ascii_uppercase());
+                // Host-supplied references retain their exact environment origin pin.
+                if env::var(format!("{prefix}_ENDPOINT")).ok().as_deref()
+                    != Some(source.endpoint.as_str())
+                {
+                    return Err(BackendError::RemoteConfig);
+                }
+                CredentialReference::Environment(prefix)
+            }
+            RemoteCredential::Secret(name) => {
+                #[cfg(feature = "neo4j-test-fixture")]
+                if matches!(origin, Origin::Fixture(_))
+                    && env::var("QW_NEO4J_FIXTURE_ENDPOINT").ok().as_deref()
+                        != Some(source.endpoint.as_str())
+                {
+                    return Err(BackendError::RemoteConfig);
+                }
+                CredentialReference::Secret(name)
+            }
+        };
+        Ok((
+            Self {
+                query_url: format!("{}/db/{}/query/v2", source.endpoint, source.database),
+                origin,
+            },
+            credential,
+        ))
     }
 
-    fn authorization(&self) -> Result<HeaderValue, BackendError> {
-        let read_credential = |name| {
-            env::var(format!("{}_{name}", self.credential_prefix))
-                .ok()
-                .filter(|value| !value.is_empty())
-                .ok_or(BackendError::RemoteAuth)
-        };
-        let user = read_credential("USERNAME")?;
-        if user.contains(':') {
-            return Err(BackendError::RemoteAuth);
-        }
-        let password = read_credential("PASSWORD")?;
-        let mut header = HeaderValue::from_str(&format!(
-            "Basic {}",
-            STANDARD.encode(format!("{user}:{password}"))
-        ))
-        .map_err(|_| BackendError::RemoteAuth)?;
-        header.set_sensitive(true);
-        Ok(header)
+    fn secret_authorization(
+        &self,
+        context: &Context,
+        name: &str,
+    ) -> Result<HeaderValue, BackendError> {
+        neo4j_secret::with_credentials(context, name, |origin, username, password| {
+            if Origin::parse(origin).as_ref() != Some(&self.origin) || username.contains(':') {
+                return None;
+            }
+            basic_authorization(username, password).ok()
+        })
+        .ok_or(BackendError::RemoteAuth)
     }
 
     fn agent(&self, timeout: Duration) -> Result<ureq::Agent, BackendError> {
@@ -127,10 +179,10 @@ impl Endpoint {
             .max_redirects(0)
             .http_status_as_error(false)
             .timeout_global(Some(timeout));
-        let config = match self.policy {
-            EndpointPolicy::Aura => config,
+        let config = match self.origin {
+            Origin::Aura(_) => config,
             #[cfg(feature = "neo4j-test-fixture")]
-            EndpointPolicy::Fixture => {
+            Origin::Fixture(_) => {
                 use ureq::tls::{Certificate, RootCerts, TlsConfig};
                 let path = env::var_os("QW_NEO4J_FIXTURE_CA").ok_or(BackendError::RemoteConfig)?;
                 let pem = std::fs::read(path).map_err(|_| BackendError::RemoteConfig)?;
@@ -148,17 +200,26 @@ impl Endpoint {
 
 impl ReadBackend for Neo4jBackend {
     fn validate_remote(&self, source: &RemoteSource) -> Result<(), BackendError> {
-        Endpoint::new(source).map(|_| ())
+        Endpoint::configured(source).map(|_| ())
     }
 
     fn open_remote(
         &self,
+        context: &Context,
         source: &RemoteSource,
         limits: &ScanLimits,
         schema: &[ColumnSpec],
     ) -> Result<Box<dyn ReadSession>, BackendError> {
+        let (endpoint, reference) = Endpoint::configured(source)?;
+        let authorization = match reference {
+            CredentialReference::Environment(prefix) => Authorization::Environment(prefix),
+            CredentialReference::Secret(name) => {
+                Authorization::Secret(endpoint.secret_authorization(context, name)?)
+            }
+        };
         Ok(Box::new(Session {
-            endpoint: Endpoint::new(source)?,
+            endpoint,
+            authorization,
             timeout: Duration::from_millis(limits.timeout_ms),
             max_bytes: limits.max_response_bytes,
             schema: schema.to_vec(),
@@ -168,6 +229,7 @@ impl ReadBackend for Neo4jBackend {
 
 struct Session {
     endpoint: Endpoint,
+    authorization: Authorization,
     timeout: Duration,
     max_bytes: usize,
     schema: Vec<ColumnSpec>,
@@ -223,7 +285,7 @@ impl ReadSession for Session {
         let agent = self.endpoint.agent(self.timeout)?;
         let response = agent
             .post(&self.endpoint.query_url)
-            .header(AUTHORIZATION, self.endpoint.authorization()?)
+            .header(AUTHORIZATION, self.authorization.header()?)
             .header(ACCEPT, TYPED_JSON)
             .header(ACCEPT_ENCODING, "identity")
             .header(CONTENT_TYPE, TYPED_JSON)
@@ -254,5 +316,41 @@ impl ReadSession for Session {
             return Err(BackendError::Timeout);
         }
         Ok(Box::new(result))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Origin;
+
+    #[test]
+    fn aura_origin_is_strict_and_normalizes_default_https_port() {
+        let canonical = Origin::parse("https://demo.databases.neo4j.io").unwrap();
+        assert_eq!(
+            Origin::parse("https://demo.databases.neo4j.io:443"),
+            Some(canonical)
+        );
+        assert_ne!(
+            Origin::parse("https://demo.databases.neo4j.io"),
+            Origin::parse("https://other.databases.neo4j.io")
+        );
+        for invalid in [
+            "http://demo.databases.neo4j.io",
+            "https://DEMO.databases.neo4j.io",
+            "https://demo.databases.neo4j.io:444",
+            "https://demo.databases.neo4j.io/",
+            "https://demo.databases.neo4j.io?query",
+            "https://demo.databases.neo4j.io#fragment",
+            "https://demo.databases.neo4j.io.example",
+            "https://user@demo.databases.neo4j.io",
+        ] {
+            assert!(Origin::parse(invalid).is_none(), "{invalid}");
+        }
+    }
+
+    #[cfg(not(feature = "neo4j-test-fixture"))]
+    #[test]
+    fn production_rejects_the_loopback_fixture_origin() {
+        assert!(Origin::parse("https://127.0.0.1:8443").is_none());
     }
 }

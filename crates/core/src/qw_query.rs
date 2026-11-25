@@ -43,7 +43,7 @@ pub use providers::{
     GraphProvider, ProviderDescriptor, ProviderRegistry, ProviderRewrite, ProviderSource,
 };
 mod remote;
-pub use remote::{RemoteSource, ScanLimits};
+pub use remote::{RemoteCredential, RemoteSource, ScanLimits};
 mod runtime_watch;
 use runtime_watch::{MAX_KEYS, RuntimeWatch};
 
@@ -166,9 +166,11 @@ pub trait ReadBackend: Send + Sync {
         Err(BackendError::RemoteConfig)
     }
 
-    /// Construct the session locally. Submit the remote read only in `execute_with_params`.
+    /// Construct the session with the executing connection's context.
+    /// Submit the remote read only in `execute_with_params`.
     fn open_remote(
         &self,
+        _context: &Context,
         _source: &RemoteSource,
         _limits: &ScanLimits,
         _schema: &[ColumnSpec],
@@ -959,6 +961,7 @@ impl TableFunctionCallbacks for GraphQuery {
                             .provider
                             .backend
                             .open_remote(
+                                context,
                                 &config.source(),
                                 &config.limits(),
                                 projection.schema(bound),

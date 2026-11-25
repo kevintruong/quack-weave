@@ -153,18 +153,22 @@ make mvp2-neo4j-release
 /path/to/duckdb-v2.0.1 -unsigned
 ```
 
-Before starting DuckDB, supply `QW_NEO4J_ROUTES_ENDPOINT`, `QW_NEO4J_ROUTES_USERNAME`, and `QW_NEO4J_ROUTES_PASSWORD` in the process environment. These variables define the `routes` credential reference in the example. Use an Aura database login with effective read-only privileges for the target database. Set the endpoint variable to the exact Aura HTTPS origin you register in SQL.
-
-Run the configuration from a trusted DuckDB session with external access enabled. Replace the endpoint, database, and graph pattern with values for your Aura instance.
+Run the configuration from a trusted DuckDB session with external access enabled. Use an Aura database login with effective read-only privileges, and replace the sample origin, credentials, database, and graph pattern with values for your instance. Provision the connection secret on the DuckDB connection that will issue the reads.
 
 ```sql
 LOAD '/absolute/path/to/quack-weave/build/mvp2-neo4j/release/extension/quack_weave/quack_weave.duckdb_extension';
+CREATE SECRET routes IN connection (
+    TYPE quack_weave_neo4j,
+    ORIGIN 'https://example.databases.neo4j.io',
+    USERNAME 'graph_reader',
+    PASSWORD '<password>'
+);
 SET GLOBAL qw_enable_remote_graphs = true;
 SET GLOBAL qw_neo4j_config = '{
   "alias":"routes_remote",
   "endpoint":"https://example.databases.neo4j.io",
   "database":"neo4j",
-  "credential_ref":"routes",
+  "secret":"routes",
   "timeout_ms":5000,
   "max_response_bytes":1048576,
   "catalog":{"node:airport":{"code":"VARCHAR"}}
@@ -186,6 +190,10 @@ FROM GRAPH_TABLE (
 ```
 
 The adapter sends a single admitted Cypher read through AuraDB’s Query API v2 and decodes its Typed JSON scalar results. Set positive `timeout_ms` and `max_response_bytes` values to bound each read. `GRAPH_TABLE` requires a declared `catalog` with `node:Label` and `relationship:TYPE` keys for the properties referenced by the query. The example declares `node:airport` for `airport.code`. DuckDB evaluates the SQL projections, filters, joins, and aggregations for remote graph tables.
+
+The secret's HTTPS origin must match the registered origin. An explicit `:443` is equivalent to the default port. Provision the same secret name on each pooled connection that uses the graph. Quack Weave looks up the credential when the scan starts, so `CREATE OR REPLACE SECRET routes IN connection (...)` takes effect for subsequent scans, including prepared statement execution. Revoke access on that connection with `DROP SECRET routes FROM connection` or close the connection. DuckDB's CLI can store literal `CREATE SECRET` SQL in its history. Supply actual credentials through your trusted application or through the environment option. [DuckDB `CREATE SECRET`](https://duckdb.org/docs/2.0/sql/statements/create_secret)
+
+For process-wide provisioning, set `QW_NEO4J_ROUTES_ENDPOINT`, `QW_NEO4J_ROUTES_USERNAME`, and `QW_NEO4J_ROUTES_PASSWORD` before starting DuckDB, then use `"credential_ref":"routes"` in the graph configuration. The environment endpoint must match the registered endpoint exactly. The graph configuration accepts exactly one of `secret` and `credential_ref`.
 
 `RESET GLOBAL qw_enable_remote_graphs` disables new remote scans. Run `make mvp2-neo4j-test DUCKDB_UNITTEST=/path/to/duckdb-v2.0.1/unittest` to test the provider against a local TLS fixture with dummy credentials. The test runner uses the `openssl` CLI to create fixture certificates. [Neo4j SQLLogic tests](test/neo4j/sqllogic)
 

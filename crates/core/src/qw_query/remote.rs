@@ -7,17 +7,25 @@ use duckdb_neo::{
     extension::Extension,
     value::Value,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use super::DeclaredCatalog;
 
 const ENABLE_REMOTE: &str = "qw_enable_remote_graphs";
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteCredential {
+    #[serde(rename = "credential_ref")]
+    Environment(String),
+    Secret(String),
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct RemoteSource {
     pub endpoint: String,
     pub database: String,
-    pub credential_ref: String,
+    pub credential: RemoteCredential,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -92,44 +100,97 @@ pub(super) fn register(extension: &Extension) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct RemoteConfigInput {
+    alias: String,
+    endpoint: String,
+    database: String,
+    #[serde(default, deserialize_with = "present_reference")]
+    credential_ref: Option<String>,
+    #[serde(default, deserialize_with = "present_reference")]
+    secret: Option<String>,
+    timeout_ms: u64,
+    max_response_bytes: usize,
+    max_batch_bytes: Option<usize>,
+    catalog: Option<DeclaredCatalog>,
+}
+
+// A missing key is optional, but explicit JSON null is an invalid reference.
+fn present_reference<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    String::deserialize(deserializer).map(Some)
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(try_from = "RemoteConfigInput")]
 pub(super) struct RemoteConfig {
     pub(super) alias: String,
     endpoint: String,
     database: String,
-    credential_ref: String,
+    #[serde(flatten)]
+    credential: RemoteCredential,
     timeout_ms: u64,
     max_response_bytes: usize,
     pub(super) max_batch_bytes: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) catalog: Option<DeclaredCatalog>,
+}
+
+impl TryFrom<RemoteConfigInput> for RemoteConfig {
+    type Error = &'static str;
+
+    fn try_from(input: RemoteConfigInput) -> std::result::Result<Self, Self::Error> {
+        let credential = match (input.credential_ref, input.secret) {
+            (Some(reference), None) => RemoteCredential::Environment(reference),
+            (None, Some(name)) if !name.is_empty() && !name.contains('\0') => {
+                RemoteCredential::Secret(name)
+            }
+            _ => {
+                return Err(
+                    "QW_CONFIG: Specify exactly one of credential_ref or a nonempty secret name",
+                );
+            }
+        };
+
+        if !super::is_identifier(&input.alias)
+            || input.timeout_ms == 0
+            || input.max_response_bytes == 0
+            || input.max_batch_bytes == Some(0)
+        {
+            return Err("QW_CONFIG: Expected a valid alias and positive remote read limits");
+        }
+
+        Ok(Self {
+            alias: input.alias,
+            endpoint: input.endpoint,
+            database: input.database,
+            credential,
+            timeout_ms: input.timeout_ms,
+            max_response_bytes: input.max_response_bytes,
+            max_batch_bytes: input.max_batch_bytes,
+            catalog: input.catalog,
+        })
+    }
 }
 
 impl RemoteConfig {
     pub(super) fn parse(text: &str) -> Result<Self> {
-        let config: Self = serde_json::from_str(text).map_err(|_| {
+        let input = serde_json::from_str::<RemoteConfigInput>(text).map_err(|_| {
             Error::invalid_input(
-                "QW_CONFIG: Expected alias, endpoint, database, credential_ref, timeout_ms and max_response_bytes",
+                "QW_CONFIG: Expected alias, endpoint, database, a credential reference, timeout_ms and max_response_bytes",
             )
         })?;
-        if !super::is_identifier(&config.alias)
-            || config.timeout_ms == 0
-            || config.max_response_bytes == 0
-            || config.max_batch_bytes == Some(0)
-        {
-            return Err(Error::invalid_input(
-                "QW_CONFIG: Expected a valid alias and positive remote read limits",
-            ));
-        }
-        Ok(config)
+        Self::try_from(input).map_err(Error::invalid_input)
     }
 
     pub(super) fn source(&self) -> RemoteSource {
         RemoteSource {
             endpoint: self.endpoint.clone(),
             database: self.database.clone(),
-            credential_ref: self.credential_ref.clone(),
+            credential: self.credential.clone(),
         }
     }
 

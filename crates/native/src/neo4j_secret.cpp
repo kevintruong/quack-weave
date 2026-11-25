@@ -1,3 +1,4 @@
+#include "duckdb/catalog/catalog_transaction.hpp"
 #include "duckdb/main/capi_v2/capi_v2_internal.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"
 
@@ -32,6 +33,15 @@ unique_ptr<BaseSecret> CreateNeo4jConfigSecret(ClientContext &, CreateSecretInpu
 	return secret;
 }
 
+const string *GetCredentialField(const KeyValueSecret &secret, const char *key) {
+	auto field = secret.secret_map.find(key);
+	if (field == secret.secret_map.end() || field->second.IsNull() || field->second.type() != LogicalType::VARCHAR) {
+		return nullptr;
+	}
+	const auto &text = StringValue::Get(field->second);
+	return text.empty() ? nullptr : &text;
+}
+
 } // namespace
 } // namespace duckdb
 
@@ -54,6 +64,46 @@ extern "C" bool qw_register_neo4j_secret(duckdb_v2_factory_handle handle) noexce
 		}
 		manager.RegisterSecretFunction(std::move(config), duckdb::OnCreateConflict::ERROR_ON_CONFLICT);
 		return true;
+	} catch (...) {
+		return false;
+	}
+}
+
+struct QwSecretText {
+	const char *data;
+	size_t size;
+};
+
+using QwNeo4jSecretVisitor = void (*)(void *, QwSecretText, QwSecretText, QwSecretText);
+
+extern "C" bool qw_visit_neo4j_secret(duckdb_v2_context_handle handle, const char *name, size_t name_size, void *state,
+                                      QwNeo4jSecretVisitor visit) noexcept {
+	try {
+		bool found = false;
+		duckdb::capiv2::Convert(handle)->WithContext([&](duckdb::ClientContext &context) {
+			auto &manager = duckdb::SecretManager::Get(context);
+			auto entry = manager.GetSecretByName(duckdb::CatalogTransaction::GetSystemCatalogTransaction(context),
+			                                     duckdb::string(name, name_size),
+			                                     duckdb::SecretManager::CONNECTION_STORAGE_NAME);
+			if (!entry || !entry->secret || entry->secret->GetType() != duckdb::NEO4J_SECRET_TYPE) {
+				return;
+			}
+			auto *secret = dynamic_cast<const duckdb::KeyValueSecret *>(entry->secret.get());
+			if (!secret) {
+				return;
+			}
+			const auto *origin = duckdb::GetCredentialField(*secret, "origin");
+			const auto *username = duckdb::GetCredentialField(*secret, "username");
+			const auto *password = duckdb::GetCredentialField(*secret, "password");
+			if (!origin || !username || !password) {
+				return;
+			}
+			// The entry owns these strings until the visitor returns.
+			visit(state, {origin->data(), origin->size()}, {username->data(), username->size()},
+			      {password->data(), password->size()});
+			found = true;
+		});
+		return found;
 	} catch (...) {
 		return false;
 	}
