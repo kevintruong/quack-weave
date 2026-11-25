@@ -35,6 +35,8 @@ mod gql;
 mod graph_value;
 pub use graph_value::{GraphColumn, GraphValue};
 mod parameters;
+mod projection;
+use projection::ScanProjection;
 mod providers;
 use providers::{AliasReservations, GraphProvider, ProviderKind, resolve_alias};
 mod runtime_watch;
@@ -584,7 +586,7 @@ struct GraphQuery {
 
 impl TableFunctionCallbacks for GraphQuery {
     type BindData = BoundRead;
-    type LocalState = (Scan, Option<String>);
+    type LocalState = (Scan, ScanProjection);
     type GlobalState = ();
 
     fn bind(
@@ -782,12 +784,9 @@ impl TableFunctionCallbacks for GraphQuery {
         _: &Context,
         bound: &BoundRead,
         _: Option<&()>,
-        _: InitColumnData<'_>,
+        columns: InitColumnData<'_>,
     ) -> Result<Option<Self::LocalState>> {
-        let filtered = bound.watch.as_ref().and_then(|watch| {
-            watch.query(&bound.provider.backend.runtime_watch_keys(watch.column))
-        });
-        Ok(Some((Scan::Dormant, filtered)))
+        Ok(Some((Scan::Dormant, ScanProjection::new(bound, columns)?)))
     }
 
     fn max_threads(
@@ -809,11 +808,11 @@ impl TableFunctionCallbacks for GraphQuery {
         output: &mut DataChunk<'_>,
         _: ExecColumnInfo<'_>,
     ) -> Result<()> {
-        let (scan, filtered) =
+        let (scan, projection) =
             scan.ok_or_else(|| Error::internal("qw_query: missing scan state"))?;
         let capacity = output.capacity()?;
         let Some(batch) = scan.next(
-            &bound.schema,
+            projection.schema(bound),
             capacity,
             bound.config.config.max_batch_bytes,
             || {
@@ -844,24 +843,21 @@ impl TableFunctionCallbacks for GraphQuery {
                     .open_for_generation(
                         Path::new(&path),
                         bound.config.config.timeout_ms,
-                        &bound.schema,
+                        projection.schema(bound),
                         &bound.config.generation,
                     )
                     .map_err(backend_error)?;
                 bound.config.generation.validate(Path::new(&path))?;
                 session
-                    .execute_with_params(
-                        filtered.as_deref().unwrap_or(&bound.cypher),
-                        &bound.params,
-                    )
+                    .execute_with_params(projection.query(bound), &bound.params)
                     .map_err(backend_error)
             },
         )?
         else {
             return Ok(());
         };
-        for (index, column) in batch.columns.iter().enumerate() {
-            if let Err(error) = column.write(context, output, index) {
+        for (index, &provider_column) in projection.output_columns.iter().enumerate() {
+            if let Err(error) = batch.columns[provider_column].write(context, output, index) {
                 *scan = Scan::Finished;
                 return Err(error);
             }
@@ -985,6 +981,7 @@ fn register_query(
             },
         )
         .with_get_bind_info()
+        .with_projection_pushdown(true)
         .register(extension)?;
     }
     Ok(())

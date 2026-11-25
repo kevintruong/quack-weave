@@ -1,0 +1,83 @@
+# name: test/relate/bound_projection.test
+# description: DuckDB column IDs prune a structured native graph RETURN and preserve rows on fallbacks
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_RELATE UNSET_QW_RELATE
+
+test-env QW_LADYBUG UNSET_QW_LADYBUG
+
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"rel","path":"{QW_RELATE}"}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"lady","path":"{QW_LADYBUG}"}';
+
+statement ok
+CREATE VIEW flights AS SELECT * FROM GRAPH_TABLE (rel MATCH (o:airport)-[r:route]->(d:airport)
+    COLUMNS (o.code AS origin, r.dist AS miles, r.rid AS rid, d.code AS destination)) g;
+
+# Only the third bound slot is needed by the client.
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT rid FROM flights;
+----
+analyzed_plan	<REGEX>:.*"Function": "QW_GRAPH_QUERY"[^}]*"Projections": "qw_col2".*
+
+query III rowsort
+SELECT rid, miles, rid FROM flights WHERE destination = 'AMS';
+----
+201	595	201
+202	600	202
+
+query T rowsort
+SELECT destination FROM flights WHERE miles IS NULL;
+----
+RIX
+
+# No graph property was requested. Keep one output row per match.
+query I
+SELECT count(*) FROM (
+  SELECT 1 FROM GRAPH_TABLE (rel MATCH (o:airport)-[r:route]->(d:airport) COLUMNS (1 AS marker)) g
+  LIMIT 2
+) q;
+----
+2
+
+query II rowsort
+SELECT rid, rid FROM GRAPH_TABLE (lady MATCH (o:airport)-[r:route]->(d:airport)
+    COLUMNS(o.code AS origin, d.code AS destination, r.rid AS rid)) g
+WHERE destination = 'BOS';
+----
+101	101
+102	102
+
+# DISTINCT belongs to this opaque Cypher statement and sees both native columns.
+query T rowsort
+SELECT destination FROM qw_graph_query('rel', 'cypher',
+    'MATCH (o:airport)-[r:route]->(d:airport) RETURN DISTINCT d.code AS destination, r.rid AS id');
+----
+AMS
+AMS
+RIX
+
+# An untrusted declared type on an unused projection remains observable.
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"rel","path":"{QW_RELATE}","catalog":{"airport":{"code":"BIGINT"},"route":{"rid":"BIGINT","dist":"BIGINT"}}}';
+
+statement error
+SELECT rid FROM flights;
+----
+QW_SCHEMA
+
+# The conversion budget still covers the full graph rows on a resource-limited read.
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"rel","path":"{QW_RELATE}","max_batch_bytes":128}';
+
+statement error
+SELECT rid FROM flights;
+----
+QW_BATCH_BUDGET
