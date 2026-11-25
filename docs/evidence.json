@@ -1,0 +1,2086 @@
+{
+  "recorded_date": "2026-11-26",
+  "platform": "macOS ARM64",
+  "duckdb": {
+    "version": "v2.0.1",
+    "source_id": "8d78114e90"
+  },
+  "native_source_snapshot": "dfbc44985f6a4ff994c76781f72efdf60f4d83fc",
+  "suites": [
+    {
+      "id": "ladybug-mvp2",
+      "name": "Ladybug MVP2",
+      "blocks": 650,
+      "artifact_sha256": "c77ea99fa342d523b1bc153fffcda200c427e36c5e5d740b84b723e94a0cfeaf",
+      "cases": [
+        {
+          "path": "test/stabilization/sqllogic/admission.test",
+          "sha256": "9afb4c1e4f806185fc905dcc2ea21dc656ac50192b6e58754bb1eafdb5b143b8",
+          "blocks": 21,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/air_routes_fixture.test",
+          "sha256": "eb2ca5424c688878809d6a4e318946c942936fcc9edf25244c3b8ba2950934bc",
+          "blocks": 4,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/artifact.test",
+          "sha256": "a198f0e293c0e51e3546b18e4746b97a7bac1f8e5b7b472a72b2bdf17dc8e474",
+          "blocks": 6,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/bind.test",
+          "sha256": "1fce5e71249447ae44b7dc5c50b7ddfd617c331c8fb9ca6663dddbe1d0551117",
+          "blocks": 54,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/declared_bindings.test",
+          "sha256": "62008e66d81a2cb24266edb499378168e5cf1a5cad5530c37ae924df4c5e1db3",
+          "blocks": 4,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/duckgql_admission.test",
+          "sha256": "6d996edb01c8c01961372dda6b1dd3b65d20f5be17c9c6570d747dca7ecf9612",
+          "blocks": 20,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/duckgql_aggregates.test",
+          "sha256": "83ac44aecbcdbf87c5509c8643a7771cd8f37671fc751f78e309dcd77a9abeb0",
+          "blocks": 32,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/duckgql_basic.test",
+          "sha256": "462b0885d7ce65ad07e9f1937f19374aa95087a27b42f795fe3749493819af7c",
+          "blocks": 51,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/duckgql_paths.test",
+          "sha256": "dc4af49745cb4402812aa2d1f0f00d887ddac8e4e4abff35ce401fa3fb51a6eb",
+          "blocks": 24,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/duckgql_reachability.test",
+          "sha256": "056b5fa51a816ab8f2e55a023a8b354b11625c44eea0ade7f9535f7dfda1e3a2",
+          "blocks": 20,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/duckgql_scalars.test",
+          "sha256": "652f0f839db8023815304497d79a47dd3557965195703758d345cf55966ab996",
+          "blocks": 21,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/fixture_audit.test",
+          "sha256": "439bc50b37116cff84ac21c79bece4be12d9597c9e3d21345aa70af854b71391",
+          "blocks": 8,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/gql_compatibility.test",
+          "sha256": "483eea49062c86d0a42628ae038f04680916fc00c88f8ab0962924bd71e62ce2",
+          "blocks": 19,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/graph_aggregate_pushdown.test",
+          "sha256": "9340ef08cae3dce9a337cbc3c82efd57a34b299aa72e53c04a39746d229febfa",
+          "blocks": 23,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/graph_entry.test",
+          "sha256": "e10aadedb02dc9eba271ccc9f113ceb396c87eef4f00f2fa11773c026a6bf08d",
+          "blocks": 16,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/graph_metadata.test",
+          "sha256": "5d0105b98bde72768048c03c9636e03ec807061f664ea6fcdcf78a79405ba2f2",
+          "blocks": 32,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/graph_parameters.test",
+          "sha256": "c8842ed305bb9c7a9a6e2ac6fafa10fc819f379853f2fa9a38aa24a94b9cb8e9",
+          "blocks": 23,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/graph_table.test",
+          "sha256": "378c77f6984ff935e850993f8f452aa3187f6ef9b1dbfee41a7ff770285f31a2",
+          "blocks": 30,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/graph_values.test",
+          "sha256": "483dd3fa7c0de20ca4b3c23e92da856b59c8744587046f019b178f4ec7a01def",
+          "blocks": 27,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/host_access.test",
+          "sha256": "67dcbb943bfa1ca19a1c0b6bb6c582e9ed20fc21739405670911f26c1ca2e603",
+          "blocks": 4,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/hybrid_public.test",
+          "sha256": "d06739d13203fbf3c7da2c1f06932a75a45bf29a6b463ca05b1e606aeb431bba",
+          "blocks": 48,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/limits.test",
+          "sha256": "a9b320044d16b7bcb0ef575aa43e56cb6f194b5cc391c2af41bb27a8cf03ef42",
+          "blocks": 13,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/reads.test",
+          "sha256": "76cfeac1ece9687ac4609c6da41369657c21184c6d968ae5d18b537123ffa619",
+          "blocks": 25,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/remote_policy.test",
+          "sha256": "f6257ddfbb90c7d0a50e975e5c485cea5cfa388704099a79a23b5f82391aae83",
+          "blocks": 10,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/scan.test",
+          "sha256": "5b9831b81ed175bfba46a4c5c39da26ccb2e7e1a5356096b4d296d3bd1f66e79",
+          "blocks": 14,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/table_watchlist.test",
+          "sha256": "de98e9bb4e6a3c5a91998d6e5ced0bfc683edab4db8517f2e189b23bdb0e04ab",
+          "blocks": 34,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/timeout.test_slow",
+          "sha256": "2ac83fa59953174a31af98d5e70b70f0021dc06c0568b852f665033cde9477cb",
+          "blocks": 5,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/usage_binding.test",
+          "sha256": "b64bb2c6fd1d07ea77581606cb41942cda7022f4f3bc7aab57abc67a7a957186",
+          "blocks": 30,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/usage_boundary.test",
+          "sha256": "757e5c1e0cbc58421dcb4b29417135d75c3dc1f55e3391646c9a2c53ca3a80c1",
+          "blocks": 18,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/usage_relations.test",
+          "sha256": "500a24d32fa65d0ef8e96a28e18ad5d20e536004379da838558537c556775349",
+          "blocks": 14,
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "id": "ladybug-cypher",
+      "name": "Ladybug MVP1",
+      "blocks": 19,
+      "artifact_sha256": "a6921f7052d53904ccd84412d63d934295b3e2ca1ef93e792b5fcfc0f08a4398",
+      "cases": [
+        {
+          "path": "test/stabilization/sqllogic/declared_bindings.test",
+          "sha256": "62008e66d81a2cb24266edb499378168e5cf1a5cad5530c37ae924df4c5e1db3",
+          "blocks": 4,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/feature_off.test",
+          "sha256": "c073c7ae599d0eb5ebdc2e17c49593040c6b4517f92ab8f1742f0306c9877ebd",
+          "blocks": 5,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/remote_policy.test",
+          "sha256": "f6257ddfbb90c7d0a50e975e5c485cea5cfa388704099a79a23b5f82391aae83",
+          "blocks": 10,
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "id": "ladybug-relate",
+      "name": "RelateDB and Ladybug",
+      "blocks": 280,
+      "artifact_sha256": "7713b13a97f8190b9360fc901bce6ef49d06fda45b224b06863915785028948b",
+      "cases": [
+        {
+          "path": "test/relate/aggregate.test",
+          "sha256": "98bd0ed8e55c6e13887715c85581261667a756ff68f74e28aaf1603aecff3a78",
+          "blocks": 18,
+          "status": "passed"
+        },
+        {
+          "path": "test/relate/benchmark_contract.test",
+          "sha256": "c42dbb900f6a81952dee5e2708c079fffdeead365adfe1eb6fad7a3b4960432c",
+          "blocks": 10,
+          "status": "passed"
+        },
+        {
+          "path": "test/relate/bound_aggregate.test",
+          "sha256": "077b12bc5457e873716cd6397a9313c3087039b2c3c9969b0eae3776feb18c31",
+          "blocks": 6,
+          "status": "passed"
+        },
+        {
+          "path": "test/relate/bound_filters.test",
+          "sha256": "4f27eb841b5f78c9a3ceb46e9315be7b69f57d3ab108bcb51314d6790b190347",
+          "blocks": 20,
+          "status": "passed"
+        },
+        {
+          "path": "test/relate/bound_fragment.test",
+          "sha256": "41adb7261b4a1c461fc0c439de0fe9a350c4c738ecefc0855ef698d2e003c775",
+          "blocks": 14,
+          "status": "passed"
+        },
+        {
+          "path": "test/relate/bound_projection.test",
+          "sha256": "a1a3b86f8227fad54a1c55e09dbe54cc6bf4f891e0b517763032a988a081d23e",
+          "blocks": 14,
+          "status": "passed"
+        },
+        {
+          "path": "test/relate/bound_runtime.test",
+          "sha256": "d559fb5144d6ba41e26ee5cb598b4500b6ba709af91b1b7d97c807ec0bc9e8e7",
+          "blocks": 14,
+          "status": "passed"
+        },
+        {
+          "path": "test/relate/graph_estimates.test",
+          "sha256": "62aed996c26213b2c043a8ab0e94b8d9ac0269c73dacd019048da34807832726",
+          "blocks": 16,
+          "status": "passed"
+        },
+        {
+          "path": "test/relate/graph_explain.test",
+          "sha256": "91f79d9fbafbd4fb0cfdd25724d230806de16cd40fb2b7fca6e3f62b9174687d",
+          "blocks": 20,
+          "status": "passed"
+        },
+        {
+          "path": "test/relate/handle_reuse.test",
+          "sha256": "fa822d8f5607268260d6dbff2c9652fa34ffc57fbd5ea01170452d8c2ff26140",
+          "blocks": 15,
+          "status": "passed"
+        },
+        {
+          "path": "test/relate/planning_acceptance.test",
+          "sha256": "c7684e29406e4448b0ab2a802869c9385d10b6365b9c7b2b682f35e6d0116d21",
+          "blocks": 13,
+          "status": "passed"
+        },
+        {
+          "path": "test/relate/predicate_pushdown.test",
+          "sha256": "0c43d08fbac90fc1c55b2757d91209c8e6ed37338042186fa6317311de9cc359",
+          "blocks": 24,
+          "status": "passed"
+        },
+        {
+          "path": "test/relate/provider.test",
+          "sha256": "59802320828333ea115fb38d2874d1e25fc28ad5bda911b09895058100cd06c1",
+          "blocks": 56,
+          "status": "passed"
+        },
+        {
+          "path": "test/relate/provider_alias_race.test",
+          "sha256": "b0f39a55a12c7574dd5a4f47656c48a7c5af75c1e1040f24295f1c36511b97b6",
+          "blocks": 9,
+          "status": "passed"
+        },
+        {
+          "path": "test/relate/provider_inventory.test",
+          "sha256": "b7762bb0e270096d00960be50ccd584b7a018deb2ecf34df7f0690e54d0d2ae1",
+          "blocks": 2,
+          "status": "passed"
+        },
+        {
+          "path": "test/relate/table_watch.test",
+          "sha256": "78d179f782316bae934994212ba80c60a1de58857a6baa64d73a50efdd575d32",
+          "blocks": 14,
+          "status": "passed"
+        },
+        {
+          "path": "test/relate/watchlist_limits.test",
+          "sha256": "da242bb1e78d2b5496203c22719083f60feee308babef4bf91d20089c1cdc5d0",
+          "blocks": 15,
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "id": "neo4j-tls",
+      "name": "Neo4j local TLS fixture",
+      "blocks": 76,
+      "artifact_sha256": "a6e113a942710e882e774aa775b9d3b0a3dc368ccd4814d93012a0a8fc57f57d",
+      "cases": [
+        {
+          "path": "test/neo4j/sqllogic/credential_registration.test",
+          "sha256": "77a14771131c8036433b175d439f39c7fc5f0fc31ba058e25bb024e706b84952",
+          "blocks": 7,
+          "status": "passed"
+        },
+        {
+          "path": "test/neo4j/sqllogic/credential_scan.test",
+          "sha256": "fe8a22a27245db1b03c979f5b014c7345e54244648405be3bd1c86c8fbd012db",
+          "blocks": 45,
+          "status": "passed"
+        },
+        {
+          "path": "test/neo4j/sqllogic/hybrid.test",
+          "sha256": "faf7820a4713abcdf8d97dc3246aa745fe6284f769dc8547f8830620d56baee5",
+          "blocks": 10,
+          "status": "passed"
+        },
+        {
+          "path": "test/neo4j/sqllogic/provider.test",
+          "sha256": "e6bf0cc2f9b4ce6d58133571f96663cc0defd497aea77c137b428f99e6c88d50",
+          "blocks": 14,
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "id": "adbc",
+      "name": "Public ADBC client",
+      "blocks": 12,
+      "artifact_sha256": null,
+      "cases": [
+        {
+          "path": "test/public_client/results.test",
+          "sha256": "e0e4155bcd48c6f4a046e293c084452833f7188e7beead96a81e9d1fb119e19c",
+          "blocks": 12,
+          "status": "passed"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "passed_test_files": 55,
+    "passed_blocks": 1037,
+    "runtime_version_probes_excluded": true
+  },
+  "capability_evidence": {
+    "cases": [
+      {
+        "case_id": 1,
+        "path": "test/neo4j/sqllogic/credential_registration.test",
+        "suite": "neo4j-tls"
+      },
+      {
+        "case_id": 2,
+        "path": "test/neo4j/sqllogic/credential_scan.test",
+        "suite": "neo4j-tls"
+      },
+      {
+        "case_id": 3,
+        "path": "test/neo4j/sqllogic/hybrid.test",
+        "suite": "neo4j-tls"
+      },
+      {
+        "case_id": 4,
+        "path": "test/neo4j/sqllogic/provider.test",
+        "suite": "neo4j-tls"
+      },
+      {
+        "case_id": 5,
+        "path": "test/public_client/results.test",
+        "suite": "adbc"
+      },
+      {
+        "case_id": 6,
+        "path": "test/relate/aggregate.test",
+        "suite": "ladybug-relate"
+      },
+      {
+        "case_id": 7,
+        "path": "test/relate/bound_filters.test",
+        "suite": "ladybug-relate"
+      },
+      {
+        "case_id": 8,
+        "path": "test/relate/bound_projection.test",
+        "suite": "ladybug-relate"
+      },
+      {
+        "case_id": 9,
+        "path": "test/relate/bound_runtime.test",
+        "suite": "ladybug-relate"
+      },
+      {
+        "case_id": 10,
+        "path": "test/relate/graph_explain.test",
+        "suite": "ladybug-relate"
+      },
+      {
+        "case_id": 11,
+        "path": "test/relate/provider.test",
+        "suite": "ladybug-relate"
+      },
+      {
+        "case_id": 12,
+        "path": "test/relate/provider_alias_race.test",
+        "suite": "ladybug-relate"
+      },
+      {
+        "case_id": 13,
+        "path": "test/relate/provider_inventory.test",
+        "suite": "ladybug-relate"
+      },
+      {
+        "case_id": 14,
+        "path": "test/stabilization/sqllogic/admission.test",
+        "suite": "ladybug-mvp2"
+      },
+      {
+        "case_id": 15,
+        "path": "test/stabilization/sqllogic/declared_bindings.test",
+        "suite": "ladybug-mvp2"
+      },
+      {
+        "case_id": 16,
+        "path": "test/stabilization/sqllogic/duckgql_basic.test",
+        "suite": "ladybug-mvp2"
+      },
+      {
+        "case_id": 17,
+        "path": "test/stabilization/sqllogic/feature_off.test",
+        "suite": "ladybug-cypher"
+      },
+      {
+        "case_id": 18,
+        "path": "test/stabilization/sqllogic/gql_compatibility.test",
+        "suite": "ladybug-mvp2"
+      },
+      {
+        "case_id": 19,
+        "path": "test/stabilization/sqllogic/graph_aggregate_pushdown.test",
+        "suite": "ladybug-mvp2"
+      },
+      {
+        "case_id": 20,
+        "path": "test/stabilization/sqllogic/graph_entry.test",
+        "suite": "ladybug-mvp2"
+      },
+      {
+        "case_id": 21,
+        "path": "test/stabilization/sqllogic/graph_metadata.test",
+        "suite": "ladybug-mvp2"
+      },
+      {
+        "case_id": 22,
+        "path": "test/stabilization/sqllogic/graph_parameters.test",
+        "suite": "ladybug-mvp2"
+      },
+      {
+        "case_id": 23,
+        "path": "test/stabilization/sqllogic/graph_table.test",
+        "suite": "ladybug-mvp2"
+      },
+      {
+        "case_id": 24,
+        "path": "test/stabilization/sqllogic/graph_values.test",
+        "suite": "ladybug-mvp2"
+      },
+      {
+        "case_id": 25,
+        "path": "test/stabilization/sqllogic/host_access.test",
+        "suite": "ladybug-mvp2"
+      },
+      {
+        "case_id": 26,
+        "path": "test/stabilization/sqllogic/hybrid_public.test",
+        "suite": "ladybug-mvp2"
+      },
+      {
+        "case_id": 27,
+        "path": "test/stabilization/sqllogic/reads.test",
+        "suite": "ladybug-mvp2"
+      },
+      {
+        "case_id": 28,
+        "path": "test/stabilization/sqllogic/remote_policy.test",
+        "suite": "ladybug-mvp2"
+      },
+      {
+        "case_id": 29,
+        "path": "test/stabilization/sqllogic/scan.test",
+        "suite": "ladybug-mvp2"
+      },
+      {
+        "case_id": 30,
+        "path": "test/stabilization/sqllogic/table_watchlist.test",
+        "suite": "ladybug-mvp2"
+      },
+      {
+        "case_id": 31,
+        "path": "test/stabilization/sqllogic/usage_relations.test",
+        "suite": "ladybug-mvp2"
+      }
+    ],
+    "claims": [
+      {
+        "id": "typed-embedded-reads.1",
+        "claim": "typed-embedded-reads",
+        "test_case_id": 27
+      },
+      {
+        "id": "read-only-admission.1",
+        "claim": "read-only-admission",
+        "test_case_id": 14
+      },
+      {
+        "id": "explicit-cypher-bindings.1",
+        "claim": "explicit-cypher-bindings",
+        "test_case_id": 15
+      },
+      {
+        "id": "standalone-scope.1",
+        "claim": "standalone-scope",
+        "test_case_id": 20
+      },
+      {
+        "id": "prepared-graph-parameters.1",
+        "claim": "prepared-graph-parameters",
+        "test_case_id": 22
+      },
+      {
+        "id": "gql-subset.1",
+        "claim": "gql-subset",
+        "test_case_id": 18
+      },
+      {
+        "id": "gql-subset.2",
+        "claim": "gql-subset",
+        "test_case_id": 16
+      },
+      {
+        "id": "structured-graph-values.1",
+        "claim": "structured-graph-values",
+        "test_case_id": 24
+      },
+      {
+        "id": "graph-table-and-relational-parity.1",
+        "claim": "graph-table-and-relational-parity",
+        "test_case_id": 23
+      },
+      {
+        "id": "graph-table-and-relational-parity.2",
+        "claim": "graph-table-and-relational-parity",
+        "test_case_id": 26
+      },
+      {
+        "id": "sql-bag-semantics.1",
+        "claim": "sql-bag-semantics",
+        "test_case_id": 31
+      },
+      {
+        "id": "provider-generation.1",
+        "claim": "provider-generation",
+        "test_case_id": 21
+      },
+      {
+        "id": "provider-generation.2",
+        "claim": "provider-generation",
+        "test_case_id": 12
+      },
+      {
+        "id": "provider-inventory.1",
+        "claim": "provider-inventory",
+        "test_case_id": 13
+      },
+      {
+        "id": "relate-and-ladybug.1",
+        "claim": "relate-and-ladybug",
+        "test_case_id": 11
+      },
+      {
+        "id": "embedded-projection-and-filter-pushdown.1",
+        "claim": "embedded-projection-and-filter-pushdown",
+        "test_case_id": 8
+      },
+      {
+        "id": "embedded-projection-and-filter-pushdown.2",
+        "claim": "embedded-projection-and-filter-pushdown",
+        "test_case_id": 7
+      },
+      {
+        "id": "runtime-watchlists.1",
+        "claim": "runtime-watchlists",
+        "test_case_id": 30
+      },
+      {
+        "id": "runtime-watchlists.2",
+        "claim": "runtime-watchlists",
+        "test_case_id": 9
+      },
+      {
+        "id": "embedded-aggregate-pushdown.1",
+        "claim": "embedded-aggregate-pushdown",
+        "test_case_id": 19
+      },
+      {
+        "id": "embedded-aggregate-pushdown.2",
+        "claim": "embedded-aggregate-pushdown",
+        "test_case_id": 6
+      },
+      {
+        "id": "plan-inspection.1",
+        "claim": "plan-inspection",
+        "test_case_id": 10
+      },
+      {
+        "id": "host-access-policy.1",
+        "claim": "host-access-policy",
+        "test_case_id": 25
+      },
+      {
+        "id": "host-access-policy.2",
+        "claim": "host-access-policy",
+        "test_case_id": 28
+      },
+      {
+        "id": "read-budgets.1",
+        "claim": "read-budgets",
+        "test_case_id": 29
+      },
+      {
+        "id": "read-budgets.2",
+        "claim": "read-budgets",
+        "test_case_id": 4
+      },
+      {
+        "id": "neo4j-typed-reads-and-graph-tables.1",
+        "claim": "neo4j-typed-reads-and-graph-tables",
+        "test_case_id": 3
+      },
+      {
+        "id": "neo4j-typed-reads-and-graph-tables.2",
+        "claim": "neo4j-typed-reads-and-graph-tables",
+        "test_case_id": 4
+      },
+      {
+        "id": "neo4j-managed-credentials.1",
+        "claim": "neo4j-managed-credentials",
+        "test_case_id": 1
+      },
+      {
+        "id": "neo4j-managed-credentials.2",
+        "claim": "neo4j-managed-credentials",
+        "test_case_id": 2
+      },
+      {
+        "id": "feature-off-cypher.1",
+        "claim": "feature-off-cypher",
+        "test_case_id": 17
+      },
+      {
+        "id": "adbc-arrow-client.1",
+        "claim": "adbc-arrow-client",
+        "test_case_id": 5
+      }
+    ]
+  },
+  "verification": {
+    "scope": "Each published capability-to-test link in this manifest references a passed SQLLogic case. SQLLogic establishes the tested runtime behavior.",
+    "rule_id": "data_integrity.foreign_key",
+    "jev": {
+      "gate": "open",
+      "provenance": {
+        "served_model_version": "jev-1.14.0",
+        "answers": {
+          "data_complete": {
+            "type": "noul",
+            "noul": 0.98
+          },
+          "route_rule": {
+            "type": "choice",
+            "choice": "data_integrity.foreign_key",
+            "probabilities": {
+              "data_integrity.aggregate_balance": 0,
+              "data_integrity.cardinality": 0,
+              "data_integrity.conditional_required": 0,
+              "data_integrity.foreign_key": 1,
+              "data_integrity.mutually_consistent": 0,
+              "data_integrity.temporal_consistency": 0,
+              "data_integrity.unique": 0,
+              "data_integrity.value_range": 0
+            },
+            "confidence": 1
+          },
+          "solve_mode": {
+            "type": "choice",
+            "choice": "verify",
+            "probabilities": {
+              "synthesize": 0,
+              "verify": 1
+            },
+            "confidence": 1
+          }
+        },
+        "confidences": {
+          "data_complete": 0.98,
+          "route_rule": 1,
+          "solve_mode": 1
+        },
+        "weakest": 0.98,
+        "gate": {
+          "status": "open"
+        }
+      }
+    },
+    "execution_note": "The compiled relation was partitioned into four groups of eight claim links to fit the 64-variable solver request limit. Each partition retains all candidate parent rows matching its links. The negative control replaces one link with an absent key.",
+    "checks": [
+      {
+        "id": "partition_1",
+        "expected": "accept_claim_links",
+        "request": {
+          "family": "data_integrity",
+          "mode": "verify",
+          "rules": [
+            {
+              "rule_id": "data_integrity.foreign_key",
+              "subjects": [
+                "claim_passed_test"
+              ],
+              "parameters": {}
+            }
+          ],
+          "facts": {
+            "relations": {
+              "passed_cases": {
+                "fields": {
+                  "case_id": {
+                    "kind": "integer",
+                    "minimum": 1,
+                    "maximum": 32
+                  }
+                },
+                "rows": {
+                  "case_14": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 14
+                      }
+                    }
+                  },
+                  "case_15": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 15
+                      }
+                    }
+                  },
+                  "case_16": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 16
+                      }
+                    }
+                  },
+                  "case_18": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 18
+                      }
+                    }
+                  },
+                  "case_20": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 20
+                      }
+                    }
+                  },
+                  "case_22": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 22
+                      }
+                    }
+                  },
+                  "case_24": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 24
+                      }
+                    }
+                  },
+                  "case_27": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 27
+                      }
+                    }
+                  }
+                }
+              },
+              "published_claim_links": {
+                "fields": {
+                  "test_case_id": {
+                    "kind": "integer",
+                    "minimum": 1,
+                    "maximum": 32
+                  }
+                },
+                "rows": {
+                  "typed-embedded-reads.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 27
+                      }
+                    }
+                  },
+                  "read-only-admission.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 14
+                      }
+                    }
+                  },
+                  "explicit-cypher-bindings.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 15
+                      }
+                    }
+                  },
+                  "standalone-scope.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 20
+                      }
+                    }
+                  },
+                  "prepared-graph-parameters.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 22
+                      }
+                    }
+                  },
+                  "gql-subset.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 18
+                      }
+                    }
+                  },
+                  "gql-subset.2": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 16
+                      }
+                    }
+                  },
+                  "structured-graph-values.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 24
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "unique_constraints": {},
+            "foreign_keys": {
+              "claim_passed_test": {
+                "child_relation": "published_claim_links",
+                "child_fields": [
+                  "test_case_id"
+                ],
+                "parent_relation": "passed_cases",
+                "parent_fields": [
+                  "case_id"
+                ]
+              }
+            },
+            "cardinality_constraints": {},
+            "value_ranges": {},
+            "conditional_requirements": {},
+            "aggregate_balances": {},
+            "consistency_relations": {},
+            "temporal_constraints": {}
+          },
+          "unknowns": [],
+          "persist": true
+        },
+        "result": {
+          "family": "data_integrity",
+          "mode": "verify",
+          "outcome": "pass",
+          "rule_results": [
+            {
+              "rule_id": "data_integrity.foreign_key",
+              "binding_index": 0,
+              "status": "sat",
+              "outcome": "pass"
+            }
+          ],
+          "total_duration_ms": 55,
+          "status": "sat",
+          "model": {
+            "di_r0_row0_active": 1,
+            "di_r0_row0_f0_present": 1,
+            "di_r0_row0_f0_value": 14,
+            "di_r0_row1_active": 1,
+            "di_r0_row1_f0_present": 1,
+            "di_r0_row1_f0_value": 15,
+            "di_r0_row2_active": 1,
+            "di_r0_row2_f0_present": 1,
+            "di_r0_row2_f0_value": 16,
+            "di_r0_row3_active": 1,
+            "di_r0_row3_f0_present": 1,
+            "di_r0_row3_f0_value": 18,
+            "di_r0_row4_active": 1,
+            "di_r0_row4_f0_present": 1,
+            "di_r0_row4_f0_value": 20,
+            "di_r0_row5_active": 1,
+            "di_r0_row5_f0_present": 1,
+            "di_r0_row5_f0_value": 22,
+            "di_r0_row6_active": 1,
+            "di_r0_row6_f0_present": 1,
+            "di_r0_row6_f0_value": 24,
+            "di_r0_row7_active": 1,
+            "di_r0_row7_f0_present": 1,
+            "di_r0_row7_f0_value": 27,
+            "di_r1_row0_active": 1,
+            "di_r1_row0_f0_present": 1,
+            "di_r1_row0_f0_value": 15,
+            "di_r1_row1_active": 1,
+            "di_r1_row1_f0_present": 1,
+            "di_r1_row1_f0_value": 18,
+            "di_r1_row2_active": 1,
+            "di_r1_row2_f0_present": 1,
+            "di_r1_row2_f0_value": 16,
+            "di_r1_row3_active": 1,
+            "di_r1_row3_f0_present": 1,
+            "di_r1_row3_f0_value": 22,
+            "di_r1_row4_active": 1,
+            "di_r1_row4_f0_present": 1,
+            "di_r1_row4_f0_value": 14,
+            "di_r1_row5_active": 1,
+            "di_r1_row5_f0_present": 1,
+            "di_r1_row5_f0_value": 20,
+            "di_r1_row6_active": 1,
+            "di_r1_row6_f0_present": 1,
+            "di_r1_row6_f0_value": 24,
+            "di_r1_row7_active": 1,
+            "di_r1_row7_f0_present": 1,
+            "di_r1_row7_f0_value": 27
+          },
+          "duration_ms": 28,
+          "solve_id": "sol_3b6488390bb04e2d",
+          "reason": null,
+          "solver_version": "Z3 version 4.16.0 - 64 bit"
+        }
+      },
+      {
+        "id": "partition_2",
+        "expected": "accept_claim_links",
+        "request": {
+          "family": "data_integrity",
+          "mode": "verify",
+          "rules": [
+            {
+              "rule_id": "data_integrity.foreign_key",
+              "subjects": [
+                "claim_passed_test"
+              ],
+              "parameters": {}
+            }
+          ],
+          "facts": {
+            "relations": {
+              "passed_cases": {
+                "fields": {
+                  "case_id": {
+                    "kind": "integer",
+                    "minimum": 1,
+                    "maximum": 32
+                  }
+                },
+                "rows": {
+                  "case_8": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 8
+                      }
+                    }
+                  },
+                  "case_11": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 11
+                      }
+                    }
+                  },
+                  "case_12": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 12
+                      }
+                    }
+                  },
+                  "case_13": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 13
+                      }
+                    }
+                  },
+                  "case_21": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 21
+                      }
+                    }
+                  },
+                  "case_23": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 23
+                      }
+                    }
+                  },
+                  "case_26": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 26
+                      }
+                    }
+                  },
+                  "case_31": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 31
+                      }
+                    }
+                  }
+                }
+              },
+              "published_claim_links": {
+                "fields": {
+                  "test_case_id": {
+                    "kind": "integer",
+                    "minimum": 1,
+                    "maximum": 32
+                  }
+                },
+                "rows": {
+                  "graph-table-and-relational-parity.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 23
+                      }
+                    }
+                  },
+                  "graph-table-and-relational-parity.2": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 26
+                      }
+                    }
+                  },
+                  "sql-bag-semantics.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 31
+                      }
+                    }
+                  },
+                  "provider-generation.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 21
+                      }
+                    }
+                  },
+                  "provider-generation.2": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 12
+                      }
+                    }
+                  },
+                  "provider-inventory.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 13
+                      }
+                    }
+                  },
+                  "relate-and-ladybug.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 11
+                      }
+                    }
+                  },
+                  "embedded-projection-and-filter-pushdown.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 8
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "unique_constraints": {},
+            "foreign_keys": {
+              "claim_passed_test": {
+                "child_relation": "published_claim_links",
+                "child_fields": [
+                  "test_case_id"
+                ],
+                "parent_relation": "passed_cases",
+                "parent_fields": [
+                  "case_id"
+                ]
+              }
+            },
+            "cardinality_constraints": {},
+            "value_ranges": {},
+            "conditional_requirements": {},
+            "aggregate_balances": {},
+            "consistency_relations": {},
+            "temporal_constraints": {}
+          },
+          "unknowns": [],
+          "persist": true
+        },
+        "result": {
+          "family": "data_integrity",
+          "mode": "verify",
+          "outcome": "pass",
+          "rule_results": [
+            {
+              "rule_id": "data_integrity.foreign_key",
+              "binding_index": 0,
+              "status": "sat",
+              "outcome": "pass"
+            }
+          ],
+          "total_duration_ms": 36,
+          "status": "sat",
+          "model": {
+            "di_r0_row0_active": 1,
+            "di_r0_row0_f0_present": 1,
+            "di_r0_row0_f0_value": 11,
+            "di_r0_row1_active": 1,
+            "di_r0_row1_f0_present": 1,
+            "di_r0_row1_f0_value": 12,
+            "di_r0_row2_active": 1,
+            "di_r0_row2_f0_present": 1,
+            "di_r0_row2_f0_value": 13,
+            "di_r0_row3_active": 1,
+            "di_r0_row3_f0_present": 1,
+            "di_r0_row3_f0_value": 21,
+            "di_r0_row4_active": 1,
+            "di_r0_row4_f0_present": 1,
+            "di_r0_row4_f0_value": 23,
+            "di_r0_row5_active": 1,
+            "di_r0_row5_f0_present": 1,
+            "di_r0_row5_f0_value": 26,
+            "di_r0_row6_active": 1,
+            "di_r0_row6_f0_present": 1,
+            "di_r0_row6_f0_value": 31,
+            "di_r0_row7_active": 1,
+            "di_r0_row7_f0_present": 1,
+            "di_r0_row7_f0_value": 8,
+            "di_r1_row0_active": 1,
+            "di_r1_row0_f0_present": 1,
+            "di_r1_row0_f0_value": 8,
+            "di_r1_row1_active": 1,
+            "di_r1_row1_f0_present": 1,
+            "di_r1_row1_f0_value": 23,
+            "di_r1_row2_active": 1,
+            "di_r1_row2_f0_present": 1,
+            "di_r1_row2_f0_value": 26,
+            "di_r1_row3_active": 1,
+            "di_r1_row3_f0_present": 1,
+            "di_r1_row3_f0_value": 21,
+            "di_r1_row4_active": 1,
+            "di_r1_row4_f0_present": 1,
+            "di_r1_row4_f0_value": 12,
+            "di_r1_row5_active": 1,
+            "di_r1_row5_f0_present": 1,
+            "di_r1_row5_f0_value": 13,
+            "di_r1_row6_active": 1,
+            "di_r1_row6_f0_present": 1,
+            "di_r1_row6_f0_value": 11,
+            "di_r1_row7_active": 1,
+            "di_r1_row7_f0_present": 1,
+            "di_r1_row7_f0_value": 31
+          },
+          "duration_ms": 8,
+          "solve_id": "sol_03f14fbc6c8048f0",
+          "reason": null,
+          "solver_version": "Z3 version 4.16.0 - 64 bit"
+        }
+      },
+      {
+        "id": "partition_3",
+        "expected": "accept_claim_links",
+        "request": {
+          "family": "data_integrity",
+          "mode": "verify",
+          "rules": [
+            {
+              "rule_id": "data_integrity.foreign_key",
+              "subjects": [
+                "claim_passed_test"
+              ],
+              "parameters": {}
+            }
+          ],
+          "facts": {
+            "relations": {
+              "passed_cases": {
+                "fields": {
+                  "case_id": {
+                    "kind": "integer",
+                    "minimum": 1,
+                    "maximum": 32
+                  }
+                },
+                "rows": {
+                  "case_6": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 6
+                      }
+                    }
+                  },
+                  "case_7": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 7
+                      }
+                    }
+                  },
+                  "case_9": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 9
+                      }
+                    }
+                  },
+                  "case_10": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 10
+                      }
+                    }
+                  },
+                  "case_19": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 19
+                      }
+                    }
+                  },
+                  "case_25": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 25
+                      }
+                    }
+                  },
+                  "case_28": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 28
+                      }
+                    }
+                  },
+                  "case_30": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 30
+                      }
+                    }
+                  }
+                }
+              },
+              "published_claim_links": {
+                "fields": {
+                  "test_case_id": {
+                    "kind": "integer",
+                    "minimum": 1,
+                    "maximum": 32
+                  }
+                },
+                "rows": {
+                  "embedded-projection-and-filter-pushdown.2": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 7
+                      }
+                    }
+                  },
+                  "runtime-watchlists.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 30
+                      }
+                    }
+                  },
+                  "runtime-watchlists.2": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 9
+                      }
+                    }
+                  },
+                  "embedded-aggregate-pushdown.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 19
+                      }
+                    }
+                  },
+                  "embedded-aggregate-pushdown.2": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 6
+                      }
+                    }
+                  },
+                  "plan-inspection.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 10
+                      }
+                    }
+                  },
+                  "host-access-policy.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 25
+                      }
+                    }
+                  },
+                  "host-access-policy.2": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 28
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "unique_constraints": {},
+            "foreign_keys": {
+              "claim_passed_test": {
+                "child_relation": "published_claim_links",
+                "child_fields": [
+                  "test_case_id"
+                ],
+                "parent_relation": "passed_cases",
+                "parent_fields": [
+                  "case_id"
+                ]
+              }
+            },
+            "cardinality_constraints": {},
+            "value_ranges": {},
+            "conditional_requirements": {},
+            "aggregate_balances": {},
+            "consistency_relations": {},
+            "temporal_constraints": {}
+          },
+          "unknowns": [],
+          "persist": true
+        },
+        "result": {
+          "family": "data_integrity",
+          "mode": "verify",
+          "outcome": "pass",
+          "rule_results": [
+            {
+              "rule_id": "data_integrity.foreign_key",
+              "binding_index": 0,
+              "status": "sat",
+              "outcome": "pass"
+            }
+          ],
+          "total_duration_ms": 35,
+          "status": "sat",
+          "model": {
+            "di_r0_row0_active": 1,
+            "di_r0_row0_f0_present": 1,
+            "di_r0_row0_f0_value": 10,
+            "di_r0_row1_active": 1,
+            "di_r0_row1_f0_present": 1,
+            "di_r0_row1_f0_value": 19,
+            "di_r0_row2_active": 1,
+            "di_r0_row2_f0_present": 1,
+            "di_r0_row2_f0_value": 25,
+            "di_r0_row3_active": 1,
+            "di_r0_row3_f0_present": 1,
+            "di_r0_row3_f0_value": 28,
+            "di_r0_row4_active": 1,
+            "di_r0_row4_f0_present": 1,
+            "di_r0_row4_f0_value": 30,
+            "di_r0_row5_active": 1,
+            "di_r0_row5_f0_present": 1,
+            "di_r0_row5_f0_value": 6,
+            "di_r0_row6_active": 1,
+            "di_r0_row6_f0_present": 1,
+            "di_r0_row6_f0_value": 7,
+            "di_r0_row7_active": 1,
+            "di_r0_row7_f0_present": 1,
+            "di_r0_row7_f0_value": 9,
+            "di_r1_row0_active": 1,
+            "di_r1_row0_f0_present": 1,
+            "di_r1_row0_f0_value": 19,
+            "di_r1_row1_active": 1,
+            "di_r1_row1_f0_present": 1,
+            "di_r1_row1_f0_value": 6,
+            "di_r1_row2_active": 1,
+            "di_r1_row2_f0_present": 1,
+            "di_r1_row2_f0_value": 7,
+            "di_r1_row3_active": 1,
+            "di_r1_row3_f0_present": 1,
+            "di_r1_row3_f0_value": 25,
+            "di_r1_row4_active": 1,
+            "di_r1_row4_f0_present": 1,
+            "di_r1_row4_f0_value": 28,
+            "di_r1_row5_active": 1,
+            "di_r1_row5_f0_present": 1,
+            "di_r1_row5_f0_value": 10,
+            "di_r1_row6_active": 1,
+            "di_r1_row6_f0_present": 1,
+            "di_r1_row6_f0_value": 30,
+            "di_r1_row7_active": 1,
+            "di_r1_row7_f0_present": 1,
+            "di_r1_row7_f0_value": 9
+          },
+          "duration_ms": 9,
+          "solve_id": "sol_2555cc36afb04cbe",
+          "reason": null,
+          "solver_version": "Z3 version 4.16.0 - 64 bit"
+        }
+      },
+      {
+        "id": "partition_4",
+        "expected": "accept_claim_links",
+        "request": {
+          "family": "data_integrity",
+          "mode": "verify",
+          "rules": [
+            {
+              "rule_id": "data_integrity.foreign_key",
+              "subjects": [
+                "claim_passed_test"
+              ],
+              "parameters": {}
+            }
+          ],
+          "facts": {
+            "relations": {
+              "passed_cases": {
+                "fields": {
+                  "case_id": {
+                    "kind": "integer",
+                    "minimum": 1,
+                    "maximum": 32
+                  }
+                },
+                "rows": {
+                  "case_1": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 1
+                      }
+                    }
+                  },
+                  "case_2": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 2
+                      }
+                    }
+                  },
+                  "case_3": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 3
+                      }
+                    }
+                  },
+                  "case_4": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 4
+                      }
+                    }
+                  },
+                  "case_5": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 5
+                      }
+                    }
+                  },
+                  "case_17": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 17
+                      }
+                    }
+                  },
+                  "case_29": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 29
+                      }
+                    }
+                  }
+                }
+              },
+              "published_claim_links": {
+                "fields": {
+                  "test_case_id": {
+                    "kind": "integer",
+                    "minimum": 1,
+                    "maximum": 32
+                  }
+                },
+                "rows": {
+                  "read-budgets.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 29
+                      }
+                    }
+                  },
+                  "read-budgets.2": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 4
+                      }
+                    }
+                  },
+                  "neo4j-typed-reads-and-graph-tables.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 3
+                      }
+                    }
+                  },
+                  "neo4j-typed-reads-and-graph-tables.2": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 4
+                      }
+                    }
+                  },
+                  "neo4j-managed-credentials.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 1
+                      }
+                    }
+                  },
+                  "neo4j-managed-credentials.2": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 2
+                      }
+                    }
+                  },
+                  "feature-off-cypher.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 17
+                      }
+                    }
+                  },
+                  "adbc-arrow-client.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 5
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "unique_constraints": {},
+            "foreign_keys": {
+              "claim_passed_test": {
+                "child_relation": "published_claim_links",
+                "child_fields": [
+                  "test_case_id"
+                ],
+                "parent_relation": "passed_cases",
+                "parent_fields": [
+                  "case_id"
+                ]
+              }
+            },
+            "cardinality_constraints": {},
+            "value_ranges": {},
+            "conditional_requirements": {},
+            "aggregate_balances": {},
+            "consistency_relations": {},
+            "temporal_constraints": {}
+          },
+          "unknowns": [],
+          "persist": true
+        },
+        "result": {
+          "family": "data_integrity",
+          "mode": "verify",
+          "outcome": "pass",
+          "rule_results": [
+            {
+              "rule_id": "data_integrity.foreign_key",
+              "binding_index": 0,
+              "status": "sat",
+              "outcome": "pass"
+            }
+          ],
+          "total_duration_ms": 36,
+          "status": "sat",
+          "model": {
+            "di_r0_row0_active": 1,
+            "di_r0_row0_f0_present": 1,
+            "di_r0_row0_f0_value": 1,
+            "di_r0_row1_active": 1,
+            "di_r0_row1_f0_present": 1,
+            "di_r0_row1_f0_value": 17,
+            "di_r0_row2_active": 1,
+            "di_r0_row2_f0_present": 1,
+            "di_r0_row2_f0_value": 2,
+            "di_r0_row3_active": 1,
+            "di_r0_row3_f0_present": 1,
+            "di_r0_row3_f0_value": 29,
+            "di_r0_row4_active": 1,
+            "di_r0_row4_f0_present": 1,
+            "di_r0_row4_f0_value": 3,
+            "di_r0_row5_active": 1,
+            "di_r0_row5_f0_present": 1,
+            "di_r0_row5_f0_value": 4,
+            "di_r0_row6_active": 1,
+            "di_r0_row6_f0_present": 1,
+            "di_r0_row6_f0_value": 5,
+            "di_r1_row0_active": 1,
+            "di_r1_row0_f0_present": 1,
+            "di_r1_row0_f0_value": 5,
+            "di_r1_row1_active": 1,
+            "di_r1_row1_f0_present": 1,
+            "di_r1_row1_f0_value": 17,
+            "di_r1_row2_active": 1,
+            "di_r1_row2_f0_present": 1,
+            "di_r1_row2_f0_value": 1,
+            "di_r1_row3_active": 1,
+            "di_r1_row3_f0_present": 1,
+            "di_r1_row3_f0_value": 2,
+            "di_r1_row4_active": 1,
+            "di_r1_row4_f0_present": 1,
+            "di_r1_row4_f0_value": 3,
+            "di_r1_row5_active": 1,
+            "di_r1_row5_f0_present": 1,
+            "di_r1_row5_f0_value": 4,
+            "di_r1_row6_active": 1,
+            "di_r1_row6_f0_present": 1,
+            "di_r1_row6_f0_value": 29,
+            "di_r1_row7_active": 1,
+            "di_r1_row7_f0_present": 1,
+            "di_r1_row7_f0_value": 4
+          },
+          "duration_ms": 8,
+          "solve_id": "sol_b146245b50b84b8b",
+          "reason": null,
+          "solver_version": "Z3 version 4.16.0 - 64 bit"
+        }
+      },
+      {
+        "id": "dangling",
+        "expected": "reject_missing_test_reference",
+        "request": {
+          "family": "data_integrity",
+          "mode": "verify",
+          "rules": [
+            {
+              "rule_id": "data_integrity.foreign_key",
+              "subjects": [
+                "claim_passed_test"
+              ],
+              "parameters": {}
+            }
+          ],
+          "facts": {
+            "relations": {
+              "passed_cases": {
+                "fields": {
+                  "case_id": {
+                    "kind": "integer",
+                    "minimum": 1,
+                    "maximum": 32
+                  }
+                },
+                "rows": {
+                  "case_14": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 14
+                      }
+                    }
+                  },
+                  "case_15": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 15
+                      }
+                    }
+                  },
+                  "case_16": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 16
+                      }
+                    }
+                  },
+                  "case_18": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 18
+                      }
+                    }
+                  },
+                  "case_20": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 20
+                      }
+                    }
+                  },
+                  "case_22": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 22
+                      }
+                    }
+                  },
+                  "case_24": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 24
+                      }
+                    }
+                  },
+                  "case_27": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 27
+                      }
+                    }
+                  }
+                }
+              },
+              "published_claim_links": {
+                "fields": {
+                  "test_case_id": {
+                    "kind": "integer",
+                    "minimum": 1,
+                    "maximum": 32
+                  }
+                },
+                "rows": {
+                  "typed-embedded-reads.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 32
+                      }
+                    }
+                  },
+                  "read-only-admission.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 14
+                      }
+                    }
+                  },
+                  "explicit-cypher-bindings.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 15
+                      }
+                    }
+                  },
+                  "standalone-scope.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 20
+                      }
+                    }
+                  },
+                  "prepared-graph-parameters.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 22
+                      }
+                    }
+                  },
+                  "gql-subset.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 18
+                      }
+                    }
+                  },
+                  "gql-subset.2": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 16
+                      }
+                    }
+                  },
+                  "structured-graph-values.1": {
+                    "active": true,
+                    "cells": {
+                      "test_case_id": {
+                        "present": true,
+                        "value": 24
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "unique_constraints": {},
+            "foreign_keys": {
+              "claim_passed_test": {
+                "child_relation": "published_claim_links",
+                "child_fields": [
+                  "test_case_id"
+                ],
+                "parent_relation": "passed_cases",
+                "parent_fields": [
+                  "case_id"
+                ]
+              }
+            },
+            "cardinality_constraints": {},
+            "value_ranges": {},
+            "conditional_requirements": {},
+            "aggregate_balances": {},
+            "consistency_relations": {},
+            "temporal_constraints": {}
+          },
+          "unknowns": [],
+          "persist": true
+        },
+        "result": {
+          "family": "data_integrity",
+          "mode": "verify",
+          "outcome": "fail",
+          "rule_results": [
+            {
+              "rule_id": "data_integrity.foreign_key",
+              "binding_index": 0,
+              "status": "unsat",
+              "outcome": "fail",
+              "diagnostic": "data_integrity.foreign_key.violation"
+            }
+          ],
+          "total_duration_ms": 41,
+          "status": "unsat",
+          "duration_ms": 9,
+          "solve_id": "sol_ca496048720b40ff",
+          "reason": null,
+          "unsat_core": [
+            "data_integrity_rule_0_data_integrity_foreign_key__subject_claim_passed_test"
+          ],
+          "solver_version": "Z3 version 4.16.0 - 64 bit"
+        }
+      }
+    ]
+  }
+}

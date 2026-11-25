@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "npm run build:assets && vite",
-    "build": "npm run build:assets && vite build",
+    "build": "npm run build:assets && vite build && node scripts/publish-docs.mjs",
     "preview": "vite preview",
     "test": "playwright test",
     "build:assets": "node scripts/build-bridge.mjs && node scripts/build-engines.mjs"

@@ -2,7 +2,7 @@
 
 QuackWeave is a native DuckDB extension for reading an existing local Ladybug graph. The MVP2 package supports standalone graph reads and SQL/PGQ graph table expressions. DuckDB can join their typed columns to its own tables and Parquet files. The explicit-schema `qw_query` interface is also available.
 
-[Open the browser playground](https://kevintruong.github.io/quack-weave/) to try SQL, Cypher, and hybrid queries on the PaperTrail sample. See the [playground source and local setup](playground/README.md).
+[Read the documentation](https://kevintruong.github.io/quack-weave/docs/) for provider setup, query examples, and SQLLogic evidence. [Open the browser playground](https://kevintruong.github.io/quack-weave/) to try SQL, Cypher, and hybrid queries on the PaperTrail sample. See the [playground source and local setup](playground/README.md).
 
 ## Build and use MVP1
 

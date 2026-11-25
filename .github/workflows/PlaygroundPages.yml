@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/PlaygroundPages.yml
       - crates/core/src/qw_query/schema.rs
+      - docs/**
       - playground/**
   workflow_dispatch:
 

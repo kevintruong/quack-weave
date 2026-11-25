@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Build and query Quack Weave with DuckDB, Ladybug, RelateDB, and Neo4j Aura. See the SQLLogic evidence for each capability.">
+  <meta name="theme-color" content="#13191a">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./styles.css">
+  <title>Quack Weave documentation</title>
+</head>
+<body>
+  <a class="skip-link" href="#content">Skip to content</a>
+  <header class="topbar">
+    <div class="frame topbar-inner">
+      <a class="brand" href="../"><span aria-hidden="true">Q</span> Quack Weave</a>
+      <nav aria-label="Site">
+        <a href="../">Playground</a>
+        <a href="https://github.com/kevintruong/quack-weave">GitHub</a>
+      </nav>
+    </div>
+  </header>
+  <div class="frame layout">
+    <nav class="contents" aria-label="Documentation contents">
+      <a href="#overview">Overview</a>
+      <a href="#build">Build and connect</a>
+      <a href="#query">Query interfaces</a>
+      <a href="#providers">Provider setup</a>
+      <a href="#runtime">Planning and limits</a>
+      <a href="#clients">Client and browser use</a>
+      <a href="#evidence">SQLLogic evidence</a>
+    </nav>
+    <main id="content">
+      <section class="intro" id="overview">
+        <h1>Quack Weave documentation</h1>
+        <p>Read graph data as typed DuckDB relations. Use the native extension to query Ladybug, RelateDB, or Neo4j Aura and join the results to SQL tables and files.</p>
+        <p class="revision">Native verification snapshot <code>dfbc449</code> · DuckDB <code>v2.0.1</code></p>
+      </section>
+
+      <section id="build">
+        <h2>Build and connect</h2>
+        <p>Native packages target macOS ARM64 and Linux ARM64. Use the exact DuckDB <code>v2.0.1</code> runtime for these extension files. Ladybug is pinned to <code>v0.22.3</code> and the optional RelateDB backend to <code>v1.2.0</code>.</p>
+        <div class="scroll" role="region" aria-label="Native builds" tabindex="0">
+          <table>
+            <thead><tr><th scope="col">Build</th><th scope="col">Providers</th><th scope="col">Query interfaces</th></tr></thead>
+            <tbody>
+              <tr><th scope="row"><code>make mvp1</code></th><td>Ladybug</td><td>Explicit-schema <code>qw_query</code> with Cypher</td></tr>
+              <tr><th scope="row"><code>make mvp2-release</code></th><td>Ladybug</td><td>Cypher and the supported GQL subset, standalone reads and <code>GRAPH_TABLE</code></td></tr>
+              <tr><th scope="row"><code>make mvp2-relate-release</code></th><td>Ladybug and RelateDB</td><td>MVP2 query interfaces on embedded graphs</td></tr>
+              <tr><th scope="row"><code>make mvp2-neo4j-release</code></th><td>Ladybug and Neo4j Aura</td><td>Ladybug MVP2 interfaces, plus typed Cypher and catalog-backed <code>GRAPH_TABLE</code> on Aura</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>The Neo4j build and credential workflow below apply to the verified development snapshot. Use a checkout containing that implementation for <code>mvp2-neo4j-release</code>.</p>
+        <p>Install Rust, a C++ compiler, Python 3.12 or later, and OpenSSL 3 static libraries. MVP2 also uses CMake. Run <code>make mvp1-deps</code> for MVP1 or <code>make mvp2-deps</code> for MVP2.</p>
+        <p>For a local unsigned package, start the pinned CLI with <code>-unsigned</code> and load the extension you built.</p>
+        <pre><code>make mvp2-deps
+make mvp2-release
+/path/to/duckdb-v2.0.1 -unsigned</code></pre>
+        <pre><code>LOAD '/path/to/build/mvp2/release/extension/quack_weave/quack_weave.duckdb_extension';
+SET GLOBAL qw_ladybug_config = '{"alias":"air_routes","path":"/path/to/air_routes.lbdb"}';
+
+SELECT provider_id, setting_name, active_alias
+FROM qw_graph_providers()
+ORDER BY provider_id;</code></pre>
+        <p>Each installed provider has one registration slot per DuckDB instance. Graph aliases are case-insensitive and unique across providers. Use <code>active_alias</code> to inspect routing after concurrent registration or reset.</p>
+      </section>
+
+      <section id="query">
+        <h2>Query interfaces</h2>
+        <h3>Explicit-schema reads with <code>qw_query</code></h3>
+        <p>Use <code>qw_query</code> in a <code>FROM</code> clause. Supply the columns in graph-result order using <code>BOOLEAN</code>, <code>BIGINT</code>, <code>DOUBLE</code>, or <code>VARCHAR</code>. For Cypher, pass named scalar parameters as a DuckDB <code>STRUCT</code>. SQL aliases can rename the projection.</p>
+        <pre><code>SELECT destination, miles
+FROM qw_query(
+    'air_routes', 'cypher',
+    $$MATCH (o:airport)-[r:route]-&gt;(d:airport)
+      WHERE o.code = $origin
+      RETURN d.code AS destination, r.dist AS miles$$,
+    schema := 'destination VARCHAR, miles BIGINT',
+    bindings := {'origin': 'ATL'}
+);</code></pre>
+        <p>MVP2's explicit-schema GQL bridge accepts a fixed directed <code>MATCH</code> with labeled nodes and a typed relationship, aliased scalar property projections, and an optional property-to-literal comparison. Use ASCII identifiers and omit the trailing semicolon inside the graph text. GQL parse errors use <code>QW_GQL_PARSE</code>, and valid syntax outside this bridge uses <code>QW_GQL_SUBSET</code>.</p>
+
+        <h3>Standalone graph reads</h3>
+        <p>MVP2 binds standalone <code>MATCH</code> to the graph selected on the DuckDB connection. Its default dialect is the supported GQL subset. Set <code>qw_graph_dialect</code> to <code>cypher</code> for Cypher. If a connection predates the extension load, enable the grammar there with <code>CALL add_grammar_extension('quack_weave')</code>.</p>
+        <pre><code>SESSION SET GRAPH air_routes;
+SET SESSION qw_graph_dialect = 'cypher';
+
+PREPARE flights AS
+MATCH (o:airport)-[r:route]-&gt;(d:airport)
+WHERE o.code = $origin
+RETURN d.code AS destination, r.dist AS miles;
+
+EXECUTE flights(origin := 'ATL');</code></pre>
+        <p>On the Ladybug path, supported node and relationship values project to DuckDB structures, with identity fields such as <code>_ID</code>, <code>_SRC</code>, and <code>_DST</code>. A supported named path carries ordered <code>_NODES</code> and <code>_RELS</code> lists. The explicit-schema bridge remains scalar.</p>
+
+        <h3>SQL joins with <code>GRAPH_TABLE</code></h3>
+        <p>Put the graph alias and a supported named, labeled pattern inside <code>GRAPH_TABLE</code>. Project graph properties with <code>COLUMNS</code>, then apply SQL joins, subqueries, set operations, or aggregates in DuckDB.</p>
+        <pre><code>WITH watch(route_id) AS (VALUES (101::BIGINT), (104::BIGINT), (101::BIGINT))
+SELECT g.route_id, g.destination, g.miles
+FROM GRAPH_TABLE (
+    air_routes MATCH (o:airport)-[r:route]-&gt;(d:airport)
+    COLUMNS (r.rid AS route_id, d.code AS destination, r.dist AS miles)
+) AS g
+JOIN watch USING (route_id)
+ORDER BY g.route_id;</code></pre>
+        <p>DuckDB keeps duplicate joins and <code>UNION ALL</code> rows and applies its usual NULL and scalar-subquery rules. Use an outer <code>ORDER BY</code> for deterministic ordering, and <code>AS MATERIALIZED</code> when multiple references should share one graph result.</p>
+      </section>
+
+      <section id="providers">
+        <h2>Provider setup</h2>
+        <h3>Ladybug</h3>
+        <p>Register an existing <code>.lbdb</code> file with <code>qw_ladybug_config</code>. Reads reuse the registered read-only database handle and open a connection per scan. Optional <code>timeout_ms</code> and <code>max_batch_bytes</code> values must be positive.</p>
+        <h3>RelateDB</h3>
+        <p>Use the optional RelateDB build and a checkpointed single-file <code>.rl</code> bundle. Configure it with <code>qw_relate_config</code>. Registration opens a read-only snapshot and ordinarily discovers node and relationship property types. A declared <code>catalog</code> can supply types for empty or uninferable data. Use <code>node:Label</code> and <code>relationship:Type</code> keys when those identities must be distinguished. RelateDB supports the bridge batch limit, and its configuration rejects <code>timeout_ms</code> with <code>QW_CONFIG</code>.</p>
+        <pre><code>SET GLOBAL qw_relate_config = '{"alias":"relate_routes","path":"/path/to/routes.rl"}';
+SELECT * FROM qw_graph_providers() ORDER BY provider_id;</code></pre>
+        <p>Give Ladybug and RelateDB different aliases to query both in one DuckDB connection. Before replacing an embedded file, reset the provider registration, replace the file and register it again. Reprepare previously bound queries against the new generation.</p>
+        <h3>Neo4j Aura</h3>
+        <p>Configure the Aura database name and HTTPS origin with <code>qw_neo4j_config</code>. The Query API uses Basic authentication and typed JSON. Enable DuckDB external access and the explicit global remote-read switch. Use a Neo4j identity with effective read-only privileges.</p>
+        <pre><code>CREATE SECRET routes IN connection (
+    TYPE quack_weave_neo4j,
+    ORIGIN 'https://example.databases.neo4j.io',
+    USERNAME 'graph_reader',
+    PASSWORD '&lt;password&gt;'
+);
+SET GLOBAL qw_enable_remote_graphs = true;
+SET GLOBAL qw_neo4j_config = '{
+  "alias":"remote_routes",
+  "endpoint":"https://example.databases.neo4j.io",
+  "database":"neo4j",
+  "secret":"routes",
+  "timeout_ms":5000,
+  "max_response_bytes":1048576,
+  "catalog":{"node:airport":{"code":"VARCHAR"}}
+}';
+
+SELECT * FROM qw_query(
+    'remote_routes', 'cypher', 'RETURN 1 AS id', schema := 'id BIGINT'
+);</code></pre>
+        <ul>
+          <li><strong>Named secrets.</strong> Provision the same secret name on each connection that queries the graph. Each scan resolves it in that connection, checks the secret type and matches the canonical HTTPS origin. Port <code>:443</code> is equivalent to the default port.</li>
+          <li><strong>Rotation and revocation.</strong> <code>CREATE OR REPLACE SECRET routes IN connection (...)</code> affects later scans, including prepared executions. <code>DROP SECRET routes FROM connection</code> or closing the connection removes that credential.</li>
+          <li><strong>Environment references.</strong> Alternatively configure <code>"credential_ref":"routes"</code> and the process variables <code>QW_NEO4J_ROUTES_ENDPOINT</code>, <code>QW_NEO4J_ROUTES_USERNAME</code> and <code>QW_NEO4J_ROUTES_PASSWORD</code>. The environment endpoint must equal the registered endpoint. Set exactly one reference field.</li>
+          <li><strong>Remote query interfaces.</strong> Use Cypher with an explicit scalar schema or <code>GRAPH_TABLE</code> with a catalog for every projected property. Put selective predicates directly in the Cypher passed to <code>qw_query</code> to reduce the response.</li>
+        </ul>
+        <p>DuckDB's CLI can store literal secret statements in its history. Use your application's credential provisioning path or the environment option for real credentials. <a href="https://duckdb.org/docs/2.0/sql/statements/create_secret">DuckDB CREATE SECRET</a> · <a href="https://neo4j.com/docs/aura/connecting-applications/query-api/">Neo4j Query API on Aura</a></p>
+      </section>
+
+      <section id="runtime">
+        <h2>Planning and limits</h2>
+        <div class="scroll" role="region" aria-label="Planning and execution behavior" tabindex="0">
+          <table>
+            <thead><tr><th scope="col">Behavior</th><th scope="col">What to expect</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Projection and filters</th><td>On eligible Ladybug and discovered-catalog RelateDB patterns, Quack Weave can fetch only needed properties and send simple graph predicates or small <code>BIGINT</code> equality and IN keys. DuckDB retains the SQL filters.</td></tr>
+              <tr><th scope="row">Watchlists</th><td>Eligible embedded equality joins can use up to 64 integer keys. A runtime watchlist depends on DuckDB selecting the watchlist as the hash-table build side and producing an exact eligible filter. DuckDB still joins the original rows and keeps duplicates.</td></tr>
+              <tr><th scope="row">Aggregates</th><td>Eligible embedded scalar <code>COUNT(*)</code> and sums can return one graph row. RelateDB's bounded modulo sums require an observed catalog and an accumulator bound. Other forms use DuckDB's aggregation.</td></tr>
+              <tr><th scope="row">Remote graph tables</th><td>DuckDB evaluates SQL predicates, joins, and aggregates after the Aura read. Cypher in <code>qw_query</code> can compute the same operation in Aura and return fewer rows.</td></tr>
+              <tr><th scope="row">Plans</th><td>Use <code>EXPLAIN</code> to inspect eligible graph scans and <code>EXPLAIN (ANALYZE, FORMAT JSON)</code> to inspect rows returned by an executed scan.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Reads are admitted before dispatch. Embedded file reads obey the host external-access policy. Aura reads require both external access and <code>SET GLOBAL qw_enable_remote_graphs = true</code>. <code>RESET GLOBAL qw_enable_remote_graphs</code> disables new remote scans.</p>
+        <p>An explicit bridge batch budget bounds bridge-owned output, while an Aura response budget bounds the received HTTP body. Embedded engines can still materialize native results. Authored provider queries and explicitly budgeted reads can preserve their original provider evaluation instead of taking an optimizer rewrite.</p>
+        <div class="scroll" role="region" aria-label="Common diagnostics" tabindex="0">
+          <table>
+            <thead><tr><th scope="col">Diagnostic</th><th scope="col">Check</th></tr></thead>
+            <tbody>
+              <tr><th scope="row"><code>QW_CONFIG</code></th><td>Provider settings, alias ownership, and whether a bound graph registration has been replaced.</td></tr>
+              <tr><th scope="row"><code>QW_ACCESS</code></th><td>DuckDB external access and the remote-read switch.</td></tr>
+              <tr><th scope="row"><code>QW_AUTH</code></th><td>Credential availability in the executing connection, origin equality, and Aura authentication.</td></tr>
+              <tr><th scope="row"><code>QW_ADMISSION</code></th><td>A single supported, read-only graph statement.</td></tr>
+              <tr><th scope="row"><code>QW_SCHEMA</code></th><td>Output names, order, types, and any required declared catalog entries.</td></tr>
+              <tr><th scope="row"><code>QW_BATCH_BUDGET</code> or <code>QW_RESPONSE_BUDGET</code></th><td>The output batch or HTTP response cap. Reduce the graph result at the source where possible.</td></tr>
+              <tr><th scope="row"><code>QW_TIMEOUT</code> or <code>QW_TRANSPORT</code></th><td>The configured read deadline or Aura connectivity.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="clients">
+        <h2>Client and browser use</h2>
+        <p>The native ADBC example prepares a query, fetches typed Arrow result tables and ingests a graph result into a second DuckDB cursor. Use the matched DuckDB library with the extension. <a href="https://github.com/kevintruong/quack-weave/blob/main/test/public_client/run.py">Runnable ADBC example</a></p>
+        <p>The browser Playground runs a separate DuckDB Wasm and Ladybug Wasm pair over the bundled PaperTrail citation fixture. It offers browser SQL and Cypher, scalar <code>qw_query</code>, and a SQL/PGQ-style <code>GRAPH_TABLE</code> bridge that transfers typed Arrow rows. The sample alias is <code>kg</code>. The browser runs its own read-only sample graph and SQL session. <a href="../">Open the Playground</a> · <a href="https://github.com/kevintruong/quack-weave/tree/main/playground">Playground source and tests</a></p>
+      </section>
+
+      <section id="evidence">
+        <h2>SQLLogic evidence</h2>
+        <p>The recorded macOS ARM64 runs passed <strong>1,037 SQLLogic blocks across 55 test files</strong> with DuckDB v2.0.1. A block is one statement or query expectation. The counts omit the separate runtime-version probes.</p>
+        <div class="scroll" role="region" aria-label="Executed SQLLogic suites" tabindex="0">
+          <table>
+            <thead><tr><th scope="col">Suite</th><th scope="col">Files</th><th scope="col">Passed blocks</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Ladybug MVP2</th><td>30</td><td>650</td></tr>
+              <tr><th scope="row">Ladybug MVP1</th><td>3</td><td>19</td></tr>
+              <tr><th scope="row">RelateDB and Ladybug</th><td>17</td><td>280</td></tr>
+              <tr><th scope="row">Neo4j local TLS fixture</th><td>4</td><td>76</td></tr>
+              <tr><th scope="row">Public ADBC client</th><td>1</td><td>12</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="scroll" role="region" aria-label="SQLLogic evidence summary" tabindex="0">
+          <table>
+            <thead><tr><th scope="col">Area</th><th scope="col">Evidence examples</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Query admission and typed reads</th><td><code>reads.test</code>, <code>admission.test</code>, <code>declared_bindings.test</code>, <code>graph_parameters.test</code></td></tr>
+              <tr><th scope="row">Standalone GQL and graph values</th><td><code>graph_entry.test</code>, <code>duckgql_*.test</code>, <code>graph_values.test</code></td></tr>
+              <tr><th scope="row">Hybrid SQL and embedded planning</th><td><code>graph_table.test</code>, <code>hybrid_public.test</code>, <code>graph_aggregate_pushdown.test</code>, <code>table_watchlist.test</code>, and RelateDB's bound filter, projection and aggregate cases</td></tr>
+              <tr><th scope="row">Provider lifecycle and safety</th><td><code>host_access.test</code>, <code>remote_policy.test</code>, <code>scan.test</code>, <code>provider_inventory.test</code>, <code>provider_alias_race.test</code></td></tr>
+              <tr><th scope="row">Neo4j and credentials</th><td><code>provider.test</code>, <code>hybrid.test</code>, <code>credential_registration.test</code>, <code>credential_scan.test</code> with a local TLS Query API fixture</td></tr>
+              <tr><th scope="row">ADBC result parity</th><td><code>test/public_client/results.test</code> checks output rows and Arrow ingest results</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p><a href="./evidence.json">Download the SQLLogic and solver evidence manifest</a> for recorded suites, block counts, test-file hashes, claim mappings and the Jev/Z3 results. The solver checks that each listed claim references a passed test file in the recorded snapshot. Runtime behavior comes from those tests.</p>
+        <pre><code>make mvp2-stabilization-test DUCKDB_UNITTEST=/path/to/unittest LBUG=/path/to/lbug
+make mvp2-relate-test DUCKDB_UNITTEST=/path/to/unittest LBUG=/path/to/lbug
+make mvp2-neo4j-test DUCKDB_UNITTEST=/path/to/unittest
+make public-client-test DUCKDB_UNITTEST=/path/to/unittest DUCKDB_LIB=/path/to/libduckdb.dylib LBUG=/path/to/lbug</code></pre>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
