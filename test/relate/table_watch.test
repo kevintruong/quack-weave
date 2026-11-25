@@ -29,13 +29,13 @@ SELECT author, count(*), sum(miles_graph) FROM GRAPH_TABLE (air_routes MATCH (o:
 query TT
 EXPLAIN (ANALYZE, FORMAT JSON) SELECT author, count(*), sum(miles_graph) FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS author, e.dist AS miles_graph)) AS g JOIN watch USING(author) GROUP BY author ORDER BY author;
 ----
-analyzed_plan	<REGEX>:.*"intermediate_rows": 2,[^{}]*"name": "QW_GRAPH_QUERY_WATCH".*
+analyzed_plan	<REGEX>:.*"intermediate_rows": 2,[^{}]*"name": "QW_GRAPH_QUERY".*
 
 # USING also names the graph output when no table alias was supplied.
 query TT
 EXPLAIN (ANALYZE, FORMAT JSON) SELECT author FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS author)) JOIN watch USING(author);
 ----
-analyzed_plan	<REGEX>:.*"intermediate_rows": 2,[^{}]*"name": "QW_GRAPH_QUERY_WATCH".*
+analyzed_plan	<REGEX>:.*"intermediate_rows": 2,[^{}]*"name": "QW_GRAPH_QUERY".*
 
 # A table column-name list renames the actual join key, including on a
 # prepared statement whose table contents change after its first execution.

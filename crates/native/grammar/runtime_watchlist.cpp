@@ -5,6 +5,7 @@
 #include "duckdb/optimizer/join_filter_pushdown_optimizer.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
 #include "duckdb/optimizer/optimizer_extension.hpp"
+#include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/expression/bound_conjunction_expression.hpp"
 #include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
@@ -13,6 +14,7 @@
 #include "duckdb/planner/filter/expression_filter.hpp"
 #include "duckdb/planner/operator/logical_comparison_join.hpp"
 #include "duckdb/planner/operator/logical_get.hpp"
+#include "duckdb/planner/operator/logical_projection.hpp"
 
 namespace duckdb {
 namespace {
@@ -35,55 +37,50 @@ unique_ptr<LocalTableFunctionState> InitWatch(ExecutionContext &context, TableFu
 	return original_init(context, input, global);
 }
 
-void AttachWatch(OptimizerExtensionInput &input, LogicalOperator &op) {
-	if (op.type != LogicalOperatorType::LOGICAL_COMPARISON_JOIN) {
-		return;
+// Follow only column renames. Moving a predicate past a throwing or volatile
+// projection on unrelated rows could change the visible result of the query.
+LogicalGet *WatchSource(LogicalOperator &probe) {
+	auto *op = &probe;
+	while (op->type == LogicalOperatorType::LOGICAL_PROJECTION && op->children.size() == 1) {
+		for (const auto &expr : op->expressions) {
+			if (expr->GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF)
+				return nullptr;
+		}
+		op = op->children.front().get();
 	}
+	return op->type == LogicalOperatorType::LOGICAL_GET ? &op->Cast<LogicalGet>() : nullptr;
+}
+
+void AttachWatch(OptimizerExtensionInput &input, LogicalOperator &op) {
+	if (op.type != LogicalOperatorType::LOGICAL_COMPARISON_JOIN)
+		return;
 	auto &join = op.Cast<LogicalComparisonJoin>();
 	if (join.join_type != JoinType::INNER || join.conditions.size() != 1 || !join.conditions[0].IsComparison() ||
 	    join.conditions[0].GetComparisonType() != ExpressionType::COMPARE_EQUAL ||
-	    join.children[0]->type != LogicalOperatorType::LOGICAL_GET ||
-	    join.children[1]->type != LogicalOperatorType::LOGICAL_GET) {
+	    join.conditions[0].GetLHS().GetReturnType() != LogicalType::BIGINT ||
+	    join.children[1]->type != LogicalOperatorType::LOGICAL_GET || !join.children[1]->Cast<LogicalGet>().GetTable())
 		return;
-	}
-	auto &graph = join.children[0]->Cast<LogicalGet>();
-	auto &watch = join.children[1]->Cast<LogicalGet>();
-	if (graph.function.GetName() != "qw_graph_query_watch" || graph.function.GetCatalogName() != "system" ||
-	    graph.function.GetSchemaName() != "main" || !graph.function.GetDefinition()->init_local ||
-	    graph.function.init_local != graph.function.GetDefinition()->init_local || !watch.GetTable() ||
-	    !graph.children.empty() || !watch.children.empty() || graph.function.init_local == InitWatch ||
-	    graph.dynamic_filters || graph.table_filters.HasFilters()) {
+	auto graph = WatchSource(*join.children[0]);
+	if (!graph || !graph->children.empty() || graph->function.GetCatalogName() != "system" ||
+	    graph->function.GetSchemaName() != "main" ||
+	    (graph->function.GetName() != "qw_graph_query" && graph->function.GetName() != "qw_graph_query_watch") ||
+	    !graph->function.GetDefinition()->init_local || graph->function.init_local != graph->function.GetDefinition()->init_local ||
+	    !graph->bind_data || !graph->function.get_bind_info || graph->dynamic_filters || graph->table_filters.HasFilters())
 		return;
-	}
-	// The same function dispatches to multiple providers. Only attach dynamic
-	// filters when the bound backend admitted this exact integer watch column.
-	if (!graph.bind_data || !graph.function.get_bind_info) {
+
+	TableFunctionGetBindInfoInput bind_input(input.context, graph->bind_data.get());
+	auto info = graph->function.get_bind_info(bind_input);
+	if (info.options.find("qw_match") == info.options.end() && info.options.find("qw_runtime_watch") == info.options.end())
 		return;
-	}
-	TableFunctionGetBindInfoInput bind_info_input(input.context, graph.bind_data.get());
-	auto info = graph.function.get_bind_info(bind_info_input);
-	if (info.options.find("qw_runtime_watch") == info.options.end()) {
-		return;
-	}
-	// DuckDB propagates dynamic filters to the physical scan only for
-	// projection_pushdown sources. The C API implementation writes a complete
-	// schema, so opt in only when the requested output is exactly that schema.
-	const auto &columns = graph.GetColumnIds();
-	if (columns.size() != graph.returned_types.size() || !graph.projection_ids.empty())
-		return;
-	for (idx_t i = 0; i < columns.size(); ++i) {
-		if (columns[i].IsVirtualColumn() || columns[i].GetPrimaryIndex() != i || columns[i].HasChildren())
-			return;
-	}
-	// Only optional hash-join filters can enter this source. Static filters
-	// were already planned with filter_pushdown=false and remain in DuckDB.
-	graph.function.filter_pushdown = true;
+
+	// The pinned C API exposes bound static filters, but only the C++ init
+	// callback exposes DuckDB's execution-local dynamic filter set.
+	const auto previous = graph->function.filter_pushdown;
+	graph->function.filter_pushdown = true;
 	JoinFilterPushdownOptimizer(input.optimizer).VisitOperator(join);
-	graph.function.filter_pushdown = false;
-	if (graph.dynamic_filters) {
-		graph.function.projection_pushdown = true;
-		graph.function.init_local = InitWatch;
-	}
+	graph->function.filter_pushdown = previous;
+	if (graph->dynamic_filters)
+		graph->function.init_local = InitWatch;
 }
 
 size_t CopyKeys(const Expression &expr, int64_t *out, size_t cap) {

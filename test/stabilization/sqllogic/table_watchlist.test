@@ -28,7 +28,7 @@ SELECT g.id, count(*) FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->
 query TT
 EXPLAIN (ANALYZE, FORMAT JSON) SELECT g.id FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS id)) AS g JOIN watch AS w ON w.id=g.id;
 ----
-analyzed_plan	<REGEX>:.*"intermediate_rows": 2,[^{}]*"name": "QW_GRAPH_QUERY_WATCH".*
+analyzed_plan	<REGEX>:.*"intermediate_rows": 2,[^{}]*"name": "QW_GRAPH_QUERY".*
 
 statement ok
 PREPARE read_watch AS SELECT count(*) FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS id)) AS g JOIN watch AS w ON g.id=w.id;
@@ -85,7 +85,7 @@ WITH watch AS (SELECT 102::BIGINT AS id) SELECT g.id FROM GRAPH_TABLE (air_route
 query TT
 EXPLAIN (ANALYZE, FORMAT JSON) SELECT g.id FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS id)) AS g JOIN watch AS w ON g.id=w.id;
 ----
-analyzed_plan	<REGEX>:.*"intermediate_rows": 5,[^{}]*"name": "QW_GRAPH_QUERY_WATCH".*
+analyzed_plan	<REGEX>:.*"intermediate_rows": 5,[^{}]*"name": "QW_GRAPH_QUERY".*
 
 query I
 SELECT count(*) FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS id)) AS g LEFT JOIN watch AS w ON w.id=g.id;
@@ -110,7 +110,7 @@ INSERT INTO shared_watch VALUES (101);
 query TT
 EXPLAIN (ANALYZE, FORMAT JSON) SELECT g.id FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS id)) g JOIN shared_watch w ON g.id=w.id;
 ----
-analyzed_plan	<REGEX>:.*"intermediate_rows": 1,[^{}]*"name": "QW_GRAPH_QUERY_WATCH".*
+analyzed_plan	<REGEX>:.*"intermediate_rows": 1,[^{}]*"name": "QW_GRAPH_QUERY".*
 
 statement ok
 PREPARE shared_count AS SELECT count(*) FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport) COLUMNS(e.rid AS id)) g JOIN shared_watch w ON g.id=w.id;

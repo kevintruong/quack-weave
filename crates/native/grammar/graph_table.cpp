@@ -176,20 +176,9 @@ ParsedGraphTable::ParsedGraphTable(PEGTransformer &transformer, ParseResult &par
 
 unique_ptr<TableRef> ParsedGraphTable::Lower(const JoinRef *join) {
 	Candidate candidate;
-	const ParsedExpression *watch_key = nullptr;
-	string watch_variable, watch_property, watch_label;
 	if (!result->where_clause && join) {
-		auto predicate = QwWatchlistPredicate(*result, table_alias, *join, MAX_PREFILTER_KEYS);
-		if (predicate) {
+		if (auto predicate = QwWatchlistPredicate(*result, table_alias, *join, MAX_PREFILTER_KEYS))
 			candidate = bindings.Prefilter(*predicate);
-		} else if ((watch_key = QwTableWatchKey(*result, table_alias, *join))) {
-			const auto &names = watch_key->Cast<ColumnRefExpression>().ColumnNames();
-			if (names.size() == 2 && bindings.variables.count(names[0]) && !bindings.labels.at(names[0]).empty()) {
-				watch_variable = ProviderName(bindings.variables.at(names[0]));
-				watch_property = ProviderName(names[1]);
-				watch_label = bindings.labels.at(names[0]);
-			}
-		}
 	}
 	for (auto &expression : result->select_list) {
 		// The provider's private projection names must never become SQL output names.
@@ -210,13 +199,7 @@ unique_ptr<TableRef> ParsedGraphTable::Lower(const JoinRef *join) {
 	args.push_back(ConstantExpression::String("cypher"));
 	args.push_back(ConstantExpression::String(query + projection));
 	const char *function = "qw_graph_query";
-	if (!watch_label.empty()) {
-		function = "qw_graph_query_watch";
-		args.push_back(ConstantExpression::String(watch_label));
-		args.push_back(ConstantExpression::String(watch_property));
-		args.push_back(ConstantExpression::String(watch_variable));
-		args.push_back(ConstantExpression::String(watch_key->Cast<ColumnRefExpression>().ColumnNames()[0].GetIdentifierName()));
-	} else if (!candidate.predicate.empty()) {
+	if (!candidate.predicate.empty()) {
 		function = "qw_graph_query_filtered";
 		args.push_back(ConstantExpression::String(candidate.label));
 		args.push_back(ConstantExpression::String(candidate.property));

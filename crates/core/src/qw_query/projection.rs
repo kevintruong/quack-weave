@@ -42,10 +42,13 @@ impl ScanProjection {
         // Legacy literal watchlists can bind an already filtered native query.
         // Preserve that read instead of replacing its existing predicate.
         let base = format!("{} RETURN {}", fragment.pattern(), fragment.projection());
-        if base != bound.cypher || bound.watch.is_some() {
+        if base != bound.cypher {
             return Ok(original(requested));
         }
-        let predicates: Vec<_> = bound.static_predicate_sql()?.into_iter().collect();
+        let predicates: Vec<_> = [bound.static_predicate_sql()?, bound.runtime_predicate()]
+            .into_iter()
+            .flatten()
+            .collect();
         if requested.iter().copied().eq(0..bound.schema.len()) && predicates.is_empty() {
             return Ok(Self {
                 query: None,

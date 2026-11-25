@@ -1,9 +1,33 @@
 //! Recognize the grammar's direct-property scan before applying an execution-time key filter.
 //! The internal table function can also be called from SQL, so validate its hints against
 //! the actual pattern and projection before moving a predicate into the provider.
-use super::is_identifier;
+use super::{BoundRead, ScalarType, is_identifier};
 
 pub(super) const MAX_KEYS: usize = 64;
+
+impl BoundRead {
+    /// DuckDB supplies optional filters only during initialization of this
+    /// physical scan. Key values never become part of a reusable bound plan.
+    pub(super) fn runtime_predicate(&self) -> Option<String> {
+        let fragment = self.fragment.as_ref()?;
+        for (index, col) in self.schema.iter().enumerate() {
+            if col.data_type != ScalarType::BigInt || fragment.property(index).is_none() {
+                continue;
+            }
+            let keys = self.provider.backend.runtime_watch_keys(index);
+            if keys.is_empty() || keys.len() > MAX_KEYS {
+                continue;
+            }
+            let values = keys
+                .iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            return Some(format!("{} IN [{values}]", fragment.expr(index)?));
+        }
+        None
+    }
+}
 
 /// Locate the column constrained by the grammar's literal candidate. The filter
 /// can only restrict the base MATCH and must preserve every projected expression.

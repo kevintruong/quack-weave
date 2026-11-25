@@ -1,0 +1,65 @@
+# name: test/relate/bound_runtime.test
+# description: Bind an execution-local graph watch key through a SQL view and a column rename.
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_RELATE UNSET_QW_RELATE
+
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"routes","path":"{QW_RELATE}"}';
+
+statement ok
+CREATE VIEW edges AS SELECT distance, route_id AS k FROM GRAPH_TABLE (
+    routes MATCH (a:airport)-[r:route]->(b:airport) COLUMNS(r.dist AS distance, r.rid AS route_id)) g;
+
+statement ok
+CREATE TEMP TABLE watch(k BIGINT);
+
+statement ok
+INSERT INTO watch VALUES (202),(202),(NULL);
+
+statement ok
+PREPARE watched AS SELECT k, distance FROM edges JOIN watch USING(k) ORDER BY k;
+
+query II
+EXECUTE watched;
+----
+202	600
+202	600
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE watched;
+----
+analyzed_plan	<REGEX>:.*"name": "HASH_JOIN".*"intermediate_rows": 1,[^{}]*"name": "QW_GRAPH_QUERY[^"]*".*
+
+statement ok
+DELETE FROM watch;
+
+statement ok
+INSERT INTO watch VALUES (203),(201);
+
+query II
+EXECUTE watched;
+----
+201	595
+203	NULL
+
+# Disabling DuckDB's join filter leaves the hash join in place. All three
+# route edges cross the provider boundary and DuckDB produces the same bag.
+statement ok
+SET disabled_optimizers='join_filter_pushdown';
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT k, distance FROM edges JOIN watch USING(k);
+----
+analyzed_plan	<REGEX>:.*"name": "HASH_JOIN".*"intermediate_rows": 3,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+query II rowsort
+SELECT k, distance FROM edges JOIN watch USING(k);
+----
+201	595
+203	NULL
