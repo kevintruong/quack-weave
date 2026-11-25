@@ -409,30 +409,14 @@ void check_complexity(antlr4::CommonTokenStream &tokens) {
     }
 }
 
-std::unique_ptr<ParsedRead> parse(std::string_view input, bool native) {
-    if (input.size() > max_input_bytes) {
-        throw at(limit, nullptr);
-    }
-    // The ANTLR stream drops the BOM, which would shift the returned source spans.
-    if (input.substr(0, 3) == "\xef\xbb\xbf") {
-        throw Diagnostic{syntax, 1, 0};
-    }
-    antlr4::ANTLRInputStream stream(input);
-    GQLLexer lexer(&stream);
+std::unique_ptr<ParsedRead> parse_program(antlr4::CommonTokenStream &tokens, bool native,
+        antlr4::atn::PredictionMode mode) {
     Errors errors;
-    lexer.removeErrorListeners();
-    lexer.addErrorListener(&errors);
-    antlr4::CommonTokenStream tokens(&lexer);
-    tokens.fill();
-    if (errors.first.status) {
-        throw errors.first;
-    }
-    check_complexity(tokens);
-
     GQLParser parser(&tokens);
     parser.removeErrorListeners();
     parser.addErrorListener(&errors);
     parser.setErrorHandler(std::make_shared<antlr4::BailErrorStrategy>());
+    parser.getInterpreter<antlr4::atn::ParserATNSimulator>()->setPredictionMode(mode);
     GQLParser::GqlProgramContext *program = nullptr;
     try {
         program = parser.gqlProgram();
@@ -445,6 +429,39 @@ std::unique_ptr<ParsedRead> parse(std::string_view input, bool native) {
     auto result = std::make_unique<ParsedRead>();
     extract_read(*program, *result, native);
     return result;
+}
+
+std::unique_ptr<ParsedRead> parse(std::string_view input, bool native) {
+    if (input.size() > max_input_bytes) {
+        throw at(limit, nullptr);
+    }
+    // The ANTLR stream drops the BOM, which would shift the returned source spans.
+    if (input.substr(0, 3) == "\xef\xbb\xbf") {
+        throw Diagnostic{syntax, 1, 0};
+    }
+    antlr4::ANTLRInputStream stream(input);
+    Errors errors;
+    GQLLexer lexer(&stream);
+    lexer.removeErrorListeners();
+    lexer.addErrorListener(&errors);
+    antlr4::CommonTokenStream tokens(&lexer);
+    tokens.fill();
+    if (errors.first.status) {
+        throw errors.first;
+    }
+    check_complexity(tokens);
+
+    // SLL avoids full-context prediction on common reads. Accept a complete,
+    // supported parse, or retry with LL for context-sensitive input and diagnostics.
+    try {
+        return parse_program(tokens, native, antlr4::atn::PredictionMode::SLL);
+    } catch (const Diagnostic &failure) {
+        if (failure.status != syntax && failure.status != unsupported) {
+            throw;
+        }
+    }
+    tokens.seek(0);
+    return parse_program(tokens, native, antlr4::atn::PredictionMode::LL);
 }
 
 } // namespace
