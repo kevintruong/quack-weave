@@ -2,7 +2,7 @@
 
 .PHONY: clean clean_all mvp1 mvp1-release mvp1-deps mvp1-test mvp2-deps
 .PHONY: mvp2 mvp2-release mvp2-test mvp2-stabilization-test mvp2-stabilization-test-prebuilt public-client-test public-client-test-prebuilt
-.PHONY: mvp2-relate-release mvp2-relate-test
+.PHONY: mvp2-relate-release mvp2-relate-test mvp2-neo4j-release mvp2-neo4j-test
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -61,9 +61,12 @@ MVP1_RELEASE_ARTIFACT := build/release/extension/quack_weave/quack_weave.duckdb_
 MVP2_EXTENSION_VERSION := v0.2.0
 MVP2_CARGO_DIR := $(MVP1_CARGO_DIR)/mvp2
 MVP2_RELATE_CARGO_DIR ?= $(MVP1_CARGO_DIR)/mvp2-relate
+MVP2_NEO4J_CARGO_DIR ?= $(MVP1_CARGO_DIR)/mvp2-neo4j
 MVP2_DEBUG_ARTIFACT := build/mvp2/debug/extension/quack_weave/quack_weave.duckdb_extension
 MVP2_RELEASE_ARTIFACT := build/mvp2/release/extension/quack_weave/quack_weave.duckdb_extension
 MVP2_RELATE_ARTIFACT := build/mvp2-relate/release/extension/quack_weave/quack_weave.duckdb_extension
+MVP2_NEO4J_ARTIFACT := build/mvp2-neo4j/release/extension/quack_weave/quack_weave.duckdb_extension
+MVP2_NEO4J_TEST_ARTIFACT := build/mvp2-neo4j/test/extension/quack_weave/quack_weave.duckdb_extension
 
 PYTHON_BIN ?= python3
 DUCKDB ?= duckdb
@@ -94,7 +97,7 @@ define make_mvp1
 endef
 
 define make_mvp2
-	$(call build_native,$(1) --features $(if $(4),$(4),gql) --target-dir '$(MVP2_CARGO_DIR)')
+	$(call build_native,$(1) --features '$(if $(4),$(4),gql)' --target-dir '$(MVP2_CARGO_DIR)')
 	$(PYTHON_BIN) -B scripts/package_mvp2.py '$(MVP2_CARGO_DIR)/$(MVP1_TARGET)/$(2)/$(NATIVE_LIBRARY)' '$(3)' $(MVP1_DUCKDB_VERSION) $(NATIVE_PLATFORM) $(MVP2_EXTENSION_VERSION) $(if $(filter relate-provider,$(4)),--relate)
 endef
 
@@ -132,6 +135,15 @@ mvp2-relate-release:
 mvp2-relate-test: mvp2-relate-release
 	$(call build_native,--release --features relate-provider --target-dir '$(MVP2_CARGO_DIR)' --example relate_fixture)
 	$(PYTHON_BIN) -B test/relate/run.py --duckdb-unittest '$(DUCKDB_UNITTEST)' --fixture-builder '$(MVP2_CARGO_DIR)/$(MVP1_TARGET)/release/examples/relate_fixture' --extension '$(MVP2_RELATE_ARTIFACT)' --lbug '$(LBUG)'
+
+mvp2-neo4j-release mvp2-neo4j-test: MVP2_CARGO_DIR = $(MVP2_NEO4J_CARGO_DIR)
+
+mvp2-neo4j-release:
+	$(call make_mvp2,--release,release,$(MVP2_NEO4J_ARTIFACT),gql neo4j-provider)
+
+mvp2-neo4j-test:
+	$(call make_mvp2,,debug,$(MVP2_NEO4J_TEST_ARTIFACT),gql neo4j-test-fixture)
+	$(PYTHON_BIN) -B test/neo4j/run.py --duckdb-unittest '$(DUCKDB_UNITTEST)' --extension '$(MVP2_NEO4J_TEST_ARTIFACT)'
 
 mvp2-test: mvp2 mvp2-release
 	$(call check_mvp2,$(MVP2_DEBUG_ARTIFACT))

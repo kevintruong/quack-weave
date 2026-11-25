@@ -1426,12 +1426,14 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 name = "rusty_quack"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "duckdb-neo",
  "libc",
  "relate",
  "relate-parser",
  "rusty_quack_core",
  "serde_json",
+ "ureq",
 ]
 
 [[package]]

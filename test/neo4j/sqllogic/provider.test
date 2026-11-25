@@ -1,0 +1,75 @@
+# name: test/neo4j/sqllogic/provider.test
+# description: Run Neo4j provider queries through DuckDB and a verified TLS fixture
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_NEO4J_FIXTURE_ENDPOINT UNSET_QW_NEO4J_FIXTURE_ENDPOINT
+
+statement ok
+LOAD '{QW_EXT}';
+
+query I
+SELECT count(*) FROM duckdb_settings() WHERE name = 'qw_neo4j_config';
+----
+1
+
+statement ok
+SET GLOBAL qw_enable_remote_graphs = true;
+
+statement error
+SET GLOBAL qw_neo4j_config = '{"alias":"remote","endpoint":"http://127.0.0.1:443","database":"neo4j","credential_ref":"fixture","timeout_ms":5000,"max_response_bytes":1024}';
+----
+QW_CONFIG
+
+statement error
+SET GLOBAL qw_neo4j_config = '{"alias":"remote","endpoint":"https://another-instance.databases.neo4j.io","database":"neo4j","credential_ref":"fixture","timeout_ms":5000,"max_response_bytes":1024}';
+----
+QW_CONFIG
+
+statement ok
+SET GLOBAL qw_neo4j_config = '{"alias":"remote","endpoint":"{QW_NEO4J_FIXTURE_ENDPOINT}","database":"neo4j","credential_ref":"fixture","timeout_ms":5000,"max_response_bytes":1024}';
+
+query ITIII
+SELECT id, title, score = 2.5, ready, missing IS NULL
+FROM qw_query('remote', 'cypher',
+    $$RETURN 9007199254740993 AS id, 'fixture' AS title, 2.5 AS score, true AS ready, null AS missing$$,
+    schema := 'id BIGINT, title VARCHAR, score DOUBLE, ready BOOLEAN, missing VARCHAR');
+----
+9007199254740993	fixture	true	true	true
+
+query I
+SELECT count(*) FROM qw_query('remote', 'cypher',
+    $$MATCH (n:Missing) RETURN n.id AS id$$, schema := 'id BIGINT');
+----
+0
+
+# The Query API may send HTTP 202 even when Cypher fails.
+statement error
+SELECT * FROM qw_query('remote', 'cypher', $$RETURN 1 AS rejected$$, schema := 'rejected BIGINT');
+----
+QW_EXECUTION
+
+statement error
+SELECT * FROM qw_query('remote', 'cypher', $$RETURN 1 AS wrong_type$$, schema := 'wrong_type BIGINT');
+----
+QW_SCHEMA
+
+statement error
+SELECT * FROM qw_query('remote', 'cypher', $$RETURN 'large' AS oversized$$, schema := 'oversized VARCHAR');
+----
+QW_RESPONSE_BUDGET
+
+statement error
+SELECT * FROM qw_query('remote', 'cypher',
+    $$CREATE (:WriteMustNotReachFixture) RETURN 1 AS id$$, schema := 'id BIGINT');
+----
+QW_ADMISSION
+
+statement ok
+SET GLOBAL qw_enable_remote_graphs = false;
+
+statement error
+SELECT * FROM qw_query('remote', 'cypher', $$RETURN 1 AS blocked$$, schema := 'blocked BIGINT');
+----
+QW_ACCESS

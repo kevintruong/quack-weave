@@ -8,10 +8,9 @@ use rusty_quack_core::qw_query::{
     GraphParameter, PreparedRegistration, ReadBackend, ReadSession, ScalarType,
 };
 
-mod admission;
 mod catalog;
 use crate::batch_budget::reserve_slots;
-use admission::admit;
+use crate::cypher_read::admit;
 
 #[cfg(test)]
 mod tests;

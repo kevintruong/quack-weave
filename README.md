@@ -120,6 +120,40 @@ make mvp2-relate-test DUCKDB_UNITTEST=/path/to/duckdb-v2.0.1/unittest LBUG=/path
 
 The provider benchmark compares Ladybug and RelateDB through this same extension on matched LSQB message–creator graphs. [Results notebook](benchmarks/provider_comparison/provider_benchmark.ipynb) · [Reproduction instructions](benchmarks/provider_comparison/README.md) [Latest main benchmark table](https://github.com/kevintruong/quack-weave/tree/benchmark-history) · [CI benchmark reports](benchmarks/provider_comparison/tracker/README.md#view-ci-benchmark-tables)
 
+### Read from a Neo4j AuraDB graph
+
+Build the optional Neo4j adapter with `make mvp2-deps` and `make mvp2-neo4j-release`.
+The artifact lives in `build/mvp2-neo4j/release/extension/quack_weave/`.
+Use an Aura database login with effective read-only privileges for the database being queried.
+Supply `QW_NEO4J_ROUTES_ENDPOINT`, `QW_NEO4J_ROUTES_USERNAME`, and `QW_NEO4J_ROUTES_PASSWORD`
+through the DuckDB process environment. The endpoint variable binds that credential reference to an exact
+Aura HTTPS origin. Keep credentials out of SQL and use a trusted DuckDB session to configure access.
+
+```sql
+SET GLOBAL qw_enable_remote_graphs = true;
+SET GLOBAL qw_neo4j_config = '{
+  "alias":"routes_remote",
+  "endpoint":"https://example.databases.neo4j.io",
+  "database":"neo4j",
+  "credential_ref":"routes",
+  "timeout_ms":5000,
+  "max_response_bytes":1048576
+}';
+
+SELECT destination
+FROM qw_query(
+    'routes_remote', 'cypher',
+    $$MATCH (o:airport)-[:route]->(d:airport) WHERE o.code = 'OSL'
+      RETURN d.code AS destination$$,
+    schema := 'destination VARCHAR'
+);
+```
+
+The adapter accepts one admitted read and returns typed scalar columns from a bounded HTTPS response.
+`RESET GLOBAL qw_enable_remote_graphs` revokes access for new scans. Run
+`make mvp2-neo4j-test DUCKDB_UNITTEST=/path/to/duckdb-v2.0.1/unittest` to exercise the SQLLogic
+suite against a local TLS fixture with dummy credentials.
+
 ### Standalone graph queries
 
 The usage notebook runs the same air-routes query in GQL and Cypher and shows where to place a SQL join and a row limit. [Usage patterns and executable example](quack-weave-hybrid-usage-spec.ipynb)

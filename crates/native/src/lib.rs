@@ -20,6 +20,15 @@ mod ladybug;
 #[cfg(all(feature = "relate-provider", not(feature = "template-compat")))]
 mod relate_backend;
 
+#[cfg(all(
+    any(feature = "neo4j-provider", feature = "relate-provider"),
+    not(feature = "template-compat")
+))]
+mod cypher_read;
+
+#[cfg(all(feature = "neo4j-provider", not(feature = "template-compat")))]
+mod neo4j_backend;
+
 #[cfg(all(test, not(feature = "template-compat")))]
 mod test_observation;
 
@@ -59,6 +68,24 @@ pub fn entrypoint(extension: &Extension) -> Result<()> {
     ];
     #[cfg(not(feature = "relate-provider"))]
     let providers = vec![ladybug];
+    #[cfg(feature = "neo4j-provider")]
+    let providers = {
+        let mut providers = providers;
+        providers.push(GraphProvider::new(
+            ProviderDescriptor {
+                id: "neo4j",
+                name: "Neo4j",
+                option: "qw_neo4j_config",
+                source: ProviderSource::RemoteEndpoint,
+                unknown_alias_error: None,
+                accepts_declared_catalog: false,
+                supports_timeout: true,
+                rewrite: ProviderRewrite::Disabled,
+            },
+            neo4j_backend::Neo4jBackend,
+        ));
+        providers
+    };
     let gql_parser: Option<GqlParser> = {
         #[cfg(feature = "gql")]
         {
