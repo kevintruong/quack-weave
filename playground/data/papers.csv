@@ -1,0 +1,13 @@
+id,title,venue,year,citation_count
+100,Mapping Research Networks,WWW,2025,42
+101,Vector Search for Archives,SIGIR,2023,214
+102,The Long Tail of Citations,ICWSM,2021,138
+103,Query Patterns in Open Collections,SIGMOD,2022,91
+104,Provenance in Digital Libraries,JCDL,2019,165
+105,Graph Sampling at the Edge,KDD,2024,74
+106,Ranking Knowledge Sources,WSDM,2021,119
+107,Signals from Citation Trails,WWW,2024,67
+108,A Survey of Research Graphs,ACM CSUR,2018,318
+109,Link Prediction for Repositories,CIKM,2020,110
+110,Explaining Retrieval Decisions,SIGIR,2025,38
+111,Reproducible Scholarly Search,JCDL,2022,83

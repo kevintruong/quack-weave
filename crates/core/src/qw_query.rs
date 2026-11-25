@@ -1,7 +1,7 @@
 //! Read-only graph results exposed as DuckDB table functions.
 
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::BTreeMap,
     num::NonZeroUsize,
     path::Path,
     sync::{Arc, atomic::AtomicU64},
@@ -40,6 +40,9 @@ mod projection;
 use projection::ScanProjection;
 mod providers;
 use providers::{AliasReservations, GraphProvider, ProviderKind, resolve_alias};
+mod schema;
+use schema::is_identifier;
+pub use schema::{ColumnSpec, ScalarType};
 mod runtime_watch;
 use runtime_watch::{MAX_KEYS, RuntimeWatch};
 
@@ -203,16 +206,6 @@ fn backend_error(error: BackendError) -> Error {
     Error::invalid_input(message)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ScalarType {
-    Boolean,
-    BigInt,
-    Double,
-    Varchar,
-    Struct(Vec<ColumnSpec>),
-    List(Box<ScalarType>),
-}
-
 impl ScalarType {
     fn logical_type(&self, context: &Context) -> Result<LogicalType> {
         match self {
@@ -223,12 +216,6 @@ impl ScalarType {
             Self::Struct(_) | Self::List(_) => self.nested_type(context),
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ColumnSpec {
-    pub name: String,
-    pub data_type: ScalarType,
 }
 
 #[derive(Debug)]
@@ -310,48 +297,8 @@ where
     Ok(())
 }
 
-fn is_identifier(text: &str) -> bool {
-    let mut bytes = text.bytes();
-    bytes
-        .next()
-        .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
-        && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-}
-
 fn parse_schema(schema: &str) -> Result<Vec<ColumnSpec>> {
-    let invalid = || {
-        Error::invalid_input(
-            "QW_ARGUMENT: Expected comma-separated schema entries using BOOLEAN, BIGINT, DOUBLE or VARCHAR",
-        )
-    };
-    let mut seen = HashSet::new();
-    schema
-        .split(',')
-        .map(|entry| {
-            let mut parts = entry.split_ascii_whitespace();
-            let name = parts.next().ok_or_else(invalid)?;
-            let type_name = parts.next().ok_or_else(invalid)?;
-            if !is_identifier(name) || parts.next().is_some() {
-                return Err(invalid());
-            }
-            if !seen.insert(name.to_ascii_lowercase()) {
-                return Err(Error::invalid_input(
-                    "QW_ARGUMENT: Duplicate result column in schema",
-                ));
-            }
-            let data_type = match type_name.to_ascii_uppercase().as_str() {
-                "BOOLEAN" => ScalarType::Boolean,
-                "BIGINT" => ScalarType::BigInt,
-                "DOUBLE" => ScalarType::Double,
-                "VARCHAR" => ScalarType::Varchar,
-                _ => return Err(invalid()),
-            };
-            Ok(ColumnSpec {
-                name: name.to_owned(),
-                data_type,
-            })
-        })
-        .collect()
+    schema::parse_schema(schema).map_err(Error::invalid_input)
 }
 
 #[derive(Debug, Deserialize, Serialize)]

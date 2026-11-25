@@ -2,6 +2,8 @@
 
 QuackWeave is a native DuckDB extension for reading an existing local Ladybug graph. The MVP2 package supports standalone graph reads and SQL/PGQ graph table expressions. DuckDB can join their typed columns to its own tables and Parquet files. The explicit-schema `qw_query` interface is also available.
 
+[Open the browser playground](https://kevintruong.github.io/quack-weave/) to try SQL, Cypher, and hybrid queries on the PaperTrail sample. See the [playground source and local setup](playground/README.md).
+
 ## Build and use MVP1
 
 The native package targets Linux arm64 and macOS arm64, DuckDB `v2.0.1` and Ladybug `v0.22.3`. The build uses the Rust toolchain, a C++20 compiler, Python 3.12 or later, and OpenSSL 3 static libraries. It locates those libraries through Homebrew or `OPENSSL_LIB_DIR`. On Ubuntu 24.04 arm64 use `CXX=g++-13` and `OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu`.

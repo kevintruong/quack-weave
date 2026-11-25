@@ -1,0 +1,7 @@
+/dist/
+/node_modules/
+/playwright-report/
+/test-results/
+/public/bridge.wasm
+/public/duckdb-extensions/
+/public/licenses/apache-arrow-notice.txt

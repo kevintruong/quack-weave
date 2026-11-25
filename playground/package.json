@@ -1,0 +1,21 @@
+{
+  "name": "quack-weave-playground",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npm run build:assets && vite",
+    "build": "npm run build:assets && vite build",
+    "preview": "vite preview",
+    "test": "playwright test",
+    "build:assets": "node scripts/build-bridge.mjs && node scripts/build-engines.mjs"
+  },
+  "dependencies": {
+    "@duckdb/duckdb-wasm": "1.33.1-dev57.0",
+    "@ladybugdb/wasm-core": "0.22.3",
+    "apache-arrow": "17.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.58.2",
+    "vite": "7.3.1"
+  }
+}

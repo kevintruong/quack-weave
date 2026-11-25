@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Explore PaperTrail with editable SQL, Cypher, and hybrid graph queries in your browser.">
+  <meta name="theme-color" content="#13191a">
+  <link rel="icon" href="data:,">
+  <title>Quack Weave Playground</title>
+</head>
+<body>
+  <header class="topbar">
+    <div class="frame topbar-inner">
+      <a class="brand" href="./"><span class="brand-mark" aria-hidden="true">Q</span> Quack Weave</a>
+      <div class="topbar-actions">
+        <span class="engine-status" role="status" aria-label="Engine status" data-state="loading">Starting engines</span>
+        <a href="https://github.com/kevintruong/quack-weave">GitHub</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="frame">
+    <section class="intro" aria-labelledby="intro-heading">
+      <div>
+        <h1 id="intro-heading">Query across <em>two engines.</em></h1>
+        <p>Explore a citation graph with Cypher, analyze papers with SQL, or join both in one query. Everything runs in your browser.</p>
+      </div>
+      <div class="engine-diagram" aria-label="Ladybug sends Arrow query results to DuckDB">
+        <div><i aria-hidden="true"></i><span>Ladybug <small>Cypher</small></span></div>
+        <div class="transfer" aria-hidden="true"><span>Arrow</span></div>
+        <div><i aria-hidden="true"></i><span>DuckDB <small>SQL</small></span></div>
+      </div>
+    </section>
+
+    <div class="workspace">
+      <aside>
+        <section class="panel guide" aria-labelledby="examples-heading">
+          <h2 id="examples-heading">Guided examples</h2>
+          <div id="examples"></div>
+          <div class="example-detail">
+            <p id="example-description"></p>
+            <button class="button load" id="load-query">Load query</button>
+          </div>
+        </section>
+
+        <section class="panel dataset" aria-labelledby="dataset-heading">
+          <h2 id="dataset-heading">PaperTrail</h2>
+          <p>12 fictional papers and 20 citations.</p>
+          <dl>
+            <dt><span class="engine-dot graph"></span>Ladybug graph <code>kg</code></dt>
+            <dd><code>Document(id, title)</code></dd>
+            <dd><code>[:LINKS_TO]</code></dd>
+            <dt><span class="engine-dot"></span>DuckDB table <code>papers</code></dt>
+            <dd><code>id, title, venue, year,<br>citation_count</code></dd>
+          </dl>
+        </section>
+      </aside>
+      <div class="console">
+        <section class="panel editor-panel" aria-labelledby="editor-heading">
+          <header class="panel-heading">
+            <h2 id="editor-heading">Query editor</h2>
+            <div class="mode" role="group" aria-label="Query language">
+              <button data-mode="sql" aria-label="SQL mode" aria-pressed="true">SQL</button>
+              <button data-mode="cypher" aria-label="Cypher mode" aria-pressed="false">Cypher</button>
+            </div>
+          </header>
+          <textarea id="editor" aria-labelledby="editor-heading" rows="13" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+          <div class="editor-actions">
+            <button class="button primary" id="run-query" disabled><span aria-hidden="true">▶</span> Run query</button>
+            <span class="shortcut"><kbd id="shortcut-label">Ctrl</kbd> <kbd>Enter</kbd></span>
+            <button class="button secondary" id="copy-query">Copy query</button>
+          </div>
+        </section>
+
+        <section class="panel results-panel" aria-labelledby="results-heading" aria-busy="false">
+          <header class="panel-heading">
+            <h2 id="results-heading">Results</h2>
+            <div id="result-summary" role="status"></div>
+          </header>
+          <p class="notice" id="result-empty">Run a query to see its results here.</p>
+          <pre id="query-error" role="alert" hidden></pre>
+          <div id="result-table"></div>
+          <p class="notice result-transfer" id="result-transfer" hidden></p>
+        </section>
+      </div>
+    </div>
+
+    <footer class="footer">
+      <span>Browser session · Ladybug graph is read-only</span>
+      <button class="reset" id="reset-workspace">Reset workspace</button>
+    </footer>
+  </main>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
