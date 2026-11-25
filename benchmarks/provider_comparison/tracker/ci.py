@@ -28,6 +28,8 @@ def commits(event, payload):
     if event == "pull_request":
         head = checked_sha(payload["pull_request"]["head"]["sha"])
         base = checked_sha(payload["pull_request"]["base"]["sha"])
+    elif event == "workflow_dispatch":
+        return [checked_sha(os.environ["GITHUB_SHA"])]
     elif event == "push":
         head, base = checked_sha(payload["after"]), None
     else:
@@ -62,7 +64,7 @@ def cohort(snapshot):
     fixture = snapshot["fixture"]
     return [snapshot[k] for k in ("protocol", "platform", "machine", "duckdb_threads",
                                     "runs", "blocks", "watchlist", "expected", "statements", "versions")] + [
-        snapshot.get("ci_runner"), fixture["source_sha256"], fixture["selection"],
+        snapshot.get("ci_runner"), snapshot.get("upstream_duckdb_sha256"), fixture["source_sha256"], fixture["selection"],
         fixture["files"]["edges.csv"]["sha256"], snapshot["edge_count"]]
 
 
@@ -145,9 +147,9 @@ def main():
         if "QW_BUILD_TOOLCHAIN" in os.environ:
             snapshot["ci_runner"]["QW_BUILD_TOOLCHAIN"] = os.environ["QW_BUILD_TOOLCHAIN"]
         if os.environ.get("QW_RELEASE_ARTIFACT_ID"):
+            snapshot["upstream_duckdb_sha256"] = os.environ["QW_DUCKDB_ARCHIVE_SHA256"]
             snapshot["actions_artifacts"] = {"release": os.environ["QW_RELEASE_ARTIFACT_ID"],
-                                             "duckdb_host": os.environ["HOST_ARTIFACT_ID"],
-                                             "direct_clients": os.environ["HEAD_ARTIFACT_ID"]}
+                                             "duckdb_host": os.environ["HOST_ARTIFACT_ID"]}
         snapshot_file.write_text(json.dumps(snapshot, indent=2, allow_nan=False) + "\n")
         result = judge(snapshot, find_baseline(snapshot, args.ancestor),
                        float(os.environ.get("QW_REGRESSION_PERCENT") or 20),

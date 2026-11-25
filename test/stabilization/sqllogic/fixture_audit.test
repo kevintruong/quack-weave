@@ -28,20 +28,23 @@ SELECT CAST(observed AS INTEGER) FROM package WHERE kind = 'filesystem' AND name
 # case: fixture.footer The native artifact declares the exact target and extension version
 query TTTTT
 SELECT max(observed) FILTER (WHERE name = 'abi'), max(observed) FILTER (WHERE name = 'extension_version'),
-       max(observed) FILTER (WHERE name = 'duckdb_version'), max(observed) FILTER (WHERE name = 'platform'),
+       max(observed) FILTER (WHERE name = 'duckdb_version'), (max(observed) FILTER (WHERE name = 'platform') = (SELECT platform FROM pragma_platform()))::VARCHAR,
        max(observed) FILTER (WHERE name = 'metadata_format') FROM package WHERE kind = 'footer';
 ----
-C_STRUCT_UNSTABLE	v0.2.0	v2.0.1	osx_arm64	4
+C_STRUCT_UNSTABLE	v0.2.0	v2.0.1	true	4
 
 # case: fixture.exports The package exposes one initializer and only system runtime dependencies
 query T
 SELECT observed FROM package WHERE kind = 'export';
 ----
-_quack_weave_init_c_api_v2
+quack_weave_init_c_api_v2
 
 query I
 SELECT count(*) FROM package WHERE kind = 'import'
-AND NOT (starts_with(observed, '/usr/lib/') OR starts_with(observed, '/System/Library/'));
+AND NOT CASE (SELECT platform FROM pragma_platform())
+  WHEN 'osx_arm64' THEN starts_with(observed, '/usr/lib/') OR starts_with(observed, '/System/Library/')
+  WHEN 'linux_arm64' THEN observed IN ('libc.so.6', 'libstdc++.so.6', 'libgcc_s.so.1', 'libm.so.6', 'ld-linux-aarch64.so.1')
+  ELSE false END;
 ----
 0
 

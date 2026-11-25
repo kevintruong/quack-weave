@@ -1,5 +1,5 @@
 name: Prepare native CI build
-description: Install the pinned native compiler toolchain and graph dependencies on macOS arm64
+description: Install the pinned native compiler toolchain and graph dependencies on ARM64
 runs:
   using: composite
   steps:
@@ -9,9 +9,18 @@ runs:
     - uses: dtolnay/rust-toolchain@stable
       with:
         toolchain: "1.96.0"
-        targets: aarch64-apple-darwin
     - shell: bash
       run: |
-        test "$(uname -s):$(uname -m)" = Darwin:arm64
-        brew list --versions openssl@3 >/dev/null || brew install openssl@3
+        case "$(uname -s):$(uname -m)" in
+          Darwin:arm64)
+            brew list --versions openssl@3 >/dev/null || brew install openssl@3
+            echo 'QW_RUST_TARGET=aarch64-apple-darwin' >> "$GITHUB_ENV" ;;
+          Linux:aarch64)
+            command -v g++-13
+            echo "CC=gcc-13" >> "$GITHUB_ENV"
+            echo "CXX=g++-13" >> "$GITHUB_ENV"
+            echo 'OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu' >> "$GITHUB_ENV"
+            echo 'QW_RUST_TARGET=aarch64-unknown-linux-gnu' >> "$GITHUB_ENV" ;;
+          *) exit 1 ;;
+        esac
         env -u MACOSX_DEPLOYMENT_TARGET make mvp2-deps

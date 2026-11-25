@@ -3,6 +3,7 @@ on:
   workflow_call:
     inputs:
       commits: {type: string, required: true}
+      runner: {type: string, required: true}
       shard: {type: number, required: true}
       source-head: {type: string, required: true}
       host-artifact: {type: string, required: true}
@@ -14,7 +15,7 @@ jobs:
   historical:
     name: Build earlier releases
     if: inputs.commits != inputs.source-head
-    runs-on: macos-15
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 330
     outputs:
       artifact: ${{ steps.upload.outputs.artifact-id }}
@@ -38,10 +39,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.96.0"
-          targets: aarch64-apple-darwin
       - name: Build just the earlier commits in this shard
         run: |
-          brew list --versions openssl@3 >/dev/null || brew install openssl@3
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            brew list --versions openssl@3 >/dev/null || brew install openssl@3
+          else
+            export CC=gcc-13 CXX=g++-13 OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu
+          fi
           mkdir -p build/deps build/historical
           read -ra revisions <<< "$COMMITS"
           env -u MACOSX_DEPLOYMENT_TARGET bash benchmarks/provider_comparison/tracker/build_releases.sh "${revisions[@]}"
@@ -57,7 +61,7 @@ jobs:
   measure:
     needs: historical
     if: ${{ !cancelled() }}
-    runs-on: macos-15
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 330
     env:
       COMMITS: ${{ inputs.commits }}
@@ -66,7 +70,7 @@ jobs:
       HISTORICAL_ARTIFACT_ID: ${{ needs.historical.outputs.artifact }}
       HOST_ARTIFACT_ID: ${{ inputs.host-artifact }}
       PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-      QW_RUNNER_CLASS: github-hosted/macos-15/arm64
+      QW_RUNNER_CLASS: github-hosted/${{ inputs.runner }}/arm64
       QW_REGRESSION_PERCENT: ${{ vars.QW_REGRESSION_PERCENT }}
       QW_REGRESSION_FLOOR_MS: ${{ vars.QW_REGRESSION_FLOOR_MS }}
     defaults:
@@ -87,12 +91,23 @@ jobs:
           else
             rc=$?; [[ $rc == 2 ]] || exit "$rc"
           fi
-          test "$(uname -m)" = arm64
-          {
+          if [[ "$(uname -sm)" == "Linux aarch64" ]]; then
+            cpu=$(lscpu | sed -n 's/^Model name:[[:space:]]*//p' | head -1)
+            # ARM VMs can omit the human-readable model while exposing the architectural IDs.
+            part=$(awk -F: '/^CPU (implementer|variant|part|revision)[[:space:]]*:/ {
+              gsub(/[[:space:]]/, "", $2); id = id "/" $2
+              if ($1 ~ /revision/) { print id; exit }
+            }' /proc/cpuinfo)
+            echo "QW_CPU=${cpu:-ARM}${part:?missing ARM CPU identity}"
+            echo "QW_CORES=$(nproc)"
+            # Linux reports usable RAM. Normalize reservation differences between VMs of the same size.
+            echo "QW_MEMORY=$(awk '/^MemTotal:/ {printf "%.0f", int($2 / 1048576 + 0.5) * 1073741824}' /proc/meminfo)"
+          else
+            test "$(uname -sm)" = 'Darwin arm64'
             echo "QW_CPU=$(sysctl -n machdep.cpu.brand_string)"
             echo "QW_CORES=$(sysctl -n hw.logicalcpu)"
             echo "QW_MEMORY=$(sysctl -n hw.memsize)"
-          } >> "$GITHUB_ENV"
+          fi >> "$GITHUB_ENV"
       - uses: actions/download-artifact@v5
         with:
           artifact-ids: ${{ inputs.host-artifact }}
@@ -112,28 +127,26 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Prepare downloaded clients
+      - name: Install official benchmark clients
         run: |
-          chmod +x build/benchmark-host/unittest build/native/clients/{relate_bench_load,relate_bench_read}
+          bash benchmarks/provider_comparison/tracker/activate_host.sh
           echo "QW_BUILD_TOOLCHAIN=$(cat build/native/toolchain.txt)" >> "$GITHUB_ENV"
-          python -m pip install --only-binary=:all: ladybug==0.22.3 pyarrow==23.0.1 numpy==2.2.6 adbc-driver-manager==1.9.0
+          python -m pip install --only-binary=:all: --require-hashes -r benchmarks/provider_comparison/tracker/requirements.txt
       - uses: actions/cache@v4
         id: fixture
         with:
           path: build/perf/provider-comparison/mod1
-          key: benchmark-sf1-mod1-macos-arm64-${{ hashFiles('benchmarks/provider_comparison/prepare.py', 'crates/native/examples/relate_bench_load.rs', 'Cargo.lock') }}
+          key: benchmark-sf1-mod1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('benchmarks/provider_comparison/prepare.py', 'benchmarks/provider_comparison/tracker/requirements.txt') }}
       - name: Reproduce the full SF1 fixture on cache miss
         if: steps.fixture.outputs.cache-hit != 'true'
         run: |
           curl --fail --location --retry 3 --output "$RUNNER_TEMP/sf1.lbdb" \
             https://huggingface.co/datasets/ladybugdb/lsqb-sf1/resolve/8283a51fa16c4d9fbc3c53ebde66252f7a41f3f6/lbdb/sf1.lbdb
-          python benchmarks/provider_comparison/prepare.py --loader build/native/clients/relate_bench_load --modulus 1 --source "$RUNNER_TEMP/sf1.lbdb"
+          python benchmarks/provider_comparison/prepare.py --modulus 1 --source "$RUNNER_TEMP/sf1.lbdb"
       - name: Measure, verify and compare each commit
         run: |
           fixture=build/perf/provider-comparison/mod1/edges.csv
           echo "4d7204dd0c29cfb2f058a6bb4f870dc5805f5aa77bff2a4e8e29a86ecfb7ba2b  $fixture" | shasum -a 256 --check
-          export DUCKDB_LIB="$PWD/build/benchmark-host/libduckdb.dylib"
-          export DUCKDB_UNITTEST="$PWD/build/benchmark-host/unittest"
           read -ra revisions <<< "$COMMITS"
           bash benchmarks/provider_comparison/tracker/measure_ci.sh "${revisions[@]}"
       - uses: actions/upload-artifact@v4

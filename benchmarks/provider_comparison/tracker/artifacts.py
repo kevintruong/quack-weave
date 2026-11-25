@@ -5,11 +5,13 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 from ci import checked_sha
 
 
-PROFILE = "mvp2-relate-release/osx_arm64/duckdb-v2.0.1"
+PLATFORM = "linux_arm64" if sys.platform == "linux" else "osx_arm64"
+PROFILE = f"mvp2-relate-release/{PLATFORM}/duckdb-v2.0.1"
 PACKAGE = Path("build/mvp2-relate/release/extension/quack_weave")
 EXTENSION = "quack_weave.duckdb_extension"
 

@@ -1,6 +1,7 @@
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -8,6 +9,20 @@ import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+def native_dependencies(package):
+    if sys.platform == "linux":
+        linked = subprocess.check_output(["readelf", "-d", package], text=True)
+        imports = re.findall(r"\(NEEDED\).*?\[(.*?)\]", linked)
+        exported = subprocess.check_output(["nm", "-D", "--defined-only", "--extern-only", package], text=True)
+        symbols = [line.split()[-1] for line in exported.splitlines() if line.strip()]
+    else:
+        linked = subprocess.check_output(["otool", "-L", package], text=True).splitlines()[2:]
+        imports = [line.strip().split(" (compatibility version", 1)[0] for line in linked]
+        exported = subprocess.check_output(["nm", "-gU", package], text=True)
+        symbols = [line.split()[-1].removeprefix("_") for line in exported.splitlines() if line.strip()]
+    return imports, symbols
 
 
 class NativePackageTest(unittest.TestCase):
@@ -49,14 +64,14 @@ class NativePackageTest(unittest.TestCase):
     @unittest.skipUnless(os.environ.get("QUACK_WEAVE_TEST_ARTIFACT"), "requires a native package")
     def test_native_binary_uses_only_system_runtime_dependencies(self):
         artifact = os.environ["QUACK_WEAVE_TEST_ARTIFACT"]
-        linked = subprocess.check_output(["otool", "-L", artifact], cwd=ROOT, text=True)
-        # The first entry after the file name is the dylib's own install name.
-        imports = [line.strip().split(" (compatibility version", 1)[0] for line in linked.splitlines()[2:]]
-        self.assertTrue(imports, linked)
-        for dependency in imports:
-            self.assertTrue(dependency.startswith(("/usr/lib/", "/System/Library/")), linked)
-        exported = subprocess.check_output(["nm", "-gU", artifact], cwd=ROOT, text=True)
-        self.assertEqual([line.split()[-1] for line in exported.splitlines()], ["_quack_weave_init_c_api_v2"])
+        imports, symbols = native_dependencies(artifact)
+        self.assertTrue(imports)
+        if sys.platform == "linux":
+            system = {"libc.so.6", "libstdc++.so.6", "libgcc_s.so.1", "libm.so.6", "ld-linux-aarch64.so.1"}
+            self.assertTrue(set(imports) <= system, imports)
+        else:
+            self.assertTrue(all(dep.startswith(("/usr/lib/", "/System/Library/")) for dep in imports), imports)
+        self.assertEqual(symbols, ["quack_weave_init_c_api_v2"])
 
 
 if __name__ == "__main__":

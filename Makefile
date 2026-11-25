@@ -42,10 +42,19 @@ test_release: test_extension_release
 clean: clean_build clean_rust
 clean_all: clean_configure clean
 
-# MVP1 packages the native macOS arm64 build without the template CI tooling.
+# Native ARM64 packages.
 MVP1_DUCKDB_VERSION := v2.0.1
 MVP1_EXTENSION_VERSION := v0.1.0
+ifeq ($(shell uname -s),Linux)
+MVP1_TARGET := aarch64-unknown-linux-gnu
+NATIVE_PLATFORM := linux_arm64
+NATIVE_SUFFIX := so
+else
 MVP1_TARGET := aarch64-apple-darwin
+NATIVE_PLATFORM := osx_arm64
+NATIVE_SUFFIX := dylib
+endif
+NATIVE_LIBRARY := librusty_quack.$(NATIVE_SUFFIX)
 MVP1_CARGO_DIR := $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),target)
 MVP1_DEBUG_ARTIFACT := build/debug/extension/quack_weave/quack_weave.duckdb_extension
 MVP1_RELEASE_ARTIFACT := build/release/extension/quack_weave/quack_weave.duckdb_extension
@@ -59,8 +68,13 @@ MVP2_RELATE_ARTIFACT := build/mvp2-relate/release/extension/quack_weave/quack_we
 PYTHON_BIN ?= python3
 DUCKDB ?= duckdb
 LBUG ?= lbug
+ifneq ($(wildcard build/benchmark-host/release/src/libduckdb.$(NATIVE_SUFFIX)),)
+DUCKDB_UNITTEST ?= build/benchmark-host/unittest
+DUCKDB_LIB ?= build/benchmark-host/release/src/libduckdb.$(NATIVE_SUFFIX)
+else
 DUCKDB_UNITTEST ?= build/duckdb-v2.0.1/test/unittest
-DUCKDB_LIB ?= build/duckdb-v2.0.1/src/libduckdb.dylib
+DUCKDB_LIB ?= build/duckdb-v2.0.1/src/libduckdb.$(NATIVE_SUFFIX)
+endif
 STABILIZATION_REPORT_DIR ?= build/stabilization-reports
 
 mvp1-deps:
@@ -70,18 +84,18 @@ mvp2-deps: mvp1-deps
 	$(PYTHON_BIN) -B scripts/prepare_gql_deps.py
 
 define build_native
-	@test "$$(uname -s):$$(uname -m)" = "Darwin:arm64" || { echo 'Native QuackWeave builds on macOS arm64.' >&2; exit 1; }
+	@case "$$(uname -s):$$(uname -m)" in Darwin:arm64|Linux:aarch64) ;; *) echo "Expected a native ARM64 builder" >&2; exit 1;; esac
 	cargo build --locked --package rusty_quack --target $(MVP1_TARGET) $(1)
 endef
 
 define make_mvp1
 	$(call build_native,$(1))
-	$(PYTHON_BIN) scripts/package_mvp1.py '$(MVP1_CARGO_DIR)/$(MVP1_TARGET)/$(2)/librusty_quack.dylib' '$(3)' $(MVP1_DUCKDB_VERSION) osx_arm64 $(MVP1_EXTENSION_VERSION)
+	$(PYTHON_BIN) scripts/package_mvp1.py '$(MVP1_CARGO_DIR)/$(MVP1_TARGET)/$(2)/$(NATIVE_LIBRARY)' '$(3)' $(MVP1_DUCKDB_VERSION) $(NATIVE_PLATFORM) $(MVP1_EXTENSION_VERSION)
 endef
 
 define make_mvp2
 	$(call build_native,$(1) --features $(if $(4),$(4),gql) --target-dir '$(MVP2_CARGO_DIR)')
-	$(PYTHON_BIN) -B scripts/package_mvp2.py '$(MVP2_CARGO_DIR)/$(MVP1_TARGET)/$(2)/librusty_quack.dylib' '$(3)' $(MVP1_DUCKDB_VERSION) osx_arm64 $(MVP2_EXTENSION_VERSION) $(if $(filter relate-provider,$(4)),--relate)
+	$(PYTHON_BIN) -B scripts/package_mvp2.py '$(MVP2_CARGO_DIR)/$(MVP1_TARGET)/$(2)/$(NATIVE_LIBRARY)' '$(3)' $(MVP1_DUCKDB_VERSION) $(NATIVE_PLATFORM) $(MVP2_EXTENSION_VERSION) $(if $(filter relate-provider,$(4)),--relate)
 endef
 
 define check_native

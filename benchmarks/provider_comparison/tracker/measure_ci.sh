@@ -10,7 +10,6 @@ measure() {
     python "$driver/tracker/artifacts.py" verify "$release" "$sha"
     python "$driver/tracker.py" run --source-revision "$sha" \
         --extension "$release/quack_weave.duckdb_extension" \
-        --relate-reader "$root/build/native/clients/relate_bench_read" \
         --fixture "$root/build/perf/provider-comparison/mod1" --library "$DUCKDB_LIB" \
         --out "$folder/snapshot.json"
     QW_TRACKER_SNAPSHOT="$folder/snapshot.json" "$DUCKDB_UNITTEST" \

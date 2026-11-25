@@ -10,7 +10,7 @@ Use this tracker to measure the client-visible cost of submitting a graph query 
 
 ### Full SF1 baseline
 
-The November 25, 2026 run used the 3,809,607-edge creator projection and release binary `a4cb4aa8b23d` on macOS arm64. All 30 series completed, yielding 600 verified hot observations across four alternating blocks. The tables give warm p50 times in milliseconds. The snapshot also contains p95, per-process setup and RSS, and every individual timing. [Raw snapshot](sf1.json)
+The historical protocol 1 run on November 25, 2026 used the 3,809,607-edge creator projection and release binary `a4cb4aa8b23d` on macOS arm64. All 30 series completed, yielding 600 verified hot observations across four alternating blocks. The tables give warm p50 times in milliseconds. The snapshot also contains p95, per-process setup and RSS, and every individual timing. [Raw snapshot](sf1.json)
 
 | Provider | Standalone workload | Direct Cypher | QuackWeave Cypher | QuackWeave GQL |
 |---|---|---:|---:|---:|
@@ -38,20 +38,20 @@ DuckDB's benchmark runner initializes state before the timing loop, executes one
 
 Each route starts a fresh process and opens a read-only graph once per block. Blocks alternate provider and route order. The same deterministic shuffle orders the standalone queries across GQL, Cypher and direct clients. Each case gets one warmup and five measured executions per block by default. Four blocks give 20 warm observations per series. P50 is the median and p95 is nearest-rank. Repetition zero contains the warmup. Filesystem caches stay enabled.
 
-QuackWeave uses the DuckDB ADBC driver and fetches the whole Arrow table. Direct Ladybug uses the 0.22.3 Python client and fetches the whole Arrow table. Direct RelateDB uses the embedded 1.2.0 Rust API and collects the returned integer IDs into a vector. The Rust worker times the call internally, before sending results to the verifier. These timings include each client's result materialization. The wall-clock ratio therefore measures the two client paths and includes their different result formats. [Direct RelateDB worker](../../../crates/native/examples/relate_bench_read.rs)
+QuackWeave uses the DuckDB ADBC driver and fetches the whole Arrow table. Direct Ladybug uses the 0.22.3 Python client and fetches the whole Arrow table. Direct RelateDB uses the official 1.2.0 Python wheel, opens the bundle read-only and materializes the Arrow IPC result. Protocol 2 includes materialization time on all three paths. The change from the protocol 1 Rust reader starts a new timing cohort. [Tracker](../tracker.py)
 
 Every execution, including warmup, must match a sorted row-count and SHA-256 signature derived from the fixture CSV. Sorting retains duplicate rows. The tracker checks the CSV and both provider file hashes before and after each run. It records CPU time per sample, open or registration time, DuckDB load time, and peak worker-process RSS. The latter includes the client runtime and all cases sharing that worker. After timing, hybrid workers record rows delivered by the graph scan using `EXPLAIN (ANALYZE, FORMAT JSON)`. A timeout, incorrect result, or worker error exits with failure before publishing a snapshot.
 
 ### Run
 
-Provision the pinned combined extension, Python environment and creator projection using the provider comparison instructions. The default fixture is the full `mod1` snapshot. Use `--fixture build/perf/provider-comparison/mod256` for a quick run. Build the dedicated native reader from the repository root. [Fixture and dependency setup](../README.md)
+Use native Linux arm64 or macOS arm64 with Python 3.12. Minimal Ubuntu containers need the distribution's `libatomic1` runtime for DuckDB SQLLogic. Run `gh auth login` if the local GitHub CLI has no session. The build produces the QuackWeave extension under test. DuckDB supplies its compiled SQLLogic executable and the matching library containing the ADBC driver. PyPI supplies the pinned graph clients, ADBC manager and Arrow wheels. The default fixture is the full `mod1` projection. Pass `--fixture build/perf/provider-comparison/mod256` for a small run. [Fixture setup](../README.md)
 
 ```sh
-cargo build --locked -p rusty_quack --target aarch64-apple-darwin --release \
-  --features relate-provider --target-dir target/mvp2-relate --example relate_bench_read
-py=build/usage-client-venv/bin/python
+python3.12 -m venv build/tracker-venv
+py=build/tracker-venv/bin/python
+"$py" -m pip install --only-binary=:all: --require-hashes -r benchmarks/provider_comparison/tracker/requirements.txt
+"$py" benchmarks/provider_comparison/tracker/install_host.py
 tracker=benchmarks/provider_comparison/tracker.py
-"$py" -B "$tracker" list
 "$py" -B "$tracker" run
 ```
 
@@ -60,7 +60,7 @@ The default output is a timestamped JSON file under `build/perf/provider-compari
 ### Track changes
 
 ```sh
-"$py" -B "$tracker" compare benchmarks/provider_comparison/tracker/sf1.json path/to/new.json
+"$py" -B "$tracker" compare path/to/protocol-2-baseline.json path/to/new.json
 ```
 
 The comparison prints old/new p50 and p95 and percentage change in median latency. A positive change means slower. It checks the host, fixture, SQL, expected answers, sample counts and route matrix for compatibility. Snapshots record the release binary hashes, DuckDB and provider versions, tracker source hash and workspace revision. A ratio of 1.5 in `qw_over_direct` means the QuackWeave median took 1.5 times the direct median for that workload on that provider.
@@ -79,22 +79,26 @@ Run the snapshot SQLLogic test against a complete matrix to independently recalc
 
 ```sh
 QW_TRACKER_SNAPSHOT="$PWD/benchmarks/provider_comparison/tracker/sf1.json" \
-  build/stabilization-runner-v2.0.1/unittest --env-passthrough QW_TRACKER_SNAPSHOT \
+  build/benchmark-host/unittest --test-dir "${TMPDIR:-/tmp}" --env-passthrough QW_TRACKER_SNAPSHOT \
   --stdin < benchmarks/provider_comparison/tracker/snapshot.test
 ```
 
 ### GitHub Actions and commit history
 
-The **CI** workflow plans one measurement for every commit introduced by a push to `main` or an opened, reopened or updated PR, including documentation changes. A force push with an unavailable previous tip includes the full reachable range. Up to 32 shards run independently. Each shard uses the workflow revision's harness, the source head's direct clients, and the same checksummed SF1 graph. PRs also run Rust checks and stabilization. A main push builds only the native inputs needed by the tracker in this workflow. [CI workflow](../../../.github/workflows/CI.yml) · [Benchmark jobs](../../../.github/workflows/Benchmark.yml)
+The **CI** workflow plans one measurement for every commit introduced by a push to `main` or an opened, reopened or updated PR, including documentation changes. A force push with an unavailable previous tip includes the full reachable range. Up to 32 shards run independently. Each shard uses the workflow revision's harness, the same hash-locked upstream clients, and the same checksummed SF1 graph. PRs also run Rust checks and stabilization. A main push builds only the native inputs needed by the tracker in this workflow. [CI workflow](../../../.github/workflows/CI.yml) · [Benchmark jobs](../../../.github/workflows/Benchmark.yml)
 
 | Build output | Revision and configuration | Consumers |
 |---|---|---|
-| DuckDB SQLLogic runner and ADBC library | Pinned DuckDB 2.0.1, macOS arm64 | Native stabilization, provider integration and all benchmark shards |
+| DuckDB SQLLogic runner and ADBC library | DuckDB 2.0.1 release-build artifact for the selected ARM64 platform | Native stabilization, provider integration and all benchmark shards |
 | Stabilization packages, licenses and Rust observer test executables | CI checkout, including the merge revision on PRs. Cypher-only debug, GQL debug and GQL release | Stabilization and public-client tests |
-| Dual-provider release and native clients | PR source head or main push tip, `mvp2-relate-release` | Provider integration and SF1 measurements use the same extension bytes. All shards use the head's direct reader and fixture loader. |
+| Dual-provider release and integration fixture builder | PR source head or main push tip, `mvp2-relate-release` | Provider integration and SF1 measurements use the same extension bytes. |
 | Earlier dual-provider releases | One release per additional source SHA in a multi-commit event | The corresponding commit's SF1 measurement |
 
-Consumers download the producing job's artifact by ID within the same workflow run. Each release carries its source SHA, native profile and SHA-256 digest. The benchmark verifies all three before loading the extension. Missing or mismatched releases fail that measurement. The snapshot retains the artifact IDs and binary hashes alongside the timings. A benchmark retry can reuse outputs of successful build jobs while GitHub retains the artifacts.
+The planner selects GitHub's `ubuntu-24.04-arm` for commits with a Linux build target. An event containing an older macOS-only commit runs its entire comparison on `macos-15`. Hardware, platform and protocol are part of baseline selection. The measurement job consumes the compiled QuackWeave artifact for each SHA and installs the pinned standalone clients. RelateDB's embedded Rust crate is part of the extension build.
+
+The DuckDB 2.0.1 SQLLogic runner comes from upstream Actions run `44520268851`. Its original artifacts expire on **2027-02-17**. Cache misses require authenticated GitHub CLI access to the public artifacts or an HTTPS mirror of the two original archives. Set the repository variable `QW_DUCKDB_BUILD_MIRROR` to the mirror's base URL before upstream expiry. The installer verifies the original SHA-256 on every use and fails if the pinned bytes are unavailable. [Upstream build](https://github.com/duckdb/duckdb/actions/runs/44520268851) · [Artifact names and hashes](install_host.py) · [Wheel versions and hashes](requirements.txt)
+
+Consumers download the producing job's artifact by ID within the same workflow run. Each release carries its source SHA, native profile and SHA-256 digest. The benchmark verifies all three before loading the extension. Missing or mismatched releases fail that measurement. The snapshot retains the artifact IDs and binary hashes alongside the timings. A benchmark retry can reuse outputs of successful build jobs while GitHub retains the artifacts. Main pushes compile the extension only. PR stabilization also builds QuackWeave test fixtures and observers.
 
 The **Benchmark tracker gate** fails on build errors, incorrect query results, SQLLogic failures, and latency regressions. For each of the 30 series the default regression threshold requires both p50 and p95 to increase by at least 20%, with a p50 increase of at least 0.25 ms. The Actions summary gives the baseline commit, affected series and timings. Repository variables `QW_REGRESSION_PERCENT` and `QW_REGRESSION_FLOOR_MS` override the thresholds. To require a passing benchmark before merging, select **Benchmark tracker gate** in the branch ruleset for `main` after the workflow first runs.
 

@@ -42,9 +42,8 @@ HYBRID = {
 CASES = {**STANDALONE, **HYBRID}
 ROUTES = {"direct_cypher": STANDALONE, "qw_gql": STANDALONE,
           "qw_cypher": STANDALONE, "qw_pgq": HYBRID}
-READER = run.ROOT / "target/mvp2-relate/aarch64-apple-darwin/release/examples/relate_bench_read"
 HISTORY = run.BUILD / "tracker"
-PROTOCOL = 1
+PROTOCOL = 2
 
 
 def schedule(cases, block, runs):
@@ -76,7 +75,20 @@ def fetch_table(fetch, statement):
 def python_worker(a, request):
     sequence = schedule(request["cases"], a.block, a.runs)
     with ExitStack() as stack:
-        if a.route == "direct_cypher":
+        if a.route == "direct_cypher" and a.provider == "relate":
+            from relate import Database
+            start = perf_counter_ns()
+            db = Database(str(a.fixture / run.ENGINES["relate"]), read_only=True)
+            stack.callback(db.close)
+            setup = {"open_ms": run.milliseconds(start)}
+
+            def fetch(statement):
+                table = pa.ipc.open_stream(db.execute_arrow(statement)).read_all()
+                if table.column_names != ["id"]:
+                    raise ValueError(f"Unexpected direct RelateDB schema: {table.schema}")
+                # The wheel reports string for an empty, untyped Cypher result.
+                return table if table.num_rows else table.cast(pa.schema([("id", pa.int64())]))
+        elif a.route == "direct_cypher":
             import ladybug
             start = perf_counter_ns()
             db = stack.enter_context(ladybug.Database(a.fixture / run.ENGINES["ladybug"], read_only=True))
@@ -103,7 +115,7 @@ def python_worker(a, request):
             check_result(request["expected"], name, actual)
             samples.append({"repetition": repetition, "case": name, **timing})
         worker = {"setup": setup, "samples": samples,
-                  "peak_rss_mib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 2**20}
+                  "peak_rss_mib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (2**20 if sys.platform == "darwin" else 1024)}
         if a.route == "qw_pgq":
             crossings = {}
             for name in request["cases"]:
@@ -121,21 +133,10 @@ def run_process(command, payload, timeout):
 
 
 def measure_worker(a, provider, route, block, cases, expected):
-    if (provider, route) == ("relate", "direct_cypher"):
-        sequence = schedule(cases, block, a.runs)
-        payload = "".join(json.dumps(CASES[name][0]) + "\n" for _, name in sequence)
-        output = run_process([a.relate_reader, a.fixture / run.ENGINES[provider]], payload, a.timeout)
-        setup, *observations, memory = map(json.loads, output.splitlines())
-        samples = []
-        for (repetition, name), observation in zip(sequence, observations, strict=True):
-            check_result(expected, name, run.signature([observation.pop("ids")]))
-            samples.append({"case": name, "repetition": repetition, **observation})
-        measured = {"setup": setup, "samples": samples, **memory}
-    else:
-        command = [sys.executable, "-B", __file__, "_worker", "--provider", provider, "--route", route,
-                   "--fixture", a.fixture, "--extension", a.extension, "--library", a.library,
-                   "--runs", str(a.runs), "--block", str(block)]
-        measured = json.loads(run_process(command, json.dumps({"expected": expected, "cases": cases}), a.timeout))
+    command = [sys.executable, "-B", __file__, "_worker", "--provider", provider, "--route", route,
+               "--fixture", a.fixture, "--extension", a.extension, "--library", a.library,
+               "--runs", str(a.runs), "--block", str(block)]
+    measured = json.loads(run_process(command, json.dumps({"expected": expected, "cases": cases}), a.timeout))
     return {"block": block, "provider": provider, "route": route, **measured}
 
 
@@ -177,8 +178,9 @@ def publish(path, report):
 
 
 def benchmark(a):
-    if sys.platform != "darwin" or a.runs < 1 or a.blocks < 2 or a.blocks % 2 or a.timeout <= 0:
-        raise ValueError("Use macOS, positive runs/worker timeout and an even number of blocks >= 2")
+    supported_host = (platform.system(), platform.machine()) in {("Darwin", "arm64"), ("Linux", "aarch64")}
+    if not supported_host or a.runs < 1 or a.blocks < 2 or a.blocks % 2 or a.timeout <= 0:
+        raise ValueError("Use native ARM64 Linux or macOS, positive runs/worker timeout and an even number of blocks >= 2")
     cases = [name for name in CASES if not a.case or name in a.case]
     providers = sorted(set(a.provider or run.ENGINES))
     started = datetime.now(timezone.utc)
@@ -196,9 +198,15 @@ def benchmark(a):
     routes = {k: [n for n in cases if n in group] for k, group in ROUTES.items()}
     binaries = {"extension": run.digest(a.extension), "duckdb_library": run.digest(a.library)}
     if "relate" in providers and routes["direct_cypher"]:
-        binaries["relate_reader"] = run.digest(a.relate_reader)
-    if "ladybug" in providers and routes["direct_cypher"] and version("ladybug") != "0.22.3":
-        raise ValueError("The native Ladybug comparison requires ladybug==0.22.3")
+        import relate._native
+        if version("relate-db") != "1.2.0":
+            raise ValueError("The native RelateDB comparison requires relate-db==1.2.0")
+        binaries["relate_driver"] = run.digest(Path(relate._native.__file__))
+    if "ladybug" in providers and routes["direct_cypher"]:
+        import ladybug._lbug
+        if version("ladybug") != "0.22.3":
+            raise ValueError("The native Ladybug comparison requires ladybug==0.22.3")
+        binaries["ladybug_driver"] = run.digest(Path(ladybug._lbug.__file__))
     source_commit = subprocess.check_output(
         ["git", "rev-parse", "--verify", "--end-of-options", a.source_revision + "^{commit}"],
         cwd=a.source_checkout, text=True).strip()
@@ -208,7 +216,7 @@ def benchmark(a):
               "platform": platform.platform(), "machine": platform.machine(),
               "host_id": sha256(platform.node().encode()).hexdigest()[:16],
               "versions": {"python": platform.python_version(), "duckdb": "2.0.1/8d78114e90",
-                           "relate": "1.2.0", **{k: version(k) for k in ("ladybug", "pyarrow", "adbc-driver-manager")}},
+                           "relate": "1.2.0", **{k: version(k) for k in ("ladybug", "pyarrow", "adbc-driver-manager", "numpy")}},
               "binaries": binaries, "fixture": fixture, "edge_count": oracle["edges"], "duckdb_threads": 1,
               "blocks": a.blocks, "runs": a.runs, "expected": expected,
               "statements": {n: CASES[n][0] for n in cases}, "watchlist": run.KEYS, "workers": []}
@@ -237,7 +245,7 @@ def benchmark(a):
 
 def compare(old, new):
     before, after = [json.loads(p.read_text()) for p in (old, new)]
-    for field in ("protocol", "fixture", "platform", "machine", "host_id", "duckdb_threads", "blocks", "runs", "watchlist"):
+    for field in ("protocol", "fixture", "platform", "machine", "host_id", "duckdb_threads", "blocks", "runs", "watchlist", "versions"):
         if before[field] != after[field]:
             raise ValueError(f"Incompatible snapshots: {field} differs")
     if before["id"] == after["id"]:
@@ -268,13 +276,12 @@ def main():
     worker = cmds.add_parser("_worker", help=argparse.SUPPRESS)
     for cmd in (measure, worker):
         cmd.add_argument("--fixture", type=Path, default=run.BUILD / "mod1")
-        cmd.add_argument("--library", type=Path, default=run.LIB)
+        cmd.add_argument("--library", type=Path, default=Path(os.environ.get("DUCKDB_LIB", run.LIB)))
         cmd.add_argument("--extension", type=Path, default=run.EXT)
         cmd.add_argument("--runs", type=int, default=5)
     measure.add_argument("--provider", action="append", choices=run.ENGINES)
     measure.add_argument("--case", action="append", choices=CASES)
     measure.add_argument("--out", type=Path, help="New JSON file (default: timestamped history)")
-    measure.add_argument("--relate-reader", type=Path, default=READER)
     measure.add_argument("--source-revision", default="HEAD", help="Git revision of the verified release artifact")
     measure.add_argument("--source-checkout", type=Path, default=run.ROOT,
                          help="Git checkout used to build the measured extension")

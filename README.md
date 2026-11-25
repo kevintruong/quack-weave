@@ -4,7 +4,7 @@ QuackWeave is a native DuckDB extension for reading an existing local Ladybug gr
 
 ## Build and use MVP1
 
-The native package targets macOS arm64, DuckDB `v2.0.1` and Ladybug `v0.22.3`. The build uses the Rust toolchain, a C++20 compiler, Python 3.12 or later, and OpenSSL 3 static libraries. It locates those libraries through Homebrew or `OPENSSL_LIB_DIR`.
+The native package targets Linux arm64 and macOS arm64, DuckDB `v2.0.1` and Ladybug `v0.22.3`. The build uses the Rust toolchain, a C++20 compiler, Python 3.12 or later, and OpenSSL 3 static libraries. It locates those libraries through Homebrew or `OPENSSL_LIB_DIR`. On Ubuntu 24.04 arm64 use `CXX=g++-13` and `OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu`.
 
 ```sh
 make mvp1-deps
@@ -41,7 +41,7 @@ make mvp1-test DUCKDB=/path/to/duckdb-v2.0.1 LBUG=/path/to/lbug-v0.22.3
 
 ## Build and use MVP2
 
-MVP2 adds a pinned DuckGQL parser and ANTLR C++ runtime to the macOS arm64 build for DuckDB `v2.0.1` and Ladybug `v0.22.3`. Install CMake in addition to the MVP1 build prerequisites.
+MVP2 adds a pinned DuckGQL parser and ANTLR C++ runtime to the native ARM64 build for DuckDB `v2.0.1` and Ladybug `v0.22.3`. Install CMake in addition to the MVP1 build prerequisites.
 
 ```sh
 make mvp2-deps
@@ -81,7 +81,7 @@ The default build remains MVP1 and its Cypher-only artifact stays under `build/d
 
 ### Query a RelateDB graph alongside Ladybug
 
-The optional `relate-provider` build embeds RelateDB 1.2.0. On macOS arm64, build it with `make mvp2-deps` and `make mvp2-relate-release`. Start DuckDB 2.0.1 with `-unsigned` and point the extension at an existing, checkpointed, single-file `.rl` bundle. [Pinned RelateDB source](https://github.com/relatedb/relate/tree/v1.2.0)
+The optional `relate-provider` build embeds RelateDB 1.2.0. On Linux or macOS arm64, build it with `make mvp2-deps` and `make mvp2-relate-release`. Start DuckDB 2.0.1 with `-unsigned` and point the extension at an existing, checkpointed, single-file `.rl` bundle. [Pinned RelateDB source](https://github.com/relatedb/relate/tree/v1.2.0)
 
 ```sql
 LOAD '/absolute/path/to/quack-weave/build/mvp2-relate/release/extension/quack_weave/quack_weave.duckdb_extension';
@@ -242,13 +242,13 @@ Plain `EXPLAIN` binds the query and can validate the GQL payload without opening
 
 ### Native stabilization
 
-The macOS arm64 CI gate runs the pinned native DuckDB SQLLogicTest runner against the MVP2 debug and release packages and the Cypher-only MVP1 package. It also runs the native observer audit against MVP2 release. The DuckDB CLI serves other test targets, while this gate requires the `unittest` executable and `libduckdb.dylib` from the same DuckDB `v2.0.1` build at commit `8d78114e90a53823803660bf821f6073ac87da8c`. When configuring that checkout with CMake, use `-DDUCKDB_EXPLICIT_VERSION=v2.0.1 -DBUILD_UNITTESTS=ON`.
+The ARM64 CI gate runs DuckDB's official SQLLogicTest runner against the MVP2 debug and release packages and the Cypher-only MVP1 package. It also runs the native observer audit against MVP2 release. The runner and ADBC library come from DuckDB's release build for `v2.0.1` at commit `8d78114e90a53823803660bf821f6073ac87da8c`. [Pinned binary setup](benchmarks/provider_comparison/tracker/README.md#run)
 
 ```sh
 make mvp2-deps
 make mvp2-stabilization-test \
-  DUCKDB_UNITTEST=/path/to/duckdb-build/test/unittest \
-  DUCKDB_LIB=/path/to/duckdb-build/src/libduckdb.dylib \
+  DUCKDB_UNITTEST="$PWD/build/benchmark-host/unittest" \
+  DUCKDB_LIB="$(find "$PWD/build/benchmark-host/release/src" -name 'libduckdb.*')" \
   LBUG=/path/to/lbug-v0.22.3
 ```
 

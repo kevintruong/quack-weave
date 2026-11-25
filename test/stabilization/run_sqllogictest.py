@@ -17,6 +17,7 @@ import tempfile
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 from mvp1_acceptance import LADYBUG_VERSION, ladybug
+from native_package_test import native_dependencies
 
 DUCKDB_PIN_VERSION = "v2.0.1"
 DUCKDB_PIN_SOURCE = "8d78114e90"
@@ -70,11 +71,9 @@ def write_package_observations(package, export, target):
     names = ("abi", "extension_version", "duckdb_version", "platform", "metadata_format")
     words = [footer[i : i + 32].rstrip(b"\0").decode("ascii") for i in range(0, 256, 32)]
     records = [("footer", name, value, "") for name, value in zip(names, words[3:])]
-    linked = subprocess.check_output(["otool", "-L", package], text=True).splitlines()[2:]
-    for line in linked:
-        records.append(("import", "", line.strip().split(" (compatibility version", 1)[0], ""))
-    exported = subprocess.check_output(["nm", "-gU", package], text=True).splitlines()
-    records.extend(("export", "", line.split()[-1], "") for line in exported if line.strip())
+    imports, symbols = native_dependencies(package)
+    records.extend(("import", "", item, "") for item in imports)
+    records.extend(("export", "", symbol, "") for symbol in symbols)
     records.append(("filesystem", "export_exists", str(int(export.exists())), ""))
     for name, expected in NOTICE_HASHES.items():
         notice = package.parent / "licenses" / name

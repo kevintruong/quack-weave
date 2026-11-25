@@ -51,15 +51,20 @@ def install_archive(name, url, digest, subtree, marker):
 
 
 def main():
-    if (platform.system(), platform.machine()) != ("Darwin", "arm64"):
-        raise SystemExit("The MVP1 dependency installer targets macOS arm64.")
+    system = platform.system(), platform.machine()
+    if system == ("Darwin", "arm64"):
+        asset = "liblbug-static-osx-arm64.tar.gz"
+        checksum = "9a6e6903ed36ad58fbc31412cf4aae6d269b90219137a8e29b47472a89c350c8"
+    elif system == ("Linux", "aarch64"):
+        asset = "liblbug-static-linux-aarch64-compat.tar.gz"
+        checksum = "4bf57a7ccd46f96765aa10a9b797f2e01f4390fd40484d74110f943e766359d8"
+    else:
+        raise SystemExit(f"Unsupported native target {system}")
 
     ROOT.mkdir(parents=True, exist_ok=True)
     install_archive(
-        "liblbug-static-osx-arm64.tar.gz",
-        f"{RELEASE}/liblbug-static-osx-arm64.tar.gz",
-        "9a6e6903ed36ad58fbc31412cf4aae6d269b90219137a8e29b47472a89c350c8",
-        "static",
+        asset, f"{RELEASE}/{asset}", checksum,
+        "static-linux-aarch64" if system[0] == "Linux" else "static",
         "liblbug.a",
     )
     install_archive(

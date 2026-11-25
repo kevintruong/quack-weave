@@ -1,4 +1,5 @@
 import pathlib
+import platform
 import shutil
 import subprocess
 import tarfile
@@ -69,11 +70,14 @@ def verify_duckdb_revision(path):
 def main():
     ROOT.mkdir(parents=True, exist_ok=True)
     install_duckdb_headers()
+    target, checksum = {
+        ("Linux", "aarch64"): ("linux-arm64", "3d581ff935f1836363cc459e640737cdc1892ab3ed69e74853e93f01d9d071f0"),
+        ("Darwin", "arm64"): ("osx-arm64", "adaada35202db67d010b06277320aa700f1313d9997b549a948349c9fd749a41"),
+    }[platform.system(), platform.machine()]
+    asset = f"duckdb-static-libs-{target}.tar.gz"
     install(
-        "duckdb-static-libs-osx-arm64.tar.gz",
-        "https://github.com/duckdb/duckdb/releases/download/v2.0.1/duckdb-static-libs-osx-arm64.tar.gz",
-        "adaada35202db67d010b06277320aa700f1313d9997b549a948349c9fd749a41",
-        "duckdb-static-v2.0.1",
+        asset, f"https://github.com/duckdb/duckdb/releases/download/v2.0.1/{asset}", checksum,
+        "duckdb-static-v2.0.1-linux-arm64" if target == "linux-arm64" else "duckdb-static-v2.0.1",
         "libduckdb_static.a",
         flat=True,
     )

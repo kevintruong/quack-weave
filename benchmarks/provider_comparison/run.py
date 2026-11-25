@@ -25,7 +25,10 @@ from watchlist import KEYS, PATTERN, ROOT, digest, provider_rows, sql_literal
 
 BUILD = ROOT / "build/perf/provider-comparison"
 EXT = ROOT / "build/mvp2-relate/release/extension/quack_weave/quack_weave.duckdb_extension"
-LIB = ROOT / "build/deps/duckdb-v2.0.1/libduckdb.dylib"
+DUCKDB_LIBRARY = "libduckdb.so" if sys.platform == "linux" else "libduckdb.dylib"
+LIB = ROOT / "build/benchmark-host/release/src" / DUCKDB_LIBRARY
+if not LIB.is_file():
+    LIB = ROOT / "build/deps/duckdb-v2.0.1" / DUCKDB_LIBRARY
 POINT = f"MATCH (p:Person) WHERE p.PersonId = {KEYS[0]} RETURN p.PersonId AS id"
 EQ = f"p.PersonId = {KEYS[0]}"
 FAN = f"MATCH {PATTERN} WHERE {EQ} RETURN m.MessageId AS id"

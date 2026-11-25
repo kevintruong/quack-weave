@@ -89,12 +89,11 @@ Each implementation commit has a fixture-backed SQLLogic regression. The plan ch
 
 ## Reproduce
 
-From the repository root, use the benchmark Python environment with `ladybug==0.22.3`, `pyarrow`, `numpy`, and `adbc-driver-manager`. Place the pinned `sf1.lbdb` under `build/perf/lsqb-sf1/`. The fixture builder checks the source hash before importing. These commands target the combined release and the pinned DuckDB library used in the measurements.
+From the repository root, use the benchmark Python environment with Python 3.12 and the [pinned benchmark wheels](tracker/requirements.txt). Place the pinned `sf1.lbdb` under `build/perf/lsqb-sf1/`. The fixture builder checks the source hash before importing. These commands target the combined release and the pinned DuckDB library used in the measurements.
 
 ```sh
 make mvp2-deps mvp2-relate-release
-cargo build --locked -p rusty_quack --target aarch64-apple-darwin --release \
-  --features relate-provider --target-dir target/mvp2-relate --example relate_bench_load
+build/usage-client-venv/bin/python -m pip install --only-binary=:all: --require-hashes -r benchmarks/provider_comparison/tracker/requirements.txt
 
 for m in 256 32 1; do
   build/usage-client-venv/bin/python -B benchmarks/provider_comparison/prepare.py --modulus "$m"
@@ -116,7 +115,7 @@ Fixture creation requires a fresh destination. An existing fixture can be benchm
 The following independent probe prints the native RelateDB error for the full unfiltered traversal. It uses a frozen read-only handle and bypasses QuackWeave only to expose the diagnostic. The benchmark timings all use QuackWeave.
 
 ```sh
-target/mvp2-relate/aarch64-apple-darwin/release/examples/relate_bench_load \
+cargo run --locked -p rusty_quack --release --features relate-provider --example relate_bench_load -- \
   --probe build/perf/provider-comparison/mod1/social.rl \
   'MATCH (m:Message)-[:Message_hasCreator_Person]->(p:Person) RETURN p.PersonId AS author, m.MessageId AS mid'
 ```

@@ -1,5 +1,7 @@
 """Build matched, indexed LSQB message–creator projections from the pinned Ladybug SF1 file."""
 import argparse
+from itertools import groupby
+import csv as std_csv
 import json
 from pathlib import Path
 import subprocess
@@ -15,7 +17,30 @@ from watchlist import GRAPH_SHA, PATTERN, ROOT, digest, sql_literal
 
 BUILD = ROOT / "build/perf/provider-comparison"
 SOURCE = ROOT / "build/perf/lsqb-sf1/sf1.lbdb"
-LOADER = ROOT / "target/mvp2-relate/aarch64-apple-darwin/release/examples/relate_bench_load"
+
+
+def load_relate(edges, target):
+    from relate import Database
+    query = ("UNWIND $groups AS g CREATE (p:Person {PersonId:g[0]}) "
+             "WITH p,g UNWIND g[1] AS mid "
+             "CREATE (:Message {MessageId:mid})-[:Message_hasCreator_Person]->(p)")
+    db = Database(str(target))
+    try:
+        with edges.open(newline="") as stream:
+            groups, count = [], 0
+            for author, rows in groupby(std_csv.DictReader(stream), key=lambda row: int(row["author"])):
+                messages = [int(row["mid"]) for row in rows]
+                groups.append([author, messages])
+                count += len(messages)
+                if count >= 4000:
+                    db.execute(query, {"groups": groups})
+                    groups, count = [], 0
+            if groups:
+                db.execute(query, {"groups": groups})
+        db.execute("CREATE RANGE INDEX author_key FOR (p:Person) ON (p.PersonId)")
+        db.execute("CREATE RANGE INDEX message_key FOR (m:Message) ON (m.MessageId)")
+    finally:
+        db.close()
 
 
 def prepare(source, destination, modulus, loader):
@@ -61,7 +86,10 @@ def prepare(source, destination, modulus, loader):
             ]:
                 conn.execute(stmt).close()
         del pairs, people
-        subprocess.run([loader, folder / "edges.csv", folder / "social.rl"], check=True)
+        if loader is None:
+            load_relate(folder / "edges.csv", folder / "social.rl")
+        else:
+            subprocess.run([loader, folder / "edges.csv", folder / "social.rl"], check=True)
         info = {"source_sha256": GRAPH_SHA, "selection": query, "modulus": modulus,
                 "files": {name: {"sha256": digest(folder / name), "bytes": (folder / name).stat().st_size}
                           for name in ["edges.csv", "social.lbdb", "social.rl"]}}
@@ -78,7 +106,7 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--source", default=SOURCE, type=Path)
     p.add_argument("--destination", default=BUILD, type=Path)
-    p.add_argument("--loader", default=LOADER, type=Path)
+    p.add_argument("--loader", type=Path, help="Optional legacy native fixture loader")
     p.add_argument("--modulus", type=int, required=True)
     a = p.parse_args()
-    prepare(a.source.resolve(), a.destination.resolve(), a.modulus, a.loader.resolve())
+    prepare(a.source.resolve(), a.destination.resolve(), a.modulus, a.loader.resolve() if a.loader else None)

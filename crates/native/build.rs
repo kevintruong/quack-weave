@@ -16,7 +16,15 @@ fn main() {
     let pinned = manifest_dir.join("../../build/deps/ladybug-0.22.3");
     let native = manifest_dir.join("src/ladybug_admission.cpp");
     let source = configured("LADYBUG_SOURCE_DIR", pinned.join("ladybug-0.22.3"));
-    let library = configured("LADYBUG_LIB_DIR", pinned.join("static"));
+    let macos = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos");
+    let library = configured(
+        "LADYBUG_LIB_DIR",
+        pinned.join(if macos {
+            "static"
+        } else {
+            "static-linux-aarch64"
+        }),
+    );
     let ssl = env::var_os("OPENSSL_LIB_DIR")
         .map(PathBuf::from)
         .or_else(homebrew_openssl_lib)
@@ -72,7 +80,6 @@ fn main() {
         build_graph_grammar(&manifest_dir, &out);
     }
 
-    let macos = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos");
     // Link these exact archives. Apple's linker can otherwise pick their dylib
     // siblings when resolving a library by bare name.
     for archive in [
@@ -93,6 +100,11 @@ fn main() {
         );
         "c++"
     } else {
+        // The vendor archives introduce references after rustc's default system
+        // libraries. Resolve glibc's nonshared stubs and GCC's atomic helpers here.
+        println!("cargo:rustc-link-arg=-lc");
+        println!("cargo:rustc-link-arg=-lgcc");
+        println!("cargo:rustc-link-arg=-Wl,-z,defs");
         "stdc++"
     };
     println!("cargo:rustc-link-lib=dylib={cpp_runtime}");
@@ -185,12 +197,21 @@ fn build_graph_grammar(manifest: &Path, out: &Path) {
     println!("cargo:rustc-link-lib=static=qw_grammar");
     // Upstream EXTENSION_STATIC_BUILD links DuckDB privately so loaders using
     // RTLD_LOCAL can resolve the C++ parser ABI. Keep only referenced symbols.
-    let libraries = manifest.join("../../build/deps/gql-antlr/duckdb-static-v2.0.1");
+    let macos = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos");
+    let libraries = manifest.join("../../build/deps/gql-antlr").join(if macos {
+        "duckdb-static-v2.0.1"
+    } else {
+        "duckdb-static-v2.0.1-linux-arm64"
+    });
     let archive = libraries.join("libduckdb_static.a");
     require_file(&archive);
-    println!("cargo:rustc-link-arg=-Wl,-dead_strip");
-    println!("cargo:rustc-link-arg=-Wl,-load_hidden");
-    println!("cargo:rustc-link-arg=-Xlinker");
+    if macos {
+        println!("cargo:rustc-link-arg=-Wl,-dead_strip");
+        println!("cargo:rustc-link-arg=-Wl,-load_hidden");
+        println!("cargo:rustc-link-arg=-Xlinker");
+    } else {
+        println!("cargo:rustc-link-arg=-Wl,--exclude-libs,ALL");
+    }
     println!("cargo:rustc-link-arg={}", archive.display());
 }
 
