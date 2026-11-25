@@ -29,6 +29,9 @@ mod cypher_read;
 #[cfg(all(feature = "neo4j-provider", not(feature = "template-compat")))]
 mod neo4j_backend;
 
+#[cfg(all(feature = "neo4j-provider", not(feature = "template-compat")))]
+mod neo4j_secret;
+
 #[cfg(all(test, not(feature = "template-compat")))]
 mod test_observation;
 
@@ -70,6 +73,7 @@ pub fn entrypoint(extension: &Extension) -> Result<()> {
     let providers = vec![ladybug];
     #[cfg(feature = "neo4j-provider")]
     let providers = {
+        neo4j_secret::register(extension)?;
         let mut providers = providers;
         providers.push(GraphProvider::new(
             ProviderDescriptor {

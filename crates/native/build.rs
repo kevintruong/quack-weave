@@ -42,10 +42,17 @@ fn main() {
     }
     println!("cargo:rerun-if-changed={}", native.display());
 
-    require_file(&source.join("src/include/parser/parser.h"));
-    require_file(&library.join("liblbug.a"));
-    require_file(&ssl.join("libssl.a"));
-    require_file(&ssl.join("libcrypto.a"));
+    for path in [
+        source.join("src/include/parser/parser.h"),
+        library.join("liblbug.a"),
+        ssl.join("libssl.a"),
+        ssl.join("libcrypto.a"),
+    ] {
+        require_file(
+            &path,
+            "Run make mvp1-deps and ensure OpenSSL 3 is available.",
+        );
+    }
 
     ladybug_config_header(&library, &out);
     let object = out.join("ladybug_admission.o");
@@ -75,9 +82,13 @@ fn main() {
 
     println!("cargo:rustc-link-search=native={}", out.display());
     println!("cargo:rustc-link-lib=static=qw_ladybug_admission");
-    if env::var_os("CARGO_FEATURE_GQL").is_some() {
+    let gql = env::var_os("CARGO_FEATURE_GQL").is_some();
+    let neo4j = env::var_os("CARGO_FEATURE_NEO4J_PROVIDER").is_some();
+    if gql {
         build_gql(&manifest_dir, &out);
-        build_graph_grammar(&manifest_dir, &out);
+    }
+    if gql || neo4j {
+        build_duckdb_shims(&manifest_dir, &out, gql, neo4j);
     }
 
     // Link these exact archives. Apple's linker can otherwise pick their dylib
@@ -136,38 +147,35 @@ fn ladybug_config_header(library: &Path, out: &Path) {
     .unwrap();
 }
 
-fn build_graph_grammar(manifest: &Path, out: &Path) {
+fn build_duckdb_shims(manifest: &Path, out: &Path, gql: bool, neo4j: bool) {
     let source = manifest.join(format!("../../build/deps/duckdb-{DUCKDB_REVISION}"));
-    require_file(&source.join("src/include/duckdb/parser/grammar_extension.hpp"));
-    let sources = manifest.join("grammar");
-    println!(
-        "cargo:rerun-if-changed={}",
-        sources.join("watchlist.hpp").display()
+    require_file(
+        &source.join("src/include/duckdb/main/capi_v2/capi_v2_internal.hpp"),
+        "Run make mvp2-deps.",
     );
-    println!(
-        "cargo:rerun-if-changed={}",
-        sources.join("graph_table.hpp").display()
-    );
-    let mut objects = Vec::new();
-    println!(
-        "cargo:rerun-if-changed={}",
-        sources.join("aggregate_pushdown.hpp").display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
-        sources.join("graph_explain.hpp").display()
-    );
-    for unit in [
-        "graph_explain",
-        "standalone",
-        "graph_table",
-        "watchlist",
-        "runtime_watchlist",
-        "aggregate_pushdown",
-    ] {
-        let grammar = sources.join(format!("{unit}.cpp"));
-        let object = out.join(format!("{unit}.o"));
+    let mut sources = Vec::new();
+    if gql {
+        let grammar = manifest.join("grammar");
         println!("cargo:rerun-if-changed={}", grammar.display());
+        sources.extend(
+            [
+                "graph_explain.cpp",
+                "standalone.cpp",
+                "graph_table.cpp",
+                "watchlist.cpp",
+                "runtime_watchlist.cpp",
+                "aggregate_pushdown.cpp",
+            ]
+            .map(|file| grammar.join(file)),
+        );
+    }
+    if neo4j {
+        sources.push(manifest.join("src/neo4j_secret.cpp"));
+    }
+    let mut objects = Vec::new();
+    for shim in sources {
+        let object = out.join(shim.file_name().unwrap()).with_extension("o");
+        println!("cargo:rerun-if-changed={}", shim.display());
         run(
             Command::new(env::var_os("CXX").as_deref().unwrap_or(OsStr::new("c++")))
                 .args([
@@ -182,7 +190,7 @@ fn build_graph_grammar(manifest: &Path, out: &Path) {
                 .arg("-I")
                 .arg(source.join("third_party/utf8proc/include"))
                 .arg("-c")
-                .arg(&grammar)
+                .arg(&shim)
                 .arg("-o")
                 .arg(&object),
         );
@@ -191,12 +199,12 @@ fn build_graph_grammar(manifest: &Path, out: &Path) {
     run(
         Command::new(env::var_os("AR").as_deref().unwrap_or(OsStr::new("ar")))
             .arg("crs")
-            .arg(out.join("libqw_grammar.a"))
+            .arg(out.join("libqw_duckdb_shims.a"))
             .args(objects),
     );
-    println!("cargo:rustc-link-lib=static=qw_grammar");
+    println!("cargo:rustc-link-lib=static=qw_duckdb_shims");
     // Upstream EXTENSION_STATIC_BUILD links DuckDB privately so loaders using
-    // RTLD_LOCAL can resolve the C++ parser ABI. Keep only referenced symbols.
+    // RTLD_LOCAL can resolve the C++ ABI. Keep only referenced symbols.
     let macos = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos");
     let libraries = manifest.join("../../build/deps/gql-antlr").join(if macos {
         "duckdb-static-v2.0.1"
@@ -204,7 +212,7 @@ fn build_graph_grammar(manifest: &Path, out: &Path) {
         "duckdb-static-v2.0.1-linux-arm64"
     });
     let archive = libraries.join("libduckdb_static.a");
-    require_file(&archive);
+    require_file(&archive, "Run make mvp2-deps.");
     if macos {
         println!("cargo:rustc-link-arg=-Wl,-dead_strip");
         println!("cargo:rustc-link-arg=-Wl,-load_hidden");
@@ -308,12 +316,8 @@ fn homebrew_openssl_lib() -> Option<PathBuf> {
         .then(|| PathBuf::from(String::from_utf8_lossy(&output.stdout).trim()).join("lib"))
 }
 
-fn require_file(path: &Path) {
-    assert!(
-        path.is_file(),
-        "Missing {}. Run make mvp1-deps and ensure OpenSSL 3 is available.",
-        path.display()
-    );
+fn require_file(path: &Path, suggestion: &str) {
+    assert!(path.is_file(), "Missing {}. {suggestion}", path.display());
     println!("cargo:rerun-if-changed={}", path.display());
 }
 
