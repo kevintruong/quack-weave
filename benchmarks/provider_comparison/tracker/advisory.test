@@ -1,0 +1,31 @@
+# name: benchmarks/provider_comparison/tracker/advisory.test
+# description: Check archived latency findings for unchanged, below-threshold, boundary, mixed and faster fixture timings.
+# group: [quack_weave]
+
+require json
+
+test-env QW_ADVISORY_FIXTURE UNSET_QW_ADVISORY_FIXTURE
+
+statement ok
+CREATE TEMP TABLE findings AS
+SELECT ordinality AS example, status, review_percent, regressions, improvements
+FROM read_json_auto('{QW_ADVISORY_FIXTURE}') WITH ORDINALITY;
+
+query III
+SELECT count(*), count(*) FILTER (WHERE status = 'passed'), count(*) FILTER (WHERE review_percent = 10)
+FROM findings;
+----
+6	6	6
+
+query ITTT rowsort
+SELECT example, 'regression', r.series, unnest(r.metrics) FROM findings, unnest(regressions) AS item(r)
+UNION ALL
+SELECT example, 'faster', r.series, unnest(r.metrics) FROM findings, unnest(improvements) AS item(r);
+----
+3	regression	relate/qw_pgq/view	p50
+4	faster	relate/qw_pgq/view	p50
+4	regression	relate/qw_pgq/view	p95
+5	regression	relate/qw_pgq/view	p50
+5	regression	relate/qw_pgq/view	p95
+6	faster	relate/qw_pgq/view	p50
+6	faster	relate/qw_pgq/view	p95

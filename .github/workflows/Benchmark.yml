@@ -72,8 +72,6 @@ jobs:
       HOST_ARTIFACT_ID: ${{ inputs.host-artifact }}
       PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       QW_RUNNER_CLASS: github-hosted/${{ inputs.runner }}/arm64
-      QW_REGRESSION_PERCENT: ${{ vars.QW_REGRESSION_PERCENT }}
-      QW_REGRESSION_FLOOR_MS: ${{ vars.QW_REGRESSION_FLOOR_MS }}
     defaults:
       run:
         shell: bash
@@ -134,6 +132,8 @@ jobs:
           echo "QW_BUILD_TOOLCHAIN=$(cat build/native/toolchain.txt)" >> "$GITHUB_ENV"
           python -m pip install --only-binary=:all: --require-hashes -r benchmarks/provider_comparison/tracker/requirements.txt
           python -B -m unittest discover -s benchmarks/provider_comparison -p 'test_tracker_pair.py'
+          DUCKDB_UNITTEST="$PWD/build/benchmark-host/unittest" python -B -m unittest discover \
+            -s benchmarks/provider_comparison/tracker -p test_ci.py -k test_verified_timings_are_advisory_per_percentile
       - uses: actions/cache@v4
         id: fixture
         with:

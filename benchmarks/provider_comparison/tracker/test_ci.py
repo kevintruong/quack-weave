@@ -1,5 +1,5 @@
 """Exercise the Actions range, gate and history writer with real temporary Git refs."""
-from contextlib import chdir
+from contextlib import chdir, redirect_stdout
 from copy import deepcopy
 import io
 import json
@@ -80,18 +80,38 @@ class TrackerCI(unittest.TestCase):
         self.assertEqual([s for x in chunks for s in x["commits"].split()], shas)
         self.assertEqual([x["index"] for x in chunks], list(range(len(chunks))))
 
-    def test_regression_needs_both_percentiles_and_absolute_floor(self):
-        row = {"provider": "ladybug", "route": "qw_pgq", "case": "aggregate", "p50_ms": 1, "p95_ms": 2}
+    def test_verified_timings_are_advisory_per_percentile(self):
+        row = {"provider": "relate", "route": "qw_pgq", "case": "view", "p50_ms": 0.1, "p95_ms": 0.2}
         past = {"workspace_head": "c" * 40, "summary": [row]}
-        self.assertEqual(ci.judge(past, None, 20, .25)["status"], "baseline")
-        for p50, p95, expected in [(1.24, 2.8, "passed"), (2, 2.39, "passed"), (1.25, 2.4, "regression")]:
+        self.assertEqual(ci.judge(past, None)["status"], "baseline")
+        # A 0.01 ms increase from 0.1 ms is exactly 10%.
+        fixtures = []
+        for p50, p95, regressions, improvements in [
+            (0.1, 0.2, [], []), (0.109999, 0.219999, [], []),
+            (0.11, 0.2, ["p50"], []), (0.099, 0.22, ["p95"], ["p50"]),
+            (0.12, 0.24, ["p50", "p95"], []), (0.09, 0.18, [], ["p50", "p95"]),
+        ]:
             with self.subTest(p50=p50, p95=p95):
                 current = {"summary": [{**row, "p50_ms": p50, "p95_ms": p95}]}
-                decision = ci.judge(current, past, 20, .25)
-                self.assertEqual(decision["status"], expected)
+                decision = ci.judge(current, past)
+                fixtures.append(decision)
+                self.assertEqual(decision["status"], "passed")
                 self.assertEqual(decision["baseline_sha"], past["workspace_head"])
-        with self.assertRaises(ValueError):
-            ci.judge(past, past, float("nan"), .25)
+                for key, expected in [("regressions", regressions), ("improvements", improvements)]:
+                    self.assertEqual([m for series in decision[key] for m in series["metrics"]], expected)
+        for bad in [0, -1, float("nan"), float("inf")]:
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                ci.judge({"summary": [{**row, "p50_ms": bad}]}, past)
+        if runner := os.environ.get("DUCKDB_UNITTEST"):
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "records.json"
+                path.write_text(json.dumps(fixtures))
+                check = subprocess.run(
+                    [runner, "--test-dir", tmp, "--env-passthrough", "QW_ADVISORY_FIXTURE", "--stdin"],
+                    input=(HERE / "advisory.test").read_text(), text=True, capture_output=True,
+                    env={**os.environ, "QW_ADVISORY_FIXTURE": str(path)})
+                self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+                self.assertRegex(check.stdout, r"All tests passed \([1-9][0-9]* assertions? in 1 test case\)")
 
     def test_judge_displays_and_archives_the_same_tables_on_regression(self):
         previous = json.loads((HERE / "sf1.json").read_text())
@@ -104,6 +124,9 @@ class TrackerCI(unittest.TestCase):
         current["id"] = "candidate-run"
         slow = next(r for r in current["summary"] if r["case"] == "full_scan_aggregate")
         slow.update(p50_ms=slow["p50_ms"] * 2, p95_ms=slow["p95_ms"] * 2)
+        for metric in ("p50_ms", "p95_ms"):
+            current["summary"][1][metric] *= 0.5
+        current["summary"][0]["p50_ms"] *= 1.05
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp) / sha
             folder.mkdir()
@@ -114,15 +137,25 @@ class TrackerCI(unittest.TestCase):
             selected.write_text(json.dumps(selection))
             env = {k: "fixture" for k in ("QW_RUNNER_CLASS", "QW_CPU", "QW_CORES", "QW_MEMORY")}
             env.update(GITHUB_STEP_SUMMARY=str(summary), HOST_ARTIFACT_ID="20",
-                       QW_DUCKDB_ARCHIVE_SHA256="d"*64, QW_RELEASE_ARTIFACT_ID="21")
+                       QW_DUCKDB_ARCHIVE_SHA256="d"*64, QW_RELEASE_ARTIFACT_ID="21", GITHUB_ACTIONS="true")
             with (patch.dict(os.environ, env, clear=True),
-                  patch.object(sys, "argv", ["ci.py", "judge", str(folder), "--selection", str(selected)])):
-                self.assertEqual(ci.main(), 1)
+                  patch.object(sys, "argv", ["ci.py", "judge", str(folder), "--selection", str(selected)]),
+                  redirect_stdout(io.StringIO()) as log):
+                selected.write_text(json.dumps({**selection, "extension_sha256": "0" * 64}))
+                with self.assertRaisesRegex(ValueError, "Wrong baseline release"):
+                    ci.main()
+                self.assertFalse((folder / "record.json").exists())
+                selected.write_text(json.dumps(selection))
+                self.assertEqual(ci.main(), 0)
+                self.assertIn("::warning::", log.getvalue())
             report = summary.read_text()
             self.assertIn("same runner", report)
             self.assertEqual(report.count("Baseline p50 (ms)"), 2)
             self.assertIn("| Provider | Route | Workload | Samples |", report)
-            self.assertIn("+100.0%", report)
+            self.assertIn("**+100.0% regression**", report)
+            self.assertIn("**-50.0% faster**", report)
+            self.assertIn("+5.0% acceptable", report)
+            self.assertIn("0.0% unchanged", report)
             self.assertIn("600 warm samples", report)
             for r in current["summary"]:
                 self.assertEqual(report.count(f"| {r['provider']} | {r['route']} | {r['case']} | {r['n']} |"), 1)
@@ -152,7 +185,7 @@ class TrackerCI(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, patch.object(ci, "compatible_baselines", return_value=[old]):
             selection = ci.select_pair(old, "a"*40, Path(tmp))
         self.assertEqual(selection, {"unavailable_sha": old["workspace_head"]})
-        record = {"commit": old["workspace_head"], **ci.judge(old, None, 20, .25), **selection}
+        record = {"commit": old["workspace_head"], **ci.judge(old, None), **selection}
         self.assertIn("artifact unavailable", ci.markdown_report(record, old))
 
     def test_expired_nearest_release_uses_the_next_retained_attempt(self):
@@ -167,7 +200,7 @@ class TrackerCI(unittest.TestCase):
     def test_reports_show_seed_and_missing_measurements(self):
         sample = json.loads((HERE / "sf1.json").read_text())
         sha = sample["workspace_head"]
-        seed = {"commit": sha, **ci.judge(sample, None, 20, .25)}
+        seed = {"commit": sha, **ci.judge(sample, None)}
         self.assertIn("First compatible baseline", ci.markdown_report(seed, sample))
         for status in ("failed", "not_measured"):
             output = ci.markdown_report({"commit": sha, "status": status}, None)
@@ -176,6 +209,17 @@ class TrackerCI(unittest.TestCase):
         sample["summary"][0]["case"] = "[link](https://example.org)"
         with self.assertRaises(ValueError):
             ci.markdown_report(seed, sample)
+
+    def test_historical_regression_keeps_its_recorded_verdict(self):
+        sample = json.loads((HERE / "sf1.json").read_text())
+        old = {"commit": sample["workspace_head"], "status": "regression",
+               "thresholds": {"percent": 20, "floor_ms": 0.25},
+               "regressions": [{"series": "relate/qw_pgq/view", "old_p50_ms": 1,
+                                "new_p50_ms": 2, "old_p95_ms": 3, "new_p95_ms": 6}]}
+        report = ci.markdown_report(old, sample)
+        self.assertIn("· regression", report)
+        self.assertIn("20%", report)
+        self.assertNotIn("advisory", report)
 
     def test_rejects_misnamed_or_inconsistent_evidence(self):
         sha = "a" * 40

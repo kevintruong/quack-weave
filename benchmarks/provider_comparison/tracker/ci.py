@@ -1,5 +1,6 @@
-"""GitHub Actions commit selection, comparable ancestor lookup and latency gate."""
+"""GitHub Actions commit selection, paired verification and latency reporting."""
 import argparse
+from decimal import Decimal
 import json
 import math
 import os
@@ -12,6 +13,7 @@ import sys
 HISTORY = "refs/remotes/origin/benchmark-history"
 SHA = re.compile(r"[0-9a-f]{40}")
 RESULTS = {"passed", "baseline", "regression", "not_measured", "failed"}
+REVIEW_PERCENT = 10
 
 
 def git(*args, cwd=None):
@@ -131,25 +133,47 @@ def verify_pair(current, previous, selection):
         raise ValueError("Incompatible paired measurements")
 
 
-def judge(current, previous, percent, floor_ms):
-    if not all(math.isfinite(x) and x > 0 for x in (percent, floor_ms)):
-        raise ValueError("Latency thresholds must be positive finite numbers")
-    thresholds = {"percent": percent, "floor_ms": floor_ms}
+def latency_percent(old, new):
+    if not all(math.isfinite(ms) and ms > 0 for ms in (old, new)):
+        raise ValueError("Latency measurements must be positive and finite")
+    # Compare the reported decimal timings before rounding percentages for display.
+    before, after = Decimal(str(old)), Decimal(str(new))
+    return (after - before) * 100 / before
+
+
+def judge(current, previous):
+    result = {"status": "baseline", "baseline_sha": None, "review_percent": REVIEW_PERCENT,
+              "regressions": [], "improvements": []}
     if previous is None:
-        return {"status": "baseline", "baseline_sha": None, "thresholds": thresholds, "regressions": []}
+        return result
+    result.update(status="passed", baseline_sha=previous["workspace_head"])
     old = series(previous)
-    regressions = []
     for key, row in series(current).items():
         prior = old[key]
-        delta = row["p50_ms"] - prior["p50_ms"]
-        factor = 1 + percent / 100
-        if (delta >= floor_ms and row["p50_ms"] >= prior["p50_ms"] * factor
-                and row["p95_ms"] >= prior["p95_ms"] * factor):
-            regressions.append({"series": "/".join(key), "old_p50_ms": prior["p50_ms"],
-                                "new_p50_ms": row["p50_ms"], "old_p95_ms": prior["p95_ms"],
-                                "new_p95_ms": row["p95_ms"]})
-    return {"status": "regression" if regressions else "passed",
-            "baseline_sha": previous["workspace_head"], "thresholds": thresholds, "regressions": regressions}
+        deltas = {m: latency_percent(prior[m + "_ms"], row[m + "_ms"]) for m in ("p50", "p95")}
+        slow = [m for m, delta in deltas.items() if delta >= REVIEW_PERCENT]
+        fast = [m for m, delta in deltas.items() if delta < 0]
+        for name, metrics in (("regressions", slow), ("improvements", fast)):
+            if metrics:
+                result[name].append({"series": "/".join(key), "metrics": metrics,
+                                     "old_p50_ms": prior["p50_ms"], "new_p50_ms": row["p50_ms"],
+                                     "old_p95_ms": prior["p95_ms"], "new_p95_ms": row["p95_ms"]})
+    return result
+
+
+def format_change(delta, threshold):
+    if delta == 0:
+        return "0.0% unchanged"
+    value = f"{delta:+.1f}%"
+    if round(delta, 1) == 0:
+        value = "<+0.1%" if delta > 0 else ">-0.1%"
+    if delta < 0:
+        return f"**{value} faster**"
+    if delta >= threshold:
+        return f"**{value} regression**"
+    if round(delta, 1) == threshold:
+        value = f"<+{threshold:g}%"
+    return f"{value} acceptable"
 
 
 def report_label(value):
@@ -188,13 +212,29 @@ def markdown_report(record, snapshot, baseline=None):
         lines.extend([f"Compared with main commit `{checked_sha(record['baseline_sha'])[:12]}`.", ""])
     elif status == "baseline":
         lines.extend(["First compatible baseline for this runner and protocol.", ""])
-    if "thresholds" in record:
+    threshold = record.get("review_percent")
+    if threshold is not None and record.get("baseline_sha"):
+        lines.extend([f"Latency is advisory. A rise of {threshold:g}% or more in either p50 or p95 warrants review. "
+                      "Negative changes mean faster queries.", ""])
+        regressions = record["regressions"]
+        improvements = record["improvements"]
+        lines.extend([f"**{len(regressions)} workloads with regressions · {len(improvements)} with faster timings**", ""])
+        for r in regressions:
+            changes = []
+            for metric in r["metrics"]:
+                key = metric + "_ms"
+                delta = latency_percent(r["old_" + key], r["new_" + key])
+                changes.append(f"{report_label(metric)} {delta:+.1f}%")
+            lines.append(f"- {report_label(r['series'])} ({', '.join(changes)})")
+        if regressions:
+            lines.append("")
+    elif "thresholds" in record:
         thresholds = record["thresholds"]
         lines.extend([f"The gate flags a series when p50 and p95 both rise by at least {thresholds['percent']:g}% "
                       f"and p50 increases by at least {thresholds['floor_ms']:g} ms.", ""])
 
     regressions = record.get("regressions", [])
-    if regressions:
+    if regressions and threshold is None:
         lines.extend(["#### Slower than baseline", "",
                       "| Series | Prior p50 (ms) | Current p50 (ms) | Change | Prior p95 (ms) | Current p95 (ms) | Change |",
                       "|---|---:|---:|---:|---:|---:|---:|"])
@@ -221,7 +261,9 @@ def markdown_report(record, snapshot, baseline=None):
                 if prior:
                     old = prior[(row["provider"], row["route"], row["case"])]
                     for metric in ("p50_ms", "p95_ms"):
-                        line += f" {old[metric]:,.3f} | {row[metric] / old[metric] - 1:+.1%} |"
+                        delta = latency_percent(old[metric], row[metric])
+                        change = format_change(delta, threshold) if threshold is not None else f"{delta:+.1f}%"
+                        line += f" {old[metric]:,.3f} | {change} |"
                 lines.append(line)
         lines.append("")
     return "\n".join(lines) + "\n"
@@ -285,9 +327,7 @@ def main():
             snapshot["paired_baseline_snapshot"] = previous
         elif "pair_id" in snapshot or baseline_file.exists():
             raise ValueError("Unexpected paired snapshot for an unpaired measurement")
-        result = judge(snapshot, previous,
-                       float(os.environ.get("QW_REGRESSION_PERCENT") or 20),
-                       float(os.environ.get("QW_REGRESSION_FLOOR_MS") or 0.25))
+        result = judge(snapshot, previous)
         record = {"commit": sha, **result}
         if previous:
             record["paired_baseline"] = {k: selection[k] for k in ("artifact_id", "extension_sha256")}
@@ -299,7 +339,10 @@ def main():
         (args.folder / "record.json").write_text(json.dumps(record, indent=2) + "\n")
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
             summary.write(markdown_report(record, snapshot))
-        return int(result["status"] == "regression")
+        if result["regressions"] and os.environ.get("GITHUB_ACTIONS") == "true":
+            print(f"::warning::{len(result['regressions'])} benchmark workloads slowed by at least "
+                  f"{REVIEW_PERCENT}% in p50 or p95. See the benchmark summary.")
+        return 0
 
 
 if __name__ == "__main__":
