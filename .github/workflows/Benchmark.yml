@@ -1,49 +1,70 @@
 name: Benchmark tracker
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
-  push:
-    branches: [main]
-
+  workflow_call:
+    inputs:
+      commits: {type: string, required: true}
+      shard: {type: number, required: true}
+      source-head: {type: string, required: true}
+      host-artifact: {type: string, required: true}
+      native-artifact: {type: string, required: true}
 permissions:
   contents: read
 
 jobs:
-  plan:
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.plan.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 0
-          filter: blob:none
-      - id: plan
-        shell: bash
-        run: |
-          matrix=$(python3 benchmarks/provider_comparison/tracker/ci.py plan --manifest "$RUNNER_TEMP/commits.json")
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: qw-plan-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/commits.json
-          if-no-files-found: error
-          retention-days: 30
-      - run: python3 -B -m unittest discover -s benchmarks/provider_comparison/tracker -p 'test_ci.py'
-
-  measure:
-    needs: plan
+  historical:
+    name: Build earlier releases
+    if: inputs.commits != inputs.source-head
     runs-on: macos-15
     timeout-minutes: 330
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    outputs:
+      artifact: ${{ steps.upload.outputs.artifact-id }}
     env:
       CC: clang
       CXX: clang++
       RUSTC_WRAPPER: ""
-      COMMITS: ${{ matrix.commits }}
+      COMMITS: ${{ inputs.commits }}
+      SOURCE_HEAD: ${{ inputs.source-head }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.96.0"
+          targets: aarch64-apple-darwin
+      - name: Build just the earlier commits in this shard
+        run: |
+          brew list --versions openssl@3 >/dev/null || brew install openssl@3
+          mkdir -p build/deps build/historical
+          read -ra revisions <<< "$COMMITS"
+          env -u MACOSX_DEPLOYMENT_TARGET bash benchmarks/provider_comparison/tracker/build_releases.sh "${revisions[@]}"
+      - id: upload
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: qw-releases-${{ inputs.shard }}-${{ github.run_attempt }}
+          path: build/historical/
+          if-no-files-found: warn
+          retention-days: 30
+
+  measure:
+    needs: historical
+    if: ${{ !cancelled() }}
+    runs-on: macos-15
+    timeout-minutes: 330
+    env:
+      COMMITS: ${{ inputs.commits }}
+      SOURCE_HEAD: ${{ inputs.source-head }}
+      HEAD_ARTIFACT_ID: ${{ inputs.native-artifact }}
+      HISTORICAL_ARTIFACT_ID: ${{ needs.historical.outputs.artifact }}
+      HOST_ARTIFACT_ID: ${{ inputs.host-artifact }}
       PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
       QW_RUNNER_CLASS: github-hosted/macos-15/arm64
       QW_REGRESSION_PERCENT: ${{ vars.QW_REGRESSION_PERCENT }}
@@ -54,7 +75,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           filter: blob:none
       - name: Record expected commits and load the latest history ref
@@ -73,38 +93,30 @@ jobs:
             echo "QW_CORES=$(sysctl -n hw.logicalcpu)"
             echo "QW_MEMORY=$(sysctl -n hw.memsize)"
           } >> "$GITHUB_ENV"
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/download-artifact@v5
         with:
-          toolchain: "1.96.0"
-          targets: aarch64-apple-darwin
+          artifact-ids: ${{ inputs.host-artifact }}
+          path: build/benchmark-host
+          merge-multiple: true
+      - uses: actions/download-artifact@v5
+        with:
+          artifact-ids: ${{ inputs.native-artifact }}
+          path: build/native
+          merge-multiple: true
+      - uses: actions/download-artifact@v5
+        if: needs.historical.outputs.artifact != ''
+        with:
+          artifact-ids: ${{ needs.historical.outputs.artifact }}
+          path: build/native/releases
+          merge-multiple: true
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Prepare pinned benchmark clients and native build inputs
+      - name: Prepare downloaded clients
         run: |
-          echo "QW_BUILD_TOOLCHAIN=$(rustc --version) / $(clang --version | head -n 1)" >> "$GITHUB_ENV"
+          chmod +x build/benchmark-host/unittest build/native/clients/{relate_bench_load,relate_bench_read}
+          echo "QW_BUILD_TOOLCHAIN=$(cat build/native/toolchain.txt)" >> "$GITHUB_ENV"
           python -m pip install --only-binary=:all: ladybug==0.22.3 pyarrow==23.0.1 numpy==2.2.6 adbc-driver-manager==1.9.0
-          brew list --versions openssl@3 >/dev/null || brew install openssl@3
-          env -u MACOSX_DEPLOYMENT_TARGET make mvp2-deps
-      - uses: actions/cache@v4
-        id: host
-        with:
-          path: build/benchmark-host
-          key: benchmark-host-macos15-arm64-8d78114e-v1
-      - name: Build pinned DuckDB ADBC library and SQLLogic runner
-        if: steps.host.outputs.cache-hit != 'true'
-        run: |
-          source=build/deps/duckdb-8d78114e90a53823803660bf821f6073ac87da8c
-          out="$RUNNER_TEMP/duckdb-build"
-          env -u MACOSX_DEPLOYMENT_TARGET cmake -S "$source" -B "$out" -DCMAKE_BUILD_TYPE=Release -DCMAKE_BUILD_RPATH=@loader_path \
-            -DDUCKDB_EXPLICIT_VERSION=v2.0.1 -DBUILD_SHELL=OFF -DBUILD_UNITTESTS=ON -DENABLE_UNITTEST_CPP_TESTS=OFF
-          env -u MACOSX_DEPLOYMENT_TARGET cmake --build "$out" --target unittest --parallel 2
-          mkdir -p build/benchmark-host
-          cp "$out/test/unittest" "$out/src/libduckdb.dylib" build/benchmark-host/
-      - name: Build direct RelateDB client and fixture loader
-        run: |
-          env -u MACOSX_DEPLOYMENT_TARGET cargo build --locked -p rusty_quack --target aarch64-apple-darwin \
-            --release --features relate-provider --target-dir target/mvp2-relate --example relate_bench_read --example relate_bench_load
       - uses: actions/cache@v4
         id: fixture
         with:
@@ -115,7 +127,7 @@ jobs:
         run: |
           curl --fail --location --retry 3 --output "$RUNNER_TEMP/sf1.lbdb" \
             https://huggingface.co/datasets/ladybugdb/lsqb-sf1/resolve/8283a51fa16c4d9fbc3c53ebde66252f7a41f3f6/lbdb/sf1.lbdb
-          python benchmarks/provider_comparison/prepare.py --modulus 1 --source "$RUNNER_TEMP/sf1.lbdb"
+          python benchmarks/provider_comparison/prepare.py --loader build/native/clients/relate_bench_load --modulus 1 --source "$RUNNER_TEMP/sf1.lbdb"
       - name: Measure, verify and compare each commit
         run: |
           fixture=build/perf/provider-comparison/mod1/edges.csv
@@ -123,22 +135,11 @@ jobs:
           export DUCKDB_LIB="$PWD/build/benchmark-host/libduckdb.dylib"
           export DUCKDB_UNITTEST="$PWD/build/benchmark-host/unittest"
           read -ra revisions <<< "$COMMITS"
-          env -u MACOSX_DEPLOYMENT_TARGET bash benchmarks/provider_comparison/tracker/measure_ci.sh "${revisions[@]}"
+          bash benchmarks/provider_comparison/tracker/measure_ci.sh "${revisions[@]}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: qw-benchmark-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.index }}
+          name: qw-benchmark-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.shard }}
           path: build/ci-evidence/
           if-no-files-found: error
           retention-days: 30
-
-  gate:
-    name: Benchmark tracker gate
-    if: always()
-    needs: [plan, measure]
-    runs-on: ubuntu-latest
-    steps:
-      - env:
-          PLAN: ${{ needs.plan.result }}
-          MEASURE: ${{ needs.measure.result }}
-        run: test "$PLAN" = success && test "$MEASURE" = success

@@ -5,40 +5,37 @@ root=$(pwd)
 driver="$root/benchmarks/provider_comparison"
 
 measure() {
-    local sha=$1 subject=$2 folder=$3 ancestor
-    git worktree add --quiet --detach "$subject" "$sha"
-    mkdir -p "$subject/build"
-    ln -s "$root/build/deps" "$subject/build/deps"
-    make -C "$subject" mvp2-deps mvp2-relate-release
-    python "$driver/tracker.py" run --source-checkout "$subject" \
-        --extension "$subject/build/mvp2-relate/release/extension/quack_weave/quack_weave.duckdb_extension" \
+    local sha=$1 folder=$2 ancestor release
+    release="$root/build/native/releases/$sha"
+    python "$driver/tracker/artifacts.py" verify "$release" "$sha"
+    python "$driver/tracker.py" run --source-revision "$sha" \
+        --extension "$release/quack_weave.duckdb_extension" \
+        --relate-reader "$root/build/native/clients/relate_bench_read" \
         --fixture "$root/build/perf/provider-comparison/mod1" --library "$DUCKDB_LIB" \
-        --out "$subject/build/snapshot.json"
-    QW_TRACKER_SNAPSHOT="$subject/build/snapshot.json" "$DUCKDB_UNITTEST" \
-        --env-passthrough QW_TRACKER_SNAPSHOT --stdin < "$driver/tracker/snapshot.test" | tee "$subject/build/sqllogic.log"
+        --out "$folder/snapshot.json"
+    QW_TRACKER_SNAPSHOT="$folder/snapshot.json" "$DUCKDB_UNITTEST" \
+        --test-dir "$RUNNER_TEMP" --env-passthrough QW_TRACKER_SNAPSHOT --stdin < "$driver/tracker/snapshot.test" | tee "$RUNNER_TEMP/qw-sqllogic-$sha.log"
     # DuckDB can skip a SQLLogic file when a required extension is missing.
-    grep -Eq 'All tests passed \([1-9][0-9]+ assertions in 1 test case\)' "$subject/build/sqllogic.log"
+    grep -Eq 'All tests passed \([1-9][0-9]+ assertions in 1 test case\)' "$RUNNER_TEMP/qw-sqllogic-$sha.log"
     if [[ -n "${PR_BASE_SHA:-}" ]]; then
         ancestor=$(git merge-base "$sha" "$PR_BASE_SHA")
     else
         ancestor=$(git rev-list --parents -n1 "$sha" | cut -s -d' ' -f2)
     fi
-    mv "$subject/build/snapshot.json" "$folder/snapshot.json"
+    if [[ "$sha" == "${SOURCE_HEAD:-}" ]]; then
+        export QW_RELEASE_ARTIFACT_ID="${HEAD_ARTIFACT_ID:-}"
+    else
+        export QW_RELEASE_ARTIFACT_ID="${HISTORICAL_ARTIFACT_ID:-}"
+    fi
     python "$driver/tracker/ci.py" judge "$folder" ${ancestor:+--ancestor "$ancestor"}
 }
 
 result=0
-scratch=$(mktemp -d "$RUNNER_TEMP/qw-subjects.XXXXXX")
-subject="$scratch/source"
-# CMake records absolute source paths. Reuse one path across this shard, and
-# keep its Cargo output separate from the event checkout's direct clients.
-export CARGO_TARGET_DIR="$scratch/target"
-trap 'rm -rf -- "$scratch"' EXIT
 for sha in "$@"; do
     folder="${QW_EVIDENCE_DIR:-$root/build/ci-evidence}/$sha"
     # A separate errexit-enabled shell keeps failures inside a shard independent.
     set +e
-    (set -e; measure "$sha" "$subject" "$folder")
+    (set -e; measure "$sha" "$folder")
     rc=$?
     set -e
     if [[ $rc != 0 ]]; then
@@ -55,6 +52,5 @@ PY
         echo "::error::Benchmark failed for $sha"
         result=1
     fi
-    if [[ -e "$subject/.git" ]]; then git worktree remove --force "$subject"; fi
 done
 exit "$result"

@@ -186,13 +186,13 @@ class TrackerCI(unittest.TestCase):
                 git("remote", "add", "origin", remote.as_uri())
                 git("push", "-q", "origin", "main")
                 payload = {"workflow_run": {"event": "push", "id": 90, "run_attempt": 2,
-                           "path": ".github/workflows/Benchmark.yml", "head_sha": head,
+                           "path": ".github/workflows/CI.yml", "head_sha": head,
                            "head_branch": "main", "head_repository": {"id": 7}}, "repository": {"id": 7}}
                 Path("event.json").write_text(json.dumps(payload))
                 environment = {"GITHUB_EVENT_PATH": "event.json", "GITHUB_REPOSITORY": "owner/repo"}
                 artifacts = [dict(name=name, id=i, expired=False, size_in_bytes=500)
                              for i, name in enumerate(("qw-plan-90-1", "qw-benchmark-90-1-0",
-                                                       "qw-benchmark-90-2-1"))]
+                                                       "qw-benchmark-90-2-1", "qw-native-tip-2"))]
                 real_output = subprocess.check_output
                 def github_or_git(cmd, **kwargs):
                     if cmd[0] != "gh":

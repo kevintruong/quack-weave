@@ -199,9 +199,12 @@ def benchmark(a):
         binaries["relate_reader"] = run.digest(a.relate_reader)
     if "ladybug" in providers and routes["direct_cypher"] and version("ladybug") != "0.22.3":
         raise ValueError("The native Ladybug comparison requires ladybug==0.22.3")
+    source_commit = subprocess.check_output(
+        ["git", "rev-parse", "--verify", "--end-of-options", a.source_revision + "^{commit}"],
+        cwd=a.source_checkout, text=True).strip()
     report = {"protocol": PROTOCOL, "id": run_id, "started_utc": started.isoformat(),
               "tracker_sha256": run.digest(Path(__file__)),
-              "workspace_head": subprocess.check_output(["git","rev-parse","HEAD"], cwd=a.source_checkout, text=True).strip(),
+              "workspace_head": source_commit,
               "platform": platform.platform(), "machine": platform.machine(),
               "host_id": sha256(platform.node().encode()).hexdigest()[:16],
               "versions": {"python": platform.python_version(), "duckdb": "2.0.1/8d78114e90",
@@ -272,6 +275,7 @@ def main():
     measure.add_argument("--case", action="append", choices=CASES)
     measure.add_argument("--out", type=Path, help="New JSON file (default: timestamped history)")
     measure.add_argument("--relate-reader", type=Path, default=READER)
+    measure.add_argument("--source-revision", default="HEAD", help="Git revision of the verified release artifact")
     measure.add_argument("--source-checkout", type=Path, default=run.ROOT,
                          help="Git checkout used to build the measured extension")
     measure.add_argument("--blocks", type=int, default=4)

@@ -44,6 +44,7 @@ def main():
     parser.add_argument("--lbug", required=True, type=Path)
     parser.add_argument("--extension", required=True, type=Path)
     parser.add_argument("--report-dir", type=Path)
+    parser.add_argument("--observer-test-dir", type=Path, help="Directory containing prebuilt Rust test executables")
     args = parser.parse_args()
     unittest, library, lbug, extension = (
         path.resolve(strict=True)
@@ -62,10 +63,16 @@ def main():
         report_artifact(extension)
         graph = scratch / "graph.lbdb"
         ladybug(lbug, graph, (HERE / "fixtures/read_graph.cypher").read_text(encoding="utf-8"))
-        rust = ["cargo", "test", "--locked", "--package"]
-        selection = ["fixture_observer", "--", "--nocapture", "--test-threads=1"]
-        records = collect("observer-native", [*rust, "rusty_quack", "--features", "gql", *selection], report_dir)
-        records.extend(collect("observer-core", [*rust, "rusty_quack_core", *selection], report_dir))
+        records = []
+        for label, crate in (("native", "rusty_quack"), ("core", "rusty_quack_core")):
+            if args.observer_test_dir is None:
+                command = ["cargo", "test", "--locked", "--package", crate]
+                if label == "native":
+                    command.extend(["--features", "gql"])
+                command.extend(["fixture_observer", "--"])
+            else:
+                command = [(args.observer_test_dir / crate).resolve(strict=True), "fixture_observer"]
+            records.extend(collect("observer-" + label, [*command, "--nocapture", "--test-threads=1"], report_dir))
         records.extend(collect("observer-host", [
             sys.executable, "-B", HERE / "capture_host_observations.py", "--duckdb-lib", library,
             "--graph", graph, "--extension", extension,

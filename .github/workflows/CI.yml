@@ -2,14 +2,13 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -19,6 +18,7 @@ env:
 
 jobs:
   checks:
+    if: github.event_name != 'push'
     name: Rust checks
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -46,39 +46,163 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked --features rusty_quack/template-compat
 
+  plan:
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - id: plan
+        shell: bash
+        run: |
+          matrix=$(python3 benchmarks/provider_comparison/tracker/ci.py plan --manifest "$RUNNER_TEMP/commits.json")
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qw-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/commits.json
+          if-no-files-found: error
+          retention-days: 30
+      - run: python3 -B -m unittest discover -s benchmarks/provider_comparison/tracker -p 'test_*.py'
+
+  native:
+    name: Build native CI artifacts (macOS arm64)
+    runs-on: macos-15
+    timeout-minutes: 150
+    outputs:
+      host: ${{ steps.host-upload.outputs.artifact-id }}
+      native: ${{ steps.native-upload.outputs.artifact-id }}
+    env:
+      CC: clang
+      CXX: clang++
+      RUSTC_WRAPPER: ""
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - uses: ./.github/actions/native-setup
+      - uses: actions/cache@v4
+        id: host
+        with:
+          path: build/benchmark-host
+          key: benchmark-host-macos15-arm64-8d78114e-v1
+      - name: Build pinned DuckDB ADBC library and SQLLogic runner
+        if: steps.host.outputs.cache-hit != 'true'
+        run: |
+          source=build/deps/duckdb-8d78114e90a53823803660bf821f6073ac87da8c
+          out="$RUNNER_TEMP/duckdb-build"
+          env -u MACOSX_DEPLOYMENT_TARGET cmake -S "$source" -B "$out" -DCMAKE_BUILD_TYPE=Release -DCMAKE_BUILD_RPATH=@loader_path \
+            -DDUCKDB_EXPLICIT_VERSION=v2.0.1 -DBUILD_SHELL=OFF -DBUILD_UNITTESTS=ON -DENABLE_UNITTEST_CPP_TESTS=OFF
+          env -u MACOSX_DEPLOYMENT_TARGET cmake --build "$out" --target unittest --parallel 2
+          mkdir -p build/benchmark-host
+          cp "$out/test/unittest" "$out/src/libduckdb.dylib" build/benchmark-host/
+      - name: Publish pinned DuckDB host
+        id: host-upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: qw-duckdb-host-${{ github.run_attempt }}
+          path: build/benchmark-host/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Build the dual-provider release and direct clients from the event head
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          subject=$PWD
+          if [[ "$(git rev-parse HEAD)" != "$SOURCE_HEAD" ]]; then
+            subject="$RUNNER_TEMP/graph-source"
+            git worktree add --quiet --detach "$subject" "$SOURCE_HEAD"
+            mkdir -p "$subject/build"
+            ln -s "$PWD/build/deps" "$subject/build/deps"
+            env -u MACOSX_DEPLOYMENT_TARGET make -C "$subject" mvp2-deps
+          fi
+          env -u MACOSX_DEPLOYMENT_TARGET make -C "$subject" mvp2-relate-release
+          target="$subject/target/mvp2-relate"
+          env -u MACOSX_DEPLOYMENT_TARGET cargo build --manifest-path "$subject/Cargo.toml" \
+            --locked -p rusty_quack --target aarch64-apple-darwin --release --features relate-provider \
+            --target-dir "$target" --example relate_bench_read --example relate_bench_load --example relate_fixture
+          python3 benchmarks/provider_comparison/tracker/artifacts.py stage "$subject" build/native/releases
+          mkdir -p build/native/clients
+          cp "$target"/aarch64-apple-darwin/release/examples/{relate_bench_read,relate_bench_load,relate_fixture} build/native/clients/
+          echo "$(rustc --version) / $(clang --version | head -n 1)" > build/native/toolchain.txt
+      - name: Publish exact source release and benchmark clients
+        if: github.event_name != 'workflow_dispatch'
+        id: native-upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: qw-native-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
+          path: build/native/
+          if-no-files-found: error
+          retention-days: 30
+
+  profiles:
+    if: github.event_name != 'push'
+    name: Build stabilization profiles (macOS arm64)
+    runs-on: macos-15
+    timeout-minutes: 90
+    outputs:
+      packages: ${{ steps.profile-upload.outputs.artifact-id }}
+    env:
+      CC: clang
+      CXX: clang++
+      RUSTC_WRAPPER: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/native-setup
+      - name: Build stabilization profiles at the CI checkout
+        run: env -u MACOSX_DEPLOYMENT_TARGET make mvp2 mvp2-release mvp1
+      - name: Build the observer test executables
+        shell: bash
+        run: |
+          env -u MACOSX_DEPLOYMENT_TARGET cargo test --locked --no-run --lib -p rusty_quack -p rusty_quack_core \
+            --features rusty_quack/gql --target aarch64-apple-darwin --target-dir target/mvp2 \
+            --message-format=json > "$RUNNER_TEMP/observer-build.jsonl"
+          mkdir -p build/observer-tests
+          for crate in rusty_quack rusty_quack_core; do
+            executable=$(jq -ser --arg crate "$crate" '
+              [.[] | select(.reason == "compiler-artifact" and .profile.test and .target.name == $crate) | .executable]
+              | if length == 1 then .[0] else error("expected one observer test executable") end
+            ' "$RUNNER_TEMP/observer-build.jsonl")
+            cp "$executable" "build/observer-tests/$crate"
+          done
+      - name: Publish stabilization profiles with their licenses
+        id: profile-upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: qw-profiles-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            build/observer-tests/
+            build/debug/extension/quack_weave/
+            build/mvp2/debug/extension/quack_weave/
+            build/mvp2/release/extension/quack_weave/
+          if-no-files-found: error
+          retention-days: 30
+
   stabilization:
+    if: github.event_name != 'push'
+    needs: [native, profiles]
     name: Native stabilization (macOS arm64)
     runs-on: macos-15
     timeout-minutes: 90
     defaults:
       run:
         shell: bash
-    env:
-      CC: clang
-      CXX: clang++
-      RUSTC_WRAPPER: ""
-      SCCACHE_GHA_ENABLED: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-
-      - name: Prepare native dependencies
-        run: |
-          test "$(uname -s):$(uname -m)" = "Darwin:arm64"
-          if ! brew list --versions openssl@3 >/dev/null; then
-            brew install openssl@3
-          fi
-          env -u MACOSX_DEPLOYMENT_TARGET make mvp2-deps
 
       - name: Prepare pinned Ladybug fixture CLI
         run: |
@@ -92,35 +216,85 @@ jobs:
           test "$("$directory/lbug" -v)" = 'Lbug 0.22.3'
           printf 'LBUG=%s\n' "$directory/lbug" >> "$GITHUB_ENV"
 
-      - name: Build pinned DuckDB native test runner
+      - uses: actions/download-artifact@v5
+        with:
+          artifact-ids: ${{ needs.native.outputs.host }}
+          merge-multiple: true
+          path: build/benchmark-host
+      - name: Prepare the shared DuckDB runtime
         run: |
-          source="$GITHUB_WORKSPACE/build/deps/duckdb-8d78114e90a53823803660bf821f6073ac87da8c"
-          build="$RUNNER_TEMP/duckdb-v2.0.1-build"
-          test "$(git -C "$source" rev-parse HEAD)" = 8d78114e90a53823803660bf821f6073ac87da8c
-          env -u MACOSX_DEPLOYMENT_TARGET cmake -S "$source" -B "$build" \
-            -DCMAKE_BUILD_TYPE=Release -DDUCKDB_EXPLICIT_VERSION=v2.0.1 \
-            -DCMAKE_C_COMPILER_LAUNCHER= -DCMAKE_CXX_COMPILER_LAUNCHER= \
-            -DBUILD_SHELL=OFF -DBUILD_UNITTESTS=ON \
-            -DENABLE_UNITTEST_CPP_TESTS=OFF
-          env -u MACOSX_DEPLOYMENT_TARGET cmake --build "$build" --target unittest --parallel 2
-          test -x "$build/test/unittest"
-          test -s "$build/src/libduckdb.dylib"
-          printf 'DUCKDB_UNITTEST=%s\nDUCKDB_LIB=%s\n' \
-            "$build/test/unittest" "$build/src/libduckdb.dylib" >> "$GITHUB_ENV"
+          chmod +x build/benchmark-host/unittest
+          echo "DUCKDB_UNITTEST=$PWD/build/benchmark-host/unittest" >> "$GITHUB_ENV"
+          echo "DUCKDB_LIB=$PWD/build/benchmark-host/libduckdb.dylib" >> "$GITHUB_ENV"
 
+      - uses: actions/download-artifact@v5
+        with:
+          artifact-ids: ${{ needs.profiles.outputs.packages }}
+          merge-multiple: true
+          path: build
       - name: Verify package profiles and native observations
-        run: env -u MACOSX_DEPLOYMENT_TARGET make mvp2-stabilization-test
+        run: |
+          chmod +x build/observer-tests/{rusty_quack,rusty_quack_core}
+          make mvp2-stabilization-test-prebuilt OBSERVER_TEST_DIR="$PWD/build/observer-tests"
 
       - name: Verify public graph results through Apache Arrow ADBC
         run: |
           python3 -m venv "$RUNNER_TEMP/graph-client"
           "$RUNNER_TEMP/graph-client/bin/pip" install --only-binary=:all: adbc-driver-manager==1.9.0 pyarrow==23.0.1
-          env -u MACOSX_DEPLOYMENT_TARGET make public-client-test PYTHON_BIN="$RUNNER_TEMP/graph-client/bin/python"
+          make public-client-test-prebuilt PYTHON_BIN="$RUNNER_TEMP/graph-client/bin/python"
+
+      - uses: actions/download-artifact@v5
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          artifact-ids: ${{ needs.native.outputs.native }}
+          merge-multiple: true
+          path: build/native
+      - uses: actions/checkout@v4
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: provider-source
+      - name: Run provider integration on the release supplied to the benchmark
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          release="$PWD/build/native/releases/$SOURCE_HEAD"
+          python benchmarks/provider_comparison/tracker/artifacts.py verify "$release" "$SOURCE_HEAD"
+          chmod +x build/native/clients/relate_fixture
+          python provider-source/test/relate/run.py --duckdb-unittest "$DUCKDB_UNITTEST" --lbug "$LBUG" \
+            --fixture-builder build/native/clients/relate_fixture --extension "$release/quack_weave.duckdb_extension"
 
       - name: Save stabilization evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: quackweave-stabilization
+          name: quackweave-stabilization-${{ github.run_attempt }}
           path: build/stabilization-reports/
           if-no-files-found: warn
+
+  benchmark:
+    if: github.event_name != 'workflow_dispatch'
+    needs: [plan, native]
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    uses: ./.github/workflows/Benchmark.yml
+    with:
+      commits: ${{ matrix.commits }}
+      shard: ${{ matrix.index }}
+      source-head: ${{ github.event.pull_request.head.sha || github.sha }}
+      host-artifact: ${{ needs.native.outputs.host }}
+      native-artifact: ${{ needs.native.outputs.native }}
+
+  gate:
+    name: Benchmark tracker gate
+    if: always() && github.event_name != 'workflow_dispatch'
+    needs: [plan, native, benchmark]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          PLAN: ${{ needs.plan.result }}
+          BUILD: ${{ needs.native.result }}
+          MEASURE: ${{ needs.benchmark.result }}
+        run: test "$PLAN" = success && test "$BUILD" = success && test "$MEASURE" = success

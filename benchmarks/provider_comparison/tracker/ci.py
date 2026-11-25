@@ -144,6 +144,10 @@ def main():
         snapshot["ci_runner"] = {k: os.environ[k] for k in ("QW_RUNNER_CLASS", "QW_CPU", "QW_CORES", "QW_MEMORY")}
         if "QW_BUILD_TOOLCHAIN" in os.environ:
             snapshot["ci_runner"]["QW_BUILD_TOOLCHAIN"] = os.environ["QW_BUILD_TOOLCHAIN"]
+        if os.environ.get("QW_RELEASE_ARTIFACT_ID"):
+            snapshot["actions_artifacts"] = {"release": os.environ["QW_RELEASE_ARTIFACT_ID"],
+                                             "duckdb_host": os.environ["HOST_ARTIFACT_ID"],
+                                             "direct_clients": os.environ["HEAD_ARTIFACT_ID"]}
         snapshot_file.write_text(json.dumps(snapshot, indent=2, allow_nan=False) + "\n")
         result = judge(snapshot, find_baseline(snapshot, args.ancestor),
                        float(os.environ.get("QW_REGRESSION_PERCENT") or 20),

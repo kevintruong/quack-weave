@@ -1,7 +1,7 @@
 name: Archive benchmark history
 on:
   workflow_run:
-    workflows: [Benchmark tracker]
+    workflows: [CI, Benchmark tracker]
     types: [completed]
 
 permissions:
@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   append:
+    if: github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       # workflow_run runs the publisher from the default branch, including for fork PRs.

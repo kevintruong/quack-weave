@@ -116,7 +116,7 @@ def main():
     payload = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
     run = payload["workflow_run"]
     event = run["event"]
-    if run["path"] != ".github/workflows/Benchmark.yml":
+    if run["path"] not in {".github/workflows/CI.yml", ".github/workflows/Benchmark.yml"}:
         raise ValueError("Unexpected source workflow path")
     if event not in {"push", "pull_request"} or (event == "push" and (
             run["head_branch"] != "main" or run["head_repository"]["id"] != payload["repository"]["id"])):

@@ -85,7 +85,16 @@ QW_TRACKER_SNAPSHOT="$PWD/benchmarks/provider_comparison/tracker/sf1.json" \
 
 ### GitHub Actions and commit history
 
-The **Benchmark tracker** workflow runs on every push to `main` and every opened, reopened or updated pull request, including documentation changes. It measures the actual extension built from each introduced Git commit. On a PR it uses the source commit. If GitHub no longer serves a force-pushed previous tip, the tracker includes the full reachable range. Multi-commit events are split across up to 32 macOS arm64 jobs, and new pushes keep earlier runs active. Each job uses the event head's benchmark harness and direct clients, plus the same checksummed full SF1 fixture. [Measurement workflow](../../../.github/workflows/Benchmark.yml)
+The **CI** workflow plans one measurement for every commit introduced by a push to `main` or an opened, reopened or updated PR, including documentation changes. A force push with an unavailable previous tip includes the full reachable range. Up to 32 shards run independently. Each shard uses the workflow revision's harness, the source head's direct clients, and the same checksummed SF1 graph. PRs also run Rust checks and stabilization. A main push builds only the native inputs needed by the tracker in this workflow. [CI workflow](../../../.github/workflows/CI.yml) · [Benchmark jobs](../../../.github/workflows/Benchmark.yml)
+
+| Build output | Revision and configuration | Consumers |
+|---|---|---|
+| DuckDB SQLLogic runner and ADBC library | Pinned DuckDB 2.0.1, macOS arm64 | Native stabilization, provider integration and all benchmark shards |
+| Stabilization packages, licenses and Rust observer test executables | CI checkout, including the merge revision on PRs. Cypher-only debug, GQL debug and GQL release | Stabilization and public-client tests |
+| Dual-provider release and native clients | PR source head or main push tip, `mvp2-relate-release` | Provider integration and SF1 measurements use the same extension bytes. All shards use the head's direct reader and fixture loader. |
+| Earlier dual-provider releases | One release per additional source SHA in a multi-commit event | The corresponding commit's SF1 measurement |
+
+Consumers download the producing job's artifact by ID within the same workflow run. Each release carries its source SHA, native profile and SHA-256 digest. The benchmark verifies all three before loading the extension. Missing or mismatched releases fail that measurement. The snapshot retains the artifact IDs and binary hashes alongside the timings. A benchmark retry can reuse outputs of successful build jobs while GitHub retains the artifacts.
 
 The **Benchmark tracker gate** fails on build errors, incorrect query results, SQLLogic failures, and latency regressions. For each of the 30 series the default regression threshold requires both p50 and p95 to increase by at least 20%, with a p50 increase of at least 0.25 ms. The Actions summary gives the baseline commit, affected series and timings. Repository variables `QW_REGRESSION_PERCENT` and `QW_REGRESSION_FLOOR_MS` override the thresholds. To require a passing benchmark before merging, select **Benchmark tracker gate** in the branch ruleset for `main` after the workflow first runs.
 
@@ -100,7 +109,7 @@ pull_request/<commit-sha>/<actions-run-id>-<attempt>/record.json
 pull_request/<commit-sha>/<actions-run-id>-<attempt>/snapshot.json
 ```
 
-The read-only measurement jobs build repository code. The publisher runs the default branch's archive script with permission to write the history branch. It accepts bounded JSON files under validated commit paths. Both workflows must be installed on the default branch, and repository policies must permit the Actions token to write `benchmark-history`. [GitHub workflow completion events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run)
+The build, test and measurement jobs use read-only repository permissions. The publisher runs the default branch's archive script with permission to write the history branch. It accepts bounded JSON files under validated commit paths. Both workflows must be installed on the default branch, and repository policies must permit the Actions token to write `benchmark-history`. [GitHub workflow completion events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run)
 
 To inspect the archive locally, run the following after the first Actions publication.
 
@@ -117,8 +126,8 @@ WHERE workload IN ('table_watchlist', 'full_scan_aggregate')
 ORDER BY started_utc DESC, provider, workload;
 ```
 
-Jev compiled the archive-key constraint with `data_integrity.unique`. Z3 accepted the commit/run/attempt key and found a collision when the attempt was removed. The workflow also runs integration tests against temporary Git remotes for multi-commit updates, concurrent writers, retries, rejected overwrites, and baseline selection.
+For the two-commit build handoff, Jev selected a foreign key on source commit and native profile. Z3 verified matching, unique producers and rejected a missing or duplicate matching release. Jev compiled the archive-key constraint with `data_integrity.unique`. Z3 accepted the commit/run/attempt key and found a collision when the attempt was removed. The workflow also runs integration tests against temporary Git remotes for multi-commit updates, concurrent writers, retries, rejected overwrites, and baseline selection.
 
 ```sh
-python3 -B -m unittest discover -s benchmarks/provider_comparison/tracker -p 'test_ci.py'
+python3 -B -m unittest discover -s benchmarks/provider_comparison/tracker -p 'test_*.py'
 ```
