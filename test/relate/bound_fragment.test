@@ -1,0 +1,95 @@
+# name: test/relate/bound_fragment.test
+# description: Validate structured graph scan provenance at the public table function boundary
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_RELATE UNSET_QW_RELATE
+
+test-env QW_LADYBUG UNSET_QW_LADYBUG
+
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"routes","path":"{QW_RELATE}"}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"air","path":"{QW_LADYBUG}"}';
+
+query I rowsort
+FROM qw_graph_query('routes','cypher','MATCH (a:Item) RETURN a.id AS qw_col0',
+ pgq := 'v1|n:a:Item|a.id');
+----
+7
+8
+
+# The descriptor binds the precise case of each graph property and carries node/edge identity.
+query II rowsort
+SELECT * FROM GRAPH_TABLE (routes MATCH (o:airport)-[r:route]->(d:airport)
+ COLUMNS(r.rid AS route_id, r.rid AS repeated)) g;
+----
+201	201
+202	202
+203	203
+
+query I
+SELECT count(*) FROM GRAPH_TABLE (routes MATCH (o:airport)-[r:route]->(d:airport) COLUMNS(1 AS mark)) g;
+----
+3
+
+query I
+SELECT count(*) FROM GRAPH_TABLE (air MATCH (o:airport)-[r:route]->(d:airport) COLUMNS(1 AS mark)) g;
+----
+5
+
+# Direct callers cannot attach the provenance of a similarly named property or of another shape.
+statement error
+FROM qw_graph_query('routes','cypher','MATCH (a:Item) RETURN a.ID AS qw_col0',
+ pgq := 'v1|n:a:Item|a.id');
+----
+QW_ARGUMENT
+
+statement error
+FROM qw_graph_query('routes','cypher','MATCH (a:Item) RETURN a.id AS qw_col0',
+ pgq := 'v1|e:a:Item|a.id');
+----
+QW_ARGUMENT
+
+statement error
+FROM qw_graph_query('routes','cypher','MATCH (a:Item) RETURN a.id AS qw_col0',
+ pgq := 'v1|n:a:Item|b.id');
+----
+QW_ARGUMENT
+
+statement error
+FROM qw_graph_query('routes','cypher','MATCH (a:Item) WHERE a.id=7 RETURN a.id AS qw_col0',
+ pgq := 'v1|n:a:Item|a.id');
+----
+QW_ARGUMENT
+
+statement error
+FROM qw_graph_query('routes','gql','MATCH (a:Item) RETURN a.id AS qw_col0',
+ pgq := 'v1|n:a:Item|a.id');
+----
+QW_ARGUMENT
+
+# An executable candidate must project the same slots as its validated base.
+query I rowsort
+FROM qw_graph_query_filtered('air','cypher',
+ 'MATCH (o:airport)-[r:route]->(d:airport) RETURN r.rid AS qw_col0','route','rid',
+ 'MATCH (o:airport)-[r:route]->(d:airport) WHERE r.rid = 101 RETURN r.dist AS qw_col0',
+ pgq := 'v1|n:o:airport,e:r:route,n:d:airport|r.rid');
+----
+101
+102
+103
+104
+105
+
+# The existing authored query form and its projection semantics remain available.
+query I rowsort
+FROM qw_graph_query('routes','cypher','MATCH (a:Item) RETURN a.id AS item');
+----
+7
+8

@@ -29,6 +29,8 @@ use duckdb_neo::{
 use serde::{Deserialize, Serialize};
 
 mod aggregate_scan;
+mod fragment;
+use fragment::GraphFragment;
 mod gql;
 mod graph_value;
 pub use graph_value::{GraphColumn, GraphValue};
@@ -472,12 +474,25 @@ pub fn validate_graph_alias(context: &Context, alias: &str) -> Result<()> {
 }
 
 struct BoundRead {
+    fragment: Option<GraphFragment>,
     provider: GraphProvider,
     watch: Option<RuntimeWatch>,
     params: Vec<(String, GraphParameter)>,
     config: ConfigSnapshot,
     cypher: String,
     schema: Vec<ColumnSpec>,
+}
+
+impl BoundRead {
+    fn allows_pgq_rewrite(&self) -> bool {
+        self.fragment.is_some()
+            && self.config.config.max_batch_bytes.is_none()
+            && self.config.config.timeout_ms.is_none()
+            && (self.provider.kind == ProviderKind::Ladybug
+                || self.config.catalog.as_ref().is_some_and(|catalog| {
+                    catalog.keys().next().is_some_and(|key| key.contains(':'))
+                }))
+    }
 }
 
 #[derive(Default)]
@@ -599,6 +614,23 @@ impl TableFunctionCallbacks for GraphQuery {
         let alias = required(0)?;
         let dialect = required(1)?;
         let mut query = required(2)?;
+        let fragment = match args.arg_by_name("pgq")? {
+            Some(arg) => arg
+                .resolved_value::<String>()?
+                .flatten()
+                .map(|wire| {
+                    if dialect.eq_ignore_ascii_case("cypher")
+                        && let Some(fragment) = GraphFragment::bind(&wire, &query)
+                    {
+                        return Ok(fragment);
+                    }
+                    Err(Error::invalid_input(
+                        "QW_ARGUMENT: Invalid structured graph fragment",
+                    ))
+                })
+                .transpose()?,
+            None => None,
+        };
         let declared = if self.kind != GraphQueryKind::DeclaredSchema {
             None
         } else {
@@ -646,7 +678,12 @@ impl TableFunctionCallbacks for GraphQuery {
                         handle.set_cardinality(MAX_KEYS + 1, false)?;
                     }
                 } else {
-                    query = required(5)?;
+                    let candidate = required(5)?;
+                    if runtime_watch::filtered_column(&query, &candidate, &label, &property)
+                        .is_some()
+                    {
+                        query = candidate;
+                    }
                 }
             }
         }
@@ -730,6 +767,7 @@ impl TableFunctionCallbacks for GraphQuery {
             Vec::new()
         };
         Ok(BoundRead {
+            fragment,
             provider: provider.clone(),
             watch,
             params,
@@ -930,6 +968,12 @@ fn register_query(
         if kind == GraphQueryKind::Parameterized {
             signature =
                 signature.param(FunctionParameter::new::<duckdb_neo::types::Any>("bindings"));
+        }
+        if kind != GraphQueryKind::Parameterized {
+            signature = signature.param(
+                FunctionParameter::with_default("pgq", Option::<String>::None)
+                    .kind(FunctionParameterKind::Named),
+            );
         }
         TableFunctionBuilder::new(
             name,

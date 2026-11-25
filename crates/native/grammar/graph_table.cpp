@@ -45,6 +45,8 @@ struct GraphBindings {
 	identifier_map_t<Identifier> variables;
 	identifier_map_t<unordered_map<string, Identifier>> properties;
 	vector<string> projections;
+	vector<string> path_elements;
+	vector<string> property_slots;
 
 	string Element(PEGTransformer &transformer, ParseResult &element, bool edge) {
 		auto &list = element.Cast<ListParseResult>();
@@ -54,6 +56,7 @@ struct GraphBindings {
 		auto canonical = inserted.first->second;
 		labels[canonical] = inserted.second ? ProviderName(label) : "";
 		auto binding = ProviderName(canonical) + ":" + ProviderName(label);
+		path_elements.push_back((edge ? "e:" : "n:") + binding);
 		return edge ? "[" + binding + "]" : "(" + binding + ")";
 	}
 
@@ -127,6 +130,7 @@ struct GraphBindings {
 		if (entry == bound.end()) {
 			auto alias = Identifier("qw_col" + std::to_string(projections.size()));
 			auto property = ProviderName(variable->second) + "." + key;
+			property_slots.push_back(property);
 			projections.push_back(property + " AS " + alias.GetIdentifierName());
 			entry = bound.emplace(key, std::move(alias)).first;
 		}
@@ -222,6 +226,12 @@ unique_ptr<TableRef> ParsedGraphTable::Lower(const JoinRef *join) {
 		args.push_back(join && !result->where_clause ? QwGuardWatchlistQuery(query + projection, filtered)
 		                                             : ConstantExpression::String(std::move(filtered)));
 	}
+	// SQL callers can invoke this function too. The binder reconstructs the
+	// complete base query from this descriptor before using its property slots.
+	auto descriptor = ConstantExpression::String("v1|" + StringUtil::Join(bindings.path_elements, ",") +
+	                                             "|" + StringUtil::Join(bindings.property_slots, ","));
+	descriptor->SetAlias(Identifier("pgq"));
+	args.push_back(std::move(descriptor));
 	auto scan = make_uniq<TableFunctionRef>();
 	scan->function = make_uniq<FunctionExpression>(QualifiedName("system", "main", function), std::move(args));
 	result->from_table = std::move(scan);
