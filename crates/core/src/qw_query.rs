@@ -39,7 +39,7 @@ mod parameters;
 mod projection;
 use projection::ScanProjection;
 mod providers;
-use providers::{AliasReservations, GraphProvider, ProviderKind, resolve_alias};
+pub use providers::{GraphProvider, ProviderDescriptor, ProviderRegistry, ProviderRewrite};
 mod runtime_watch;
 use runtime_watch::{MAX_KEYS, RuntimeWatch};
 
@@ -441,6 +441,8 @@ struct ConfigSnapshot {
     config: ConfigInput,
     #[serde(default)]
     catalog: Option<GraphCatalog>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    observed_catalog: bool,
     #[serde(default)]
     single_pattern_row_bound: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -484,16 +486,6 @@ fn admit_local_path(context: &Context, path: &str) -> Result<String> {
     Ok(canonical.to_owned())
 }
 
-/// Validate a session graph selection against this instance's provisioned names.
-pub fn validate_graph_alias(context: &Context, alias: &str) -> Result<()> {
-    resolve_alias(
-        context,
-        alias,
-        [ProviderKind::Ladybug, ProviderKind::Relate],
-    )
-    .map(|_| ())
-}
-
 struct BoundRead {
     static_predicate: std::sync::Mutex<Option<String>>,
     fragment: Option<GraphFragment>,
@@ -509,10 +501,11 @@ impl BoundRead {
     fn allows_pgq_rewrite(&self) -> bool {
         self.fragment.is_some()
             && !self.config.config.has_resource_limit()
-            && (self.provider.kind == ProviderKind::Ladybug
-                || self.config.catalog.as_ref().is_some_and(|catalog| {
-                    catalog.keys().next().is_some_and(|key| key.contains(':'))
-                }))
+            && match self.provider.descriptor.rewrite {
+                ProviderRewrite::Disabled => false,
+                ProviderRewrite::LabelCatalog => true,
+                ProviderRewrite::ObservedCatalog => self.config.observed_catalog,
+            }
     }
 }
 
@@ -598,7 +591,7 @@ enum GraphQueryKind {
 }
 
 struct GraphQuery {
-    providers: Arc<[GraphProvider]>,
+    providers: ProviderRegistry,
     kind: GraphQueryKind,
     gql_parser: Option<GqlParser>,
 }
@@ -663,15 +656,10 @@ impl TableFunctionCallbacks for GraphQuery {
             ));
         }
         let language = GraphLanguage::parse(&dialect)?;
-        let (index, config) = resolve_alias(
-            context,
-            &alias,
-            self.providers.iter().map(|provider| provider.kind),
-        )?;
-        let provider = &self.providers[index];
+        let (provider, config) = self.providers.resolve_alias(context, &alias)?;
         let backend = &provider.backend;
         let mut watch = None;
-        if provider.kind == ProviderKind::Ladybug
+        if provider.descriptor.rewrite == ProviderRewrite::LabelCatalog
             && matches!(
                 self.kind,
                 GraphQueryKind::Filtered | GraphQueryKind::RuntimeWatch
@@ -733,16 +721,13 @@ impl TableFunctionCallbacks for GraphQuery {
         // filter could hide a conversion error. Only its observed, kind-qualified
         // catalog certifies the actual graph values. Keep explicit budgets on the
         // original scan so changing the row count cannot suppress a budget error.
-        if provider.kind == ProviderKind::Relate
+        if provider.descriptor.rewrite == ProviderRewrite::ObservedCatalog
             && matches!(
                 self.kind,
                 GraphQueryKind::Filtered | GraphQueryKind::RuntimeWatch
             )
             && !config.config.has_resource_limit()
-            && config
-                .catalog
-                .as_ref()
-                .is_some_and(|c| c.keys().next().is_some_and(|k| k.contains(':')))
+            && config.observed_catalog
         {
             let label = required(3)?;
             let property = required(4)?;
@@ -837,24 +822,23 @@ impl TableFunctionCallbacks for GraphQuery {
             capacity,
             bound.config.config.max_batch_bytes,
             || {
-                let current = bound.provider.kind.config(context)?;
+                let current = bound.provider.config(context)?;
                 if current.is_none_or(|c| c.generation.id != bound.config.generation.id) {
                     return Err(Error::invalid_input(format!(
                         "QW_CONFIG: {} configuration changed after binding",
-                        bound.provider.kind.name()
+                        bound.provider.descriptor.name
                     )));
                 }
-                if self.providers.len() > 1 {
-                    bound
-                        .provider
-                        .kind
-                        .check_sibling(context, &bound.config.config.alias)?;
-                }
+                self.providers.check_alias_available(
+                    context,
+                    bound.provider.descriptor.id,
+                    &bound.config.config.alias,
+                )?;
                 let path = admit_local_path(context, &bound.config.config.path)?;
                 if path != bound.config.config.path {
                     return Err(Error::invalid_input(format!(
                         "QW_ACCESS: Configured {} path changed after binding",
-                        bound.provider.kind.name()
+                        bound.provider.descriptor.name
                     )));
                 }
                 bound.config.generation.validate(Path::new(&path))?;
@@ -887,60 +871,29 @@ impl TableFunctionCallbacks for GraphQuery {
     }
 }
 
-/// Register the native graph query and its instance configuration for Cypher.
-pub fn register(extension: &Extension, backend: impl ReadBackend + 'static) -> Result<()> {
-    register_query(
-        extension,
-        vec![GraphProvider::new(ProviderKind::Ladybug, backend)],
-        None,
-    )
-}
-
-/// Register the native graph query with a GQL parser in addition to Cypher.
-pub fn register_with_gql(
-    extension: &Extension,
-    backend: impl ReadBackend + 'static,
-    parser: GqlParser,
-) -> Result<()> {
-    register_query(
-        extension,
-        vec![GraphProvider::new(ProviderKind::Ladybug, backend)],
-        Some(parser),
-    )
-}
-
-/// Install both real providers behind the same public Cypher, GQL and SQL/PGQ entry points.
-pub fn register_with_relate(
-    extension: &Extension,
-    ladybug: impl ReadBackend + 'static,
-    relate: impl ReadBackend + 'static,
-    parser: GqlParser,
-) -> Result<()> {
-    register_query(
-        extension,
-        vec![
-            GraphProvider::new(ProviderKind::Ladybug, ladybug),
-            GraphProvider::new(ProviderKind::Relate, relate),
-        ],
-        Some(parser),
-    )
-}
-
-fn register_query(
+/// Install the graph queries and settings for the providers enabled by the native extension.
+pub fn register_query(
     extension: &Extension,
     providers: Vec<GraphProvider>,
     gql_parser: Option<GqlParser>,
-) -> Result<()> {
-    let providers: Arc<[GraphProvider]> = providers.into();
-    let aliases = (providers.len() > 1).then(|| Arc::new(AliasReservations::default()));
-    for provider in providers.iter() {
-        provider.register_option(extension, aliases.clone())?;
-    }
+) -> Result<ProviderRegistry> {
+    let providers = ProviderRegistry::new(providers)?;
+    providers.register_options(extension)?;
+    TableFunctionBuilder::new(
+        "qw_graph_providers",
+        SignatureBuilder::new().documentation(
+            FunctionDocumentationBuilder::new()
+                .description("List enabled graph providers and their configuration settings.")
+                .add_category("quack_weave"),
+        ),
+        providers.clone(),
+    )
+    .register(extension)?;
 
     let description = if gql_parser.is_some() {
         "Read typed rows from a configured graph using read-only Cypher or a supported GQL subset."
     } else {
-        "Read typed rows from one read-only Cypher query against an embedded Ladybug graph."
+        "Read typed rows from one read-only Cypher query against a configured graph."
     };
     TableFunctionBuilder::new(
         "qw_query",
@@ -955,7 +908,7 @@ fn register_query(
                     .add_category("quack_weave"),
             ),
         GraphQuery {
-            providers: Arc::clone(&providers),
+            providers: providers.clone(),
             kind: GraphQueryKind::DeclaredSchema,
             gql_parser,
         },
@@ -996,7 +949,7 @@ fn register_query(
             name,
             signature,
             GraphQuery {
-                providers: Arc::clone(&providers),
+                providers: providers.clone(),
                 kind,
                 gql_parser,
             },
@@ -1006,7 +959,57 @@ fn register_query(
         .with_projection_pushdown(true)
         .register(extension)?;
     }
-    Ok(())
+    Ok(providers)
+}
+
+impl TableFunctionCallbacks for ProviderRegistry {
+    type BindData = ();
+    type GlobalState = ();
+    type LocalState = usize;
+
+    fn bind(
+        &self,
+        context: &Context,
+        _: BindArguments,
+        handle: BindFunctionHandle<'_>,
+    ) -> Result<()> {
+        let text = String::logical_type(context)?;
+        handle.add_result_column("provider_id", &text)?;
+        handle.add_result_column("setting_name", &text)?;
+        handle.set_cardinality(self.descriptors().len(), true)
+    }
+
+    fn init_local_state(
+        &self,
+        _: &Context,
+        _: &(),
+        _: Option<&()>,
+        _: InitColumnData<'_>,
+    ) -> Result<Option<usize>> {
+        Ok(Some(0))
+    }
+
+    fn exec(
+        &self,
+        _: &Context,
+        _: &(),
+        offset: Option<&mut usize>,
+        _: Option<&()>,
+        output: &mut DataChunk<'_>,
+        _: ExecColumnInfo<'_>,
+    ) -> Result<()> {
+        let offset =
+            offset.ok_or_else(|| Error::internal("qw_graph_providers: missing scan state"))?;
+        let descriptors = self.descriptors().skip(*offset).take(output.capacity()?);
+        let len = descriptors.len();
+        if len == 0 {
+            return Ok(());
+        }
+        write_column::<String>(output, 0, descriptors.clone().map(|item| Some(item.id)))?;
+        write_column::<String>(output, 1, descriptors.map(|item| Some(item.option)))?;
+        *offset += len;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

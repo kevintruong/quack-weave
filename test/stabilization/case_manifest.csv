@@ -59,6 +59,7 @@ limits.bytes,limits.test,mvp2-debug|mvp2-release,2
 limits.tokens,limits.test,mvp2-debug|mvp2-release,2
 limits.depth,limits.test,mvp2-debug|mvp2-release,2
 limits.literal,limits.test,mvp2-debug|mvp2-release,5
+provider.inventory_off,feature_off.test,cypher-only,1
 observer.admission,observer_audit.test,observer,3
 observer.schema,observer_audit.test,observer,1
 observer.quota,observer_audit.test,observer,2

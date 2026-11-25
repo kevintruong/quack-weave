@@ -1,5 +1,10 @@
 use duckdb_neo::{Result, duckdb_entrypoint_c_api_v2, extension::Extension};
 
+#[cfg(not(feature = "template-compat"))]
+use rusty_quack_core::qw_query::{
+    GqlParser, GraphProvider, ProviderDescriptor, ProviderRewrite, register_query,
+};
+
 #[cfg(all(feature = "gql", not(feature = "template-compat")))]
 pub mod gql;
 
@@ -22,25 +27,52 @@ mod test_observation;
 #[duckdb_entrypoint_c_api_v2(extension_name = "quack_weave", api_version = "2.0.1")]
 pub fn entrypoint(extension: &Extension) -> Result<()> {
     rusty_quack_core::register(extension)?;
-    #[cfg(feature = "gql")]
-    {
-        #[cfg(feature = "relate-provider")]
-        rusty_quack_core::qw_query::register_with_relate(
-            extension,
-            ladybug::LadybugBackend::default(),
+    let ladybug = GraphProvider::new(
+        ProviderDescriptor {
+            id: "ladybug",
+            name: "Ladybug",
+            option: "qw_ladybug_config",
+            unknown_alias_error: Some("QW_CONFIG: Unknown Ladybug graph alias"),
+            accepts_declared_catalog: false,
+            supports_timeout: true,
+            rewrite: ProviderRewrite::LabelCatalog,
+        },
+        ladybug::LadybugBackend::default(),
+    );
+    #[cfg(feature = "relate-provider")]
+    let providers = vec![
+        ladybug,
+        GraphProvider::new(
+            ProviderDescriptor {
+                id: "relate",
+                name: "RelateDB",
+                option: "qw_relate_config",
+                unknown_alias_error: None,
+                accepts_declared_catalog: true,
+                supports_timeout: false,
+                rewrite: ProviderRewrite::ObservedCatalog,
+            },
             relate_backend::RelateBackend::default(),
-            gql::parse,
-        )?;
-        #[cfg(not(feature = "relate-provider"))]
-        rusty_quack_core::qw_query::register_with_gql(
-            extension,
-            ladybug::LadybugBackend::default(),
-            gql::parse,
-        )?;
-        return graph_entry::register(extension);
-    }
+        ),
+    ];
+    #[cfg(not(feature = "relate-provider"))]
+    let providers = vec![ladybug];
+    let gql_parser: Option<GqlParser> = {
+        #[cfg(feature = "gql")]
+        {
+            Some(gql::parse)
+        }
+        #[cfg(not(feature = "gql"))]
+        {
+            None
+        }
+    };
+    let providers = register_query(extension, providers, gql_parser)?;
+    #[cfg(feature = "gql")]
+    graph_entry::register(extension, providers)?;
     #[cfg(not(feature = "gql"))]
-    return rusty_quack_core::qw_query::register(extension, ladybug::LadybugBackend::default());
+    drop(providers);
+    Ok(())
 }
 
 #[cfg(feature = "template-compat")]

@@ -23,3 +23,9 @@ statement error
 EXPLAIN SELECT * FROM qw_query('kg', 'gql', $$MATCH (a:Document)-[:LINKS_TO]->(b:Document) WHERE a.id = 100 RETURN b.id AS id$$, schema := 'id BIGINT');
 ----
 QW_GQL_UNAVAILABLE
+
+# case: provider.inventory_off Cypher-only exposes only the embedded Ladybug descriptor
+query TT
+SELECT provider_id, setting_name FROM qw_graph_providers();
+----
+ladybug	qw_ladybug_config
