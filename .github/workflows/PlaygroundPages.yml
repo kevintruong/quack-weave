@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  pages: read
 
 concurrency:
   group: playground-pages
@@ -18,7 +19,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: playground
@@ -42,7 +43,7 @@ jobs:
   deploy:
     if: github.ref == 'refs/heads/main'
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       pages: write
       id-token: write
