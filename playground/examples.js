@@ -20,20 +20,14 @@ LIMIT 5;`,
   {
     title: "Join both engines",
     mode: "sql",
-    detail: "Find citations in Ladybug, then join them to venue and ranking data in DuckDB.",
-    sql: `WITH cited AS (
-  SELECT paper_id
-  FROM qw_query(
-    'kg', 'cypher',
-    $$MATCH (source:Document)-[:LINKS_TO]->(cited:Document)
-      WHERE source.id = 100
-      RETURN cited.id AS paper_id$$,
-    schema := 'paper_id BIGINT'
-  )
-)
-SELECT p.id, p.title, p.venue, p.citation_count
+    detail: "Use GRAPH_TABLE to join Ladybug citations to publication data in DuckDB.",
+    sql: `SELECT p.id, p.title, p.venue, p.citation_count
 FROM papers AS p
-JOIN cited ON p.id = cited.paper_id
+JOIN GRAPH_TABLE (
+  kg MATCH (source:Document)-[link:LINKS_TO]->(cited:Document)
+  WHERE source.id = 100
+  COLUMNS (cited.id AS paper_id)
+) AS cited ON p.id = cited.paper_id
 ORDER BY p.citation_count DESC;`,
   },
   {

@@ -7,6 +7,7 @@ import ladybug from "@ladybugdb/wasm-core";
 import { Bool, Float64, Int64, Utf8, makeTable, tableToIPC, vectorFromArray } from "apache-arrow";
 import graphSeed from "./data/papertrail.cypher?raw";
 import papersFile from "./data/papers.parquet?url";
+import { lowerGraphTables } from "./graph-table.js";
 
 const base = new URL(import.meta.env.BASE_URL, window.location.href);
 const parquetPath = "papertrail-papers.parquet";
@@ -36,7 +37,7 @@ async function startDuckDB() {
     await connection.query(`CREATE TABLE papers AS SELECT * FROM read_parquet('${parquetPath}');
       SET enable_external_access = false;`);
     await database.dropFile(parquetPath);
-    return connection;
+    return { database, connection };
   } catch (error) {
     worker.terminate();
     throw error;
@@ -112,14 +113,15 @@ const scalarTypes = {
 };
 
 // DuckDB parses the SQL so literals, aliases, comments, and CTEs retain their SQL meanings.
-function graphScans(tree) {
+function graphScans(tree, graphTables) {
   const scans = [];
   const pending = [tree];
   while (pending.length) {
     const node = pending.pop();
     if (node === null || typeof node !== "object") continue;
-    if (node.type === "TABLE_FUNCTION" && node.function?.function_name?.toLowerCase() === "qw_query") {
-      scans.push(node);
+    const name = node.function?.function_name?.toLowerCase();
+    if (node.type === "TABLE_FUNCTION" && (name === "qw_query" || graphTables.has(name))) {
+      scans.push({ scan: node, cypher: graphTables.get(name) });
     } else {
       pending.push(...Object.values(node));
     }
@@ -146,6 +148,15 @@ function graphArguments(scan, parseSchema) {
   return { cypher, columns: parseSchema(schemaText) };
 }
 
+function inferSchema(result, parseSchema) {
+  const schema = result.columns.map((name, index) => {
+    const type = Object.keys(scalarTypes).find(key => scalarTypes[key].graph === result.types[index]);
+    if (!type) throw new Error(`QW_SCHEMA: Unsupported GRAPH_TABLE column type ${result.types[index]}.`);
+    return `${name} ${type}`;
+  });
+  return parseSchema(schema.join(", "));
+}
+
 function toArrow(columns, result) {
   if (columns.length !== result.columns.length || columns.some(({ name, type }, index) =>
     name !== result.columns[index] || scalarTypes[type].graph !== result.types[index]
@@ -160,25 +171,36 @@ function toArrow(columns, result) {
   return tableToIPC(makeTable(vectors), "stream");
 }
 
-async function executeSql(connection, graph, parseSchema, sql) {
+async function executeSql({ database, connection }, graph, parseSchema, sql) {
   const temporaryTables = [];
   let arrowBytes = 0;
   let arrowRows = 0;
   try {
-    if (/\bqw_query\b/i.test(sql)) {
+    const { statement, graphTables } = /\bgraph_table\b/i.test(sql)
+      ? lowerGraphTables(sql, await database.tokenize(sql))
+      : { statement: sql, graphTables: new Map() };
+    if (graphTables.size || /\bqw_query\b/i.test(sql)) {
       const serialize = await connection.prepare("SELECT json_serialize_sql(?::VARCHAR) AS ast");
       let tree;
       try {
-        tree = JSON.parse((await serialize.query(sql)).get(0).ast);
+        tree = JSON.parse((await serialize.query(statement)).get(0).ast);
       } finally {
         await serialize.close();
       }
-      const scans = tree.error ? [] : graphScans(tree);
+      if (tree.error && graphTables.size) throw new Error(tree.error_message);
+      const scans = tree.error ? [] : graphScans(tree, graphTables);
       if (scans.length) {
-        if (tree.statements.length !== 1) throw new Error("Run one SQL statement at a time with qw_query.");
-        const queries = scans.map(scan => ({ scan, ...graphArguments(scan, parseSchema) }));
-        for (const { scan, cypher, columns } of queries) {
+        if (tree.statements.length !== 1) throw new Error("Run one SQL statement at a time with graph scans.");
+        const queries = scans.map(({ scan, cypher }) => {
+          if (!cypher) return { scan, ...graphArguments(scan, parseSchema), defaultAlias: "qw_query" };
+          if (scan.with_ordinality === "WITH_ORDINALITY") {
+            throw new Error("GRAPH_TABLE accepts a table alias after COLUMNS.");
+          }
+          return { scan, cypher, defaultAlias: "graph_table" };
+        });
+        for (const { scan, cypher, columns: schema, defaultAlias } of queries) {
           const result = await queryGraph(graph, cypher);
+          const columns = schema ?? inferSchema(result, parseSchema);
           const bytes = toArrow(columns, result);
           const name = `qw_rows_${crypto.randomUUID().replaceAll("-", "")}`;
           const fields = columns.map(column => `"${column.name}" ${column.type}`).join(", ");
@@ -194,7 +216,7 @@ async function executeSql(connection, graph, parseSchema, sql) {
           delete scan.with_ordinality;
           Object.assign(scan, {
             type: "BASE_TABLE",
-            alias: alias || "qw_query",
+            alias: alias || defaultAlias,
             column_name_alias,
             query_location,
             catalog_name: "temp",

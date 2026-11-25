@@ -2,7 +2,9 @@
 
 The playground runs SQL in DuckDB Wasm and Cypher in Ladybug Wasm. PaperTrail is a synthetic citation dataset bundled as a Cypher seed and a Parquet file. At startup, Ladybug builds a database in its own filesystem and reopens it read-only. DuckDB loads `papers` from Parquet.
 
-For a hybrid query, the browser bridge finds explicit-schema `qw_query` calls in DuckDB's parsed SQL. It validates the schema with the same Rust parser used by the native extension, runs the Cypher in Ladybug, and stages only the returned rows in a temporary DuckDB table via typed Arrow IPC. The results report the number of rows and IPC bytes transferred. The bridge supports the sample graph alias `kg`, the `cypher` dialect, and a single SQL query with explicit `BOOLEAN`, `BIGINT`, `DOUBLE`, or `VARCHAR` result columns.
+The guided hybrid example uses a SQL/PGQ-style `GRAPH_TABLE` join. The browser bridge supports `GRAPH_TABLE (kg MATCH … [WHERE …] COLUMNS (…))`: Ladybug executes the graph pattern, predicates, and projections. Use plain ASCII column names and `AS` where needed. The bridge infers `BOOLEAN`, `BIGINT`, `DOUBLE`, and `VARCHAR` from Ladybug's result metadata and passes the projected rows to DuckDB via typed Arrow IPC. The console reports rows and IPC bytes transferred.
+
+The browser also supports `qw_query` with the sample graph alias `kg`, the `cypher` dialect, and an explicit schema. Both interfaces use the scalar schema parser shared with the native extension.
 
 ## Run locally
 

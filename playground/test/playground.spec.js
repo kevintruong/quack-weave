@@ -11,6 +11,7 @@ test("guided hybrid example runs DuckDB SQL over live Ladybug results", async ({
   await page.getByRole("button", { name: "Join both engines" }).click();
   await page.getByRole("button", { name: "Load query" }).click();
   const editor = page.getByRole("textbox", { name: "Query editor" });
+  await expect(editor).toHaveValue(/JOIN GRAPH_TABLE \(\s+kg MATCH/);
   await expect(editor).toHaveValue(/source\.id = 100/);
   await page.getByRole("button", { name: "Run query" }).click();
   const table = page.getByRole("table", { name: "Query results" });
@@ -81,4 +82,21 @@ test("the mobile console runs a guided graph query without horizontal page overf
   await page.getByRole("button", { name: "Run query" }).click();
   await expect(page.getByRole("table").getByRole("cell", { name: "Provenance in Digital Libraries" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+});
+
+test("GRAPH_TABLE infers scalar column types and preserves SQL text and aliases", async ({ page }) => {
+  await page.getByRole("button", { name: "SQL mode" }).click();
+  const editor = page.getByRole("textbox", { name: "Query editor" });
+  const literal = "GRAPH_TABLE (kg MATCH (d:Document) COLUMNS (d.id))";
+  await editor.fill(`SELECT café.paper_id, café.title, '${literal}' AS sql_text
+    FROM GRAPH_TABLE /* graph source */ (
+      KG MATCH (d:Document)
+      WHERE d.id = 104 AND d.title <> 'COLUMNS (ignored)'
+      COLUMNS (d.id AS paper_id, d.title AS title)
+    ) AS café`);
+  await page.getByRole("button", { name: "Run query" }).click();
+  const table = page.getByRole("table", { name: "Query results" });
+  for (const value of ["104", "Provenance in Digital Libraries", literal]) {
+    await expect(table.getByRole("cell", { name: value, exact: true })).toBeVisible();
+  }
 });
