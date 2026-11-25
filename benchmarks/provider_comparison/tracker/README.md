@@ -69,6 +69,14 @@ tracker=benchmarks/provider_comparison/tracker.py
 
 The default output is a timestamped JSON file under `build/perf/provider-comparison/tracker/`. Use `--out` to choose a new filename. Existing snapshots are protected from replacement. Repeat `--case` or `--provider` for a focused run. For example, `--case fanout --provider relate` exercises all three standalone routes, while `--case table_watchlist` exercises the two QuackWeave hybrid routes.
 
+### Prepared lookups
+
+Pass `--include-prepared` to compare a reused `qw_query` statement with bare Cypher and GQL and the direct graph client. The prepared route fixes the graph alias, dialect, graph query and output schema. The ADBC worker uses one cursor per statement on the same DuckDB connection. It records preparation under `setup.prepare_ms` and times execution through the full Arrow fetch. All routes use the same graph result checks. The snapshot records the exact prepared SQL under `prepared_statements`. [Public client pattern](../../../README.md#explicit-schema-bridge)
+
+```sh
+"$py" -B "$tracker" run --include-prepared --case lookup --case lookup_miss
+```
+
 ### Track changes
 
 ```sh
@@ -87,7 +95,7 @@ WHERE workload = 'table_watchlist'
 ORDER BY started_utc DESC, provider;
 ```
 
-Run the snapshot SQLLogic test against a complete matrix to independently recalculate the percentiles and native ratios from raw observations and check the hybrid scan counts.
+Run the snapshot SQLLogic test against the complete CI matrix to independently recalculate the percentiles and native ratios from raw observations and check the hybrid scan counts.
 
 ```sh
 QW_TRACKER_SNAPSHOT="$PWD/benchmarks/provider_comparison/tracker/sf1.json" \

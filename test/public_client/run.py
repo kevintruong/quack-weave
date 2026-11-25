@@ -55,6 +55,28 @@ def run(args, scratch):
             sink.adbc_ingest(name, source.fetch_arrow_table())
         source.execute("MATCH (o:airport)-[e:route]->(d:airport) RETURN e AS edge")
         sink.adbc_ingest("graph_edges", source.fetch_arrow_table())
+        statement = (
+            f"SELECT * FROM qw_query('air_routes', 'cypher', {sql_literal(ROUTES)}, "
+            "schema := 'origin VARCHAR, destination VARCHAR, miles BIGINT') "
+            "ORDER BY origin, destination, miles NULLS LAST"
+        )
+        with reader.cursor() as prepared:
+            prepared.adbc_prepare(statement)
+            first = prepared.execute(statement).fetch_arrow_table()
+            source.execute("RESET qw_selected_graph")
+            source.execute("SET SESSION qw_graph_dialect = 'gql'")
+            repeated = prepared.execute(statement).fetch_arrow_table()
+            if not first.equals(repeated):
+                raise AssertionError("Explicit prepared read changed after a session setting changed")
+            sink.adbc_ingest("prepared_routes", repeated)
+            source.execute("RESET GLOBAL qw_ladybug_config")
+            try:
+                prepared.execute(statement).fetch_arrow_table()
+            except dbapi.Error as exc:
+                if "QW_CONFIG: Ladybug configuration changed after binding" not in str(exc):
+                    raise
+            else:
+                raise AssertionError("Prepared read opened a scan after its registration was reset")
     run_cases(args.duckdb_unittest, scratch, {"QW_CLIENT_DB": destination}, [HERE / "results.test"])
 
 

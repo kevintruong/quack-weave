@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lsqb_sf1"))
 from watchlist import KEYS, PATTERN, ROOT, digest, provider_rows, sql_literal
 
 BUILD = ROOT / "build/perf/provider-comparison"
+GRAPH_ALIAS = "social"
 EXT = ROOT / "build/mvp2-relate/release/extension/quack_weave/quack_weave.duckdb_extension"
 DUCKDB_LIBRARY = "libduckdb.so" if sys.platform == "linux" else "libduckdb.dylib"
 LIB = ROOT / "build/benchmark-host/release/src" / DUCKDB_LIBRARY
@@ -35,7 +36,7 @@ FAN = f"MATCH {PATTERN} WHERE {EQ} RETURN m.MessageId AS id"
 
 
 def graph(columns, where=""):
-    return f"GRAPH_TABLE (social MATCH {PATTERN} {where} COLUMNS ({columns})) AS g"
+    return f"GRAPH_TABLE ({GRAPH_ALIAS} MATCH {PATTERN} {where} COLUMNS ({columns})) AS g"
 
 
 PAIRS = graph("p.PersonId AS author, m.MessageId AS mid")
@@ -90,7 +91,7 @@ def milliseconds(start):
 @contextmanager
 def cursor(a):
     graph_path = a.fixture / ENGINES[a.provider]
-    config = json.dumps({"alias": "social", "path": str(graph_path.resolve())})
+    config = json.dumps({"alias": GRAPH_ALIAS, "path": str(graph_path.resolve())})
     with dbapi.connect(driver=str(a.library.resolve()), entrypoint="duckdb_adbc_init", autocommit=True,
                        db_kwargs={"allow_unsigned_extensions": "true"}) as db, db.cursor() as cur:
         cur.execute("SELECT library_version, source_id FROM pragma_version()")
@@ -103,7 +104,7 @@ def cursor(a):
         start = perf_counter_ns()
         cur.execute(f"SET GLOBAL qw_{a.provider}_config = " + sql_literal(config))
         register_ms = milliseconds(start)
-        cur.execute("SESSION SET GRAPH social")
+        cur.execute(f"SESSION SET GRAPH {GRAPH_ALIAS}")
         cur.execute("CREATE TEMP TABLE watch(author BIGINT)")
         cur.execute("INSERT INTO watch VALUES " + ",".join(f"({k})" for k in KEYS))
         yield cur, {"load_ms": load_ms, "register_ms": register_ms}

@@ -214,6 +214,22 @@ The client acceptance target uses `adbc-driver-manager==1.9.0` and `pyarrow==23.
 
 Use `qw_query` in a DuckDB `FROM` clause. Its declared `schema` supplies column names and types. Use `AS related(document_id)` to rename a column in SQL.
 
+For a graph read that repeats with fixed graph text and output types, prepare the explicit-schema statement on the DuckDB connection and reuse it. The client supplies the graph alias, dialect, query text and schema. DuckDB owns the prepared plan. QuackWeave checks host file access and the registered graph generation each time the scan opens. A replaced or reset registration requires a fresh prepare. [ADBC example and checks](test/public_client/run.py)
+
+```python
+statement = """
+SELECT * FROM qw_query('air_routes', 'cypher',
+    $$MATCH (a:airport) WHERE a.code = 'ATL' RETURN a.code AS code$$,
+    schema := 'code VARCHAR')
+"""
+with connection.cursor() as lookup:
+    lookup.adbc_prepare(statement)
+    for _ in range(2):
+        rows = lookup.execute(statement).fetch_arrow_table()
+```
+
+Bare `MATCH` reads the current session graph and dialect when DuckDB binds it. Use a named graph parameter when the value inside the graph predicate varies. [Prepared lookup benchmark](benchmarks/provider_comparison/tracker/README.md#prepared-lookups)
+
 Graph results follow DuckDB's relational semantics. Joins can multiply duplicate graph or SQL rows, and `UNION ALL` preserves duplicates. A scalar subquery returns `NULL` for zero rows and raises the default DuckDB error for multiple rows. `IN` follows SQL's three-valued logic, while `EXISTS` can correlate through a SQL predicate on graph-derived columns.
 
 Use `AS MATERIALIZED` when a CTE should share a graph result across references. Inlining can produce separate graph scans. `WITH ORDINALITY` numbers rows in one scan's output. Use an outer `ORDER BY` with stable keys for reproducible ordering. [Relational SQLLogicTests](test/stabilization/sqllogic/usage_relations.test)

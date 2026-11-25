@@ -41,8 +41,9 @@ HYBRID = {
     "full_scan_aggregate": (run.CASES["full_scan_aggregate"][1], "full_scan_aggregate"),
 }
 CASES = {**STANDALONE, **HYBRID}
+PREPARED_ROUTE = "qw_prepared_cypher"
 ROUTES = {"direct_cypher": STANDALONE, "qw_gql": STANDALONE,
-          "qw_cypher": STANDALONE, "qw_pgq": HYBRID}
+          "qw_cypher": STANDALONE, PREPARED_ROUTE: STANDALONE, "qw_pgq": HYBRID}
 HISTORY = run.BUILD / "tracker"
 PROTOCOL = 2
 
@@ -61,6 +62,12 @@ def check_result(expected, name, actual):
         raise ValueError(f"{name}: incorrect result; expected {expected[CASES[name][1]]}, got {actual}")
 
 
+def prepared_sql(name):
+    alias = run.sql_literal(run.GRAPH_ALIAS)
+    statement = run.sql_literal(STANDALONE[name][0])
+    return f"SELECT * FROM qw_query({alias}, 'cypher', {statement}, schema := 'id BIGINT')"
+
+
 def fetch_table(fetch, statement):
     cpu = process_time_ns()
     start = perf_counter_ns()
@@ -75,6 +82,7 @@ def fetch_table(fetch, statement):
 
 def python_worker(a, request):
     sequence = schedule(request["cases"], a.block, a.runs)
+    statements = {name: CASES[name][0] for name in request["cases"]}
     with ExitStack() as stack:
         if a.route == "direct_cypher" and a.provider == "relate":
             from relate import Database
@@ -99,6 +107,21 @@ def python_worker(a, request):
             def fetch(statement):
                 with conn.execute(statement) as result:
                     return result.get_as_arrow()
+        elif a.route == PREPARED_ROUTE:
+            parent, setup = stack.enter_context(run.cursor(a))
+            statements = {name: prepared_sql(name) for name in request["cases"]}
+            cursors = {}
+            start = perf_counter_ns()
+            for statement in statements.values():
+                cursor = stack.enter_context(parent.connection.cursor())
+                cursor.adbc_prepare(statement)
+                cursors[statement] = cursor
+            setup["prepare_ms"] = run.milliseconds(start)
+
+            def fetch(statement):
+                cursor = cursors[statement]
+                cursor.execute(statement)
+                return cursor.fetch_arrow_table()
         else:
             cur, setup = stack.enter_context(run.cursor(a))
             dialect = "cypher" if a.route == "qw_cypher" else "gql"
@@ -112,7 +135,7 @@ def python_worker(a, request):
 
         samples = []
         for repetition, name in sequence:
-            actual, timing = fetch_table(fetch, CASES[name][0])
+            actual, timing = fetch_table(fetch, statements[name])
             check_result(request["expected"], name, actual)
             samples.append({"repetition": repetition, "case": name, **timing})
         worker = {"setup": setup, "samples": samples,
@@ -157,7 +180,7 @@ def summarize(workers):
                      "cpu_p50_ms": median(s["cpu_ms"] for s in samples)})
     native = {(r["provider"], r["case"]): r["p50_ms"] for r in rows if r["route"] == "direct_cypher"}
     for row in rows:
-        if row["route"] in ("qw_gql", "qw_cypher"):
+        if row["route"] in ("qw_gql", "qw_cypher", PREPARED_ROUTE):
             row["qw_over_direct"] = row["p50_ms"] / native[row["provider"], row["case"]]
     return rows
 
@@ -204,7 +227,8 @@ def benchmark(a):
         raise ValueError("lookup_miss requires -1 to be absent")
     expected = {**oracle["expected"], "lookup_miss": run.signature([[]])}
     expected = {CASES[n][1]: expected[CASES[n][1]] for n in cases}
-    routes = {k: [n for n in cases if n in group] for k, group in ROUTES.items()}
+    routes = {k: [n for n in cases if n in group] for k, group in ROUTES.items()
+              if k != PREPARED_ROUTE or a.include_prepared}
     binaries = {"duckdb_library": run.digest(a.library)}
     if "relate" in providers and routes["direct_cypher"]:
         import relate._native
@@ -225,6 +249,8 @@ def benchmark(a):
               "fixture": fixture, "edge_count": oracle["edges"], "duckdb_threads": 1,
               "blocks": a.blocks, "runs": a.runs, "expected": expected,
               "statements": {n: CASES[n][0] for n in cases}, "watchlist": run.KEYS}
+    if routes.get(PREPARED_ROUTE):
+        common["prepared_statements"] = {name: prepared_sql(name) for name in routes[PREPARED_ROUTE]}
     if a.describe:
         description = release_metadata(a, common, binaries)
         description["summary"] = [{"provider": provider, "route": route, "case": name}
@@ -291,6 +317,8 @@ def compare(old, new):
     for field in ("protocol", "fixture", "platform", "machine", "host_id", "duckdb_threads", "blocks", "runs", "watchlist", "versions"):
         if before[field] != after[field]:
             raise ValueError(f"Incompatible snapshots: {field} differs")
+    if before.get("prepared_statements") != after.get("prepared_statements"):
+        raise ValueError("Incompatible snapshots: prepared statements differ")
     if before["id"] == after["id"]:
         raise ValueError("Select two distinct benchmark runs")
     def by_key(report):
@@ -324,6 +352,8 @@ def main():
         cmd.add_argument("--runs", type=int, default=5)
     measure.add_argument("--provider", action="append", choices=run.ENGINES)
     measure.add_argument("--case", action="append", choices=CASES)
+    measure.add_argument("--include-prepared", action="store_true",
+                         help="Also time reused explicit-schema qw_query Cypher statements")
     measure.add_argument("--out", type=Path, help="New JSON file (default: timestamped history)")
     measure.add_argument("--describe", type=Path, help="Write candidate workload metadata before measuring")
     measure.add_argument("--baseline-extension", type=Path, help="Verified baseline extension to alternate with the candidate")

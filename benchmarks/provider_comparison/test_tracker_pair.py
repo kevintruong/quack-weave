@@ -1,5 +1,5 @@
 """Exercise the tracker CLI and its snapshot publication with deterministic worker samples."""
-from contextlib import redirect_stdout
+from contextlib import nullcontext, redirect_stdout
 import hashlib
 import io
 import json
@@ -7,10 +7,40 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, call, patch
+
+import pyarrow as pa
 
 import tracker
+
+
+class PreparedWorker(unittest.TestCase):
+    def test_prepares_each_fixed_lookup_once_and_reuses_its_cursor(self):
+        cases = {"lookup": [tracker.run.KEYS[0]], "lookup_miss": []}
+        tables = {name: pa.table({"id": pa.array(values, type=pa.int64())})
+                  for name, values in cases.items()}
+        expected = {tracker.CASES[name][1]: tracker.run.signature([values])
+                    for name, values in cases.items()}
+        source = MagicMock()
+        source.fetch_arrow_table.side_effect = lambda: tables[
+            "lookup_miss" if " = -1" in source.execute.call_args.args[0] else "lookup"]
+        prepared = {name: MagicMock() for name in cases}
+        for name, cursor in prepared.items():
+            cursor.fetch_arrow_table.return_value = tables[name]
+        source.connection.cursor.side_effect = [nullcontext(cursor) for cursor in prepared.values()]
+        args = SimpleNamespace(route="qw_prepared_cypher", provider="ladybug", block=0, runs=2)
+        with patch.object(tracker.run, "cursor", return_value=nullcontext((source, {}))):
+            worker = tracker.python_worker(args, {"cases": list(cases), "expected": expected})
+
+        for name, cursor in prepared.items():
+            graph_query = tracker.run.sql_literal(tracker.CASES[name][0])
+            sql = f"SELECT * FROM qw_query('social', 'cypher', {graph_query}, schema := 'id BIGINT')"
+            cursor.adbc_prepare.assert_called_once_with(sql)
+            self.assertEqual(cursor.execute.call_args_list, [call(sql)] * 3)
+        self.assertEqual(len(worker["samples"]), 6)
+        self.assertGreaterEqual(worker["setup"]["prepare_ms"], 0)
 
 
 class TrackerPair(unittest.TestCase):
