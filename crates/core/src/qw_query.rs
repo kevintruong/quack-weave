@@ -365,6 +365,12 @@ struct ConfigInput {
     catalog: Option<BTreeMap<String, BTreeMap<String, String>>>,
 }
 
+impl ConfigInput {
+    fn has_resource_limit(&self) -> bool {
+        self.timeout_ms.is_some() || self.max_batch_bytes.is_some()
+    }
+}
+
 fn parse_config(text: &str) -> Result<ConfigInput> {
     let config: ConfigInput = serde_json::from_str(text).map_err(|_| {
         Error::invalid_input("QW_CONFIG: Expected a graph configuration object with alias and path")
@@ -502,8 +508,7 @@ struct BoundRead {
 impl BoundRead {
     fn allows_pgq_rewrite(&self) -> bool {
         self.fragment.is_some()
-            && self.config.config.max_batch_bytes.is_none()
-            && self.config.config.timeout_ms.is_none()
+            && !self.config.config.has_resource_limit()
             && (self.provider.kind == ProviderKind::Ladybug
                 || self.config.catalog.as_ref().is_some_and(|catalog| {
                     catalog.keys().next().is_some_and(|key| key.contains(':'))
@@ -687,11 +692,14 @@ impl TableFunctionCallbacks for GraphQuery {
                 if self.kind == GraphQueryKind::RuntimeWatch {
                     let var = required(5)?;
                     let column = required(6)?;
-                    watch = RuntimeWatch::from_scan(&query, &label, &property, &var, &column);
+                    if !config.config.has_resource_limit() {
+                        watch = RuntimeWatch::from_scan(&query, &label, &property, &var, &column);
+                    }
                 } else {
                     let candidate = required(5)?;
-                    if runtime_watch::filtered_column(&query, &candidate, &label, &property)
-                        .is_some()
+                    if !config.config.has_resource_limit()
+                        && runtime_watch::filtered_column(&query, &candidate, &label, &property)
+                            .is_some()
                     {
                         query = candidate;
                     }
@@ -730,7 +738,7 @@ impl TableFunctionCallbacks for GraphQuery {
                 self.kind,
                 GraphQueryKind::Filtered | GraphQueryKind::RuntimeWatch
             )
-            && config.config.max_batch_bytes.is_none()
+            && !config.config.has_resource_limit()
             && config
                 .catalog
                 .as_ref()

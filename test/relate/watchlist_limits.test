@@ -1,0 +1,79 @@
+# name: test/relate/watchlist_limits.test
+# description: Literal watchlists keep scan budget errors and timeout-limited input cardinality
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_RELATE UNSET_QW_RELATE
+
+test-env QW_LADYBUG UNSET_QW_LADYBUG
+
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"lg","path":"{QW_LADYBUG}","max_batch_bytes":1}';
+
+# No key matches. The graph must still attempt to produce its original BIGINT batch.
+statement error
+SELECT g.id FROM GRAPH_TABLE(lg MATCH (a:airport)-[r:route]->(b:airport)
+ COLUMNS(r.rid AS id)) g JOIN (VALUES (999::BIGINT)) w(id) ON g.id=w.id;
+----
+QW_BATCH_BUDGET
+
+statement error
+FROM qw_graph_query_filtered('lg','cypher','MATCH (a:airport)-[r:route]->(b:airport) RETURN r.rid AS qw_col0',
+ 'route','rid','MATCH (a:airport)-[r:route]->(b:airport) WHERE r.rid = 999 RETURN r.rid AS qw_col0');
+----
+QW_BATCH_BUDGET
+
+statement ok
+CREATE TEMP TABLE watch(id BIGINT);
+
+statement ok
+INSERT INTO watch VALUES (999);
+
+# Keep the graph as the hash join probe so the legacy runtime-watch path is exercised.
+statement ok
+SET disabled_optimizers='build_side_probe_side,join_order';
+
+statement error
+SELECT g.qw_col0 FROM qw_graph_query_watch('lg','cypher',
+ 'MATCH (a:airport)-[r:route]->(b:airport) RETURN r.rid AS qw_col0','route','rid','r','qw_col0') g
+ JOIN watch w ON g.qw_col0=w.id;
+----
+QW_BATCH_BUDGET
+
+statement ok
+RESET disabled_optimizers;
+
+# Measure the timeout guard without depending on wall-clock speed.
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"lg","path":"{QW_LADYBUG}","timeout_ms":60000}';
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON)
+SELECT g.id FROM GRAPH_TABLE(lg MATCH (a:airport)-[r:route]->(b:airport)
+ COLUMNS(r.rid AS id)) g JOIN (VALUES (101::BIGINT)) w(id) ON g.id=w.id;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 5,[^{}]*"name": "QW_GRAPH_QUERY_FILTERED".*
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"rl","path":"{QW_RELATE}","max_batch_bytes":1}';
+
+statement error
+SELECT g.id FROM GRAPH_TABLE(rl MATCH (a:airport)-[r:route]->(b:airport)
+ COLUMNS(r.rid AS id)) g JOIN (VALUES (999::BIGINT)) w(id) ON g.id=w.id;
+----
+QW_BATCH_BUDGET
+
+# Unlimited Ladybug scans retain the literal prefilter.
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"lg","path":"{QW_LADYBUG}"}';
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON)
+SELECT g.id FROM GRAPH_TABLE(lg MATCH (a:airport)-[r:route]->(b:airport)
+ COLUMNS(r.rid AS id)) g JOIN (VALUES (101::BIGINT)) w(id) ON g.id=w.id;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 1,[^{}]*"name": "QW_GRAPH_QUERY_FILTERED".*

@@ -13,12 +13,7 @@ impl TableGetBindInfoCallbacks for GraphQuery {
             {
                 "literal"
             }
-            Some(_)
-                if bound.config.config.max_batch_bytes.is_some()
-                    || bound.config.config.timeout_ms.is_some() =>
-            {
-                "limit"
-            }
+            Some(_) if bound.config.config.has_resource_limit() => "limit",
             Some(_) if !bound.allows_pgq_rewrite() => "catalog",
             Some(_) if bound.static_predicate_sql()?.is_some() => "static",
             Some(_) => "pattern",
@@ -45,7 +40,7 @@ impl TableGetBindInfoCallbacks for GraphQuery {
         // Replanning the provider work changes batch boundaries and timing. Preserve
         // the original scan whenever the caller configured an explicit execution limit.
         let config = &bound.config.config;
-        if config.max_batch_bytes.is_none() && config.timeout_ms.is_none() {
+        if !config.has_resource_limit() {
             if bound.provider.kind == ProviderKind::Relate {
                 let Some(bound_rows) = bound.config.single_pattern_row_bound else {
                     return Ok(());
