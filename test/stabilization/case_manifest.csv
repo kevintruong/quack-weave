@@ -141,3 +141,4 @@ values.budget,graph_values.test,mvp2-debug|mvp2-release,6
 hybrid.aggregate_pushdown,graph_aggregate_pushdown.test,mvp2-debug|mvp2-release,23
 hybrid.table_watchlist,table_watchlist.test,mvp2-debug|mvp2-release,34
 remote_policy.host_access,remote_policy.test,mvp2-debug|mvp2-release|cypher-only,10
+declared_bindings.read,declared_bindings.test,mvp2-debug|mvp2-release|cypher-only,4

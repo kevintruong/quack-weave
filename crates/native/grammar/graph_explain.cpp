@@ -30,12 +30,16 @@ constexpr Description DESCRIPTIONS[] = {
     {"Pattern scan", "SQL join", "No eligible runtime key filter"},
 };
 
-template <bool RELATE, Decision DECISION>
+constexpr char LADYBUG[] = "Ladybug";
+constexpr char RELATE[] = "RelateDB";
+constexpr char NEO4J[] = "Neo4j";
+
+template <const char *PROVIDER, Decision DECISION>
 InsertionOrderPreservingMap<string> Describe(TableFunctionToStringInput &input) {
 	InsertionOrderPreservingMap<string> result;
 	const auto &description = DESCRIPTIONS[static_cast<size_t>(DECISION)];
 	result["Function"] = StringUtil::Upper(input.table_function.GetName().GetIdentifierName());
-	result["Graph Provider"] = RELATE ? "RelateDB" : "Ladybug";
+	result["Graph Provider"] = PROVIDER;
 	result["Graph Operation"] = description.operation;
 	if (description.residual)
 		result["DuckDB Residual"] = description.residual;
@@ -44,15 +48,15 @@ InsertionOrderPreservingMap<string> Describe(TableFunctionToStringInput &input) 
 	return result;
 }
 
-template <bool RELATE>
+template <const char *PROVIDER>
 table_function_to_string_t Select(Decision decision) {
 	static constexpr table_function_to_string_t CALLBACKS[] = {
-	    Describe<RELATE, Decision::Native>, Describe<RELATE, Decision::Base>,
-	    Describe<RELATE, Decision::Static>, Describe<RELATE, Decision::Runtime>,
-	    Describe<RELATE, Decision::Both>, Describe<RELATE, Decision::Aggregate>,
-	    Describe<RELATE, Decision::Limit>, Describe<RELATE, Decision::Catalog>,
-	    Describe<RELATE, Decision::Unsupported>, Describe<RELATE, Decision::Literal>,
-	    Describe<RELATE, Decision::HostJoin>};
+	    Describe<PROVIDER, Decision::Native>, Describe<PROVIDER, Decision::Base>,
+	    Describe<PROVIDER, Decision::Static>, Describe<PROVIDER, Decision::Runtime>,
+	    Describe<PROVIDER, Decision::Both>, Describe<PROVIDER, Decision::Aggregate>,
+	    Describe<PROVIDER, Decision::Limit>, Describe<PROVIDER, Decision::Catalog>,
+	    Describe<PROVIDER, Decision::Unsupported>, Describe<PROVIDER, Decision::Literal>,
+	    Describe<PROVIDER, Decision::HostJoin>};
 	return CALLBACKS[static_cast<size_t>(decision)];
 }
 
@@ -92,7 +96,13 @@ void DescribeScan(OptimizerExtensionInput &input, LogicalGet &get, LogicalOperat
 		         consumer == LogicalOperatorType::LOGICAL_AGGREGATE_AND_GROUP_BY)
 			decision = Decision::Unsupported;
 	}
-	fn.to_string = provider->second.GetValue<string>() == "RelateDB" ? Select<true>(decision) : Select<false>(decision);
+	const auto name_value = provider->second.GetValue<string>();
+	if (name_value == LADYBUG)
+		fn.to_string = Select<LADYBUG>(decision);
+	else if (name_value == RELATE)
+		fn.to_string = Select<RELATE>(decision);
+	else if (name_value == NEO4J)
+		fn.to_string = Select<NEO4J>(decision);
 }
 
 void Annotate(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
@@ -112,7 +122,7 @@ void Annotate(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan)
 } // namespace
 
 void QwMarkDelegatedAggregate(LogicalGet &get, bool relate) {
-	get.function.to_string = relate ? Select<true>(Decision::Aggregate) : Select<false>(Decision::Aggregate);
+	get.function.to_string = relate ? Select<RELATE>(Decision::Aggregate) : Select<LADYBUG>(Decision::Aggregate);
 }
 
 void QwRegisterGraphExplain(DatabaseInstance &db) {

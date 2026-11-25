@@ -21,12 +21,13 @@ SUITE_SUFFIXES = {".test", ".test_slow"}
 CASE_ID = r"[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*"
 CASE_MARKER = re.compile(rf"# case:[ \t]+({CASE_ID})(?:[ \t]+.*)?")
 SQL_BLOCK = re.compile(r"(?:query [TIR]+|statement (?:ok|error))(?:[ \t]+.*)?")
-CASE_COUNT = 142
-PROFILE_COUNTS = {"mvp2-debug": 133, "mvp2-release": 133, "cypher-only": 3, "observer": 7}
+CASE_COUNT = 143
+PROFILE_COUNTS = {"mvp2-debug": 134, "mvp2-release": 134, "cypher-only": 4, "observer": 7}
 PROFILE_FILES = {
     "feature_off.test": ("cypher-only",),
     "observer_audit.test": ("observer",),
     "remote_policy.test": ("mvp2-debug", "mvp2-release", "cypher-only"),
+    "declared_bindings.test": ("mvp2-debug", "mvp2-release", "cypher-only"),
 }
 PREAMBLE_BLOCKS = {"limits.test": 2, "observer_audit.test": 6}
 PIN_PROBE = "<stdin>"

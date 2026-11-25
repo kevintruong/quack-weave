@@ -1,6 +1,6 @@
 //! Bind an alias to the configuration and backend that own it in this DuckDB instance.
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     path::Path,
     sync::{Arc, Mutex, atomic::Ordering},
 };
@@ -15,7 +15,7 @@ use duckdb_neo::{
 };
 
 use super::{
-    CONFIG_GENERATION, ConfigSnapshot, GraphCatalog, GraphGeneration, ReadBackend,
+    CONFIG_GENERATION, ConfigSnapshot, DeclaredCatalog, GraphCatalog, GraphGeneration, ReadBackend,
     RegisteredConfig, admit_local_path, backend_error, is_identifier, parse_config, remote,
 };
 
@@ -261,7 +261,17 @@ impl CustomOptionCallbacks for GraphConfig {
             let text = value.ok_or_else(|| {
                 Error::invalid_input("QW_CONFIG: Expected remote graph configuration")
             })?;
-            let config = remote::RemoteConfig::parse(&text)?;
+            let mut config = remote::RemoteConfig::parse(&text)?;
+            if !descriptor.accepts_declared_catalog && config.catalog.is_some() {
+                return Err(Error::invalid_input(
+                    "QW_CONFIG: This remote provider does not accept a declared catalog",
+                ));
+            }
+            let catalog = config
+                .catalog
+                .take()
+                .map(|catalog| normalize_catalog(catalog, true))
+                .transpose()?;
             remote::admit_remote(context)?;
             backend
                 .validate_remote(&config.source())
@@ -269,7 +279,7 @@ impl CustomOptionCallbacks for GraphConfig {
             let snapshot = ConfigSnapshot {
                 generation: GraphGeneration::remote(next_generation()?),
                 config: RegisteredConfig::Remote(config),
-                catalog: None,
+                catalog,
                 observed_catalog: false,
                 single_pattern_row_bound: None,
                 populations: None,
@@ -291,7 +301,11 @@ impl CustomOptionCallbacks for GraphConfig {
                 descriptor.name
             )));
         }
-        let declared = config.catalog.take().map(normalize_catalog).transpose()?;
+        let declared = config
+            .catalog
+            .take()
+            .map(|catalog| normalize_catalog(catalog, false))
+            .transpose()?;
         config.path = admit_local_path(context, &config.path)?;
         let path = Path::new(&config.path);
         let generation = next_generation()?;
@@ -340,7 +354,7 @@ fn next_generation() -> Result<u64> {
         .map_err(|_| Error::internal("QW_CONFIG: Configuration generation exhausted"))
 }
 
-fn normalize_catalog(labels: BTreeMap<String, BTreeMap<String, String>>) -> Result<GraphCatalog> {
+fn normalize_catalog(labels: DeclaredCatalog, kind_qualified: bool) -> Result<GraphCatalog> {
     fn check_name(name: &str) -> Result<()> {
         if !is_identifier(name) {
             return Err(Error::invalid_input(
@@ -353,7 +367,19 @@ fn normalize_catalog(labels: BTreeMap<String, BTreeMap<String, String>>) -> Resu
     labels
         .into_iter()
         .map(|(label, properties)| {
-            check_name(&label)?;
+            let name = if kind_qualified {
+                match label.split_once(':') {
+                    Some(("node" | "relationship", name)) => name,
+                    _ => {
+                        return Err(Error::invalid_input(
+                            "QW_CONFIG: Remote catalog entries require node: or relationship: prefixes",
+                        ));
+                    }
+                }
+            } else {
+                &label
+            };
+            check_name(name)?;
             let fields = properties
                 .into_iter()
                 .map(|(name, ty)| {

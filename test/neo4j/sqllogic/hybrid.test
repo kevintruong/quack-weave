@@ -1,0 +1,55 @@
+# name: test/neo4j/hybrid.test
+# description: Bind remote graph parameters and declared scalar GRAPH_TABLE projections
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_NEO4J_FIXTURE_ENDPOINT UNSET_QW_NEO4J_FIXTURE_ENDPOINT
+
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_enable_remote_graphs = true;
+
+statement ok
+SET GLOBAL qw_neo4j_config = '{"alias":"remote","endpoint":"{QW_NEO4J_FIXTURE_ENDPOINT}","database":"neo4j","credential_ref":"fixture","timeout_ms":5000,"max_response_bytes":1024}';
+
+statement error
+SELECT * FROM GRAPH_TABLE (remote MATCH (a:Thing) COLUMNS (a.id AS id));
+----
+QW_SCHEMA: Catalog metadata unavailable for this graph generation
+
+query I
+SELECT id FROM qw_query('remote', 'cypher', 'RETURN $id AS id', schema := 'id BIGINT', bindings := {'id': 9007199254740993::BIGINT});
+----
+9007199254740993
+
+statement error
+SET GLOBAL qw_neo4j_config = '{"alias":"remote","endpoint":"{QW_NEO4J_FIXTURE_ENDPOINT}","database":"neo4j","credential_ref":"fixture","timeout_ms":5000,"max_response_bytes":1024,"catalog":{"Thing":{"id":"BIGINT"}}}';
+----
+QW_CONFIG: Remote catalog entries require node: or relationship: prefixes
+
+statement ok
+SET GLOBAL qw_neo4j_config = '{"alias":"remote","endpoint":"{QW_NEO4J_FIXTURE_ENDPOINT}","database":"neo4j","credential_ref":"fixture","timeout_ms":5000,"max_response_bytes":1024,"catalog":{"node:Thing":{"id":"BIGINT"},"relationship:Thing":{"id":"VARCHAR"}}}';
+
+statement error
+SELECT * FROM GRAPH_TABLE (remote MATCH (a:Thing) COLUMNS (a.unknown AS unknown));
+----
+QW_SCHEMA: Unknown or unsupported graph projection
+
+query TT
+EXPLAIN (FORMAT JSON) SELECT src, edge FROM GRAPH_TABLE (
+  remote MATCH (a:Thing)-[e:Thing]->(b:Thing)
+  WHERE b.id = 2 COLUMNS (a.id AS src, e.id AS edge)
+);
+----
+physical_plan	<REGEX>:.*"Graph Provider": "Neo4j"[^}]*"Graph Operation": "Pattern scan".*
+
+query IT
+SELECT src, edge FROM GRAPH_TABLE (
+  remote MATCH (a:Thing)-[e:Thing]->(b:Thing)
+  WHERE b.id = 2 COLUMNS (a.id AS src, e.id AS edge)
+) ORDER BY src, edge;
+----
+10	kept

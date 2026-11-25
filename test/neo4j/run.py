@@ -34,7 +34,19 @@ def scalar(type_name, value):
     return {"$type": type_name, "_value": value}
 
 
+BINDING_QUERY = "RETURN $id AS id"
+HYBRID_QUERY = (
+    "MATCH (a:Thing)-[e:Thing]->(b:Thing) "
+    "RETURN a.id AS qw_col0, e.id AS qw_col1, b.id AS qw_col2"
+)
+
 RESPONSES = {
+    BINDING_QUERY: rows(["id"], [[scalar("Integer", "9007199254740993")]]),
+    HYBRID_QUERY: rows(
+        ["qw_col0", "qw_col1", "qw_col2"],
+        [[scalar("Integer", "10"), scalar("String", "kept"), scalar("Integer", "2")],
+         [scalar("Integer", "20"), scalar("String", "discarded"), scalar("Integer", "3")]],
+    ),
     "RETURN 9007199254740993 AS id, 'fixture' AS title, 2.5 AS score, true AS ready, null AS missing": rows(
         ["id", "title", "score", "ready", "missing"],
         [[scalar("Integer", "9007199254740993"), scalar("String", "fixture"),
@@ -106,9 +118,10 @@ def main():
                 if not 0 < length <= 8192:
                     raise ValueError("unsupported request shape")
                 request = json.loads(self.rfile.read(length))
-                if not isinstance(request.get("parameters", {}), dict):
-                    raise ValueError("invalid parameters")
                 statement = request["statement"]
+                expected = {"id": scalar("Integer", "9007199254740993")} if statement == BINDING_QUERY else {}
+                if request.get("parameters", {}) != expected:
+                    raise ValueError("unexpected parameters")
                 response = RESPONSES[statement]
             except (AttributeError, KeyError, TypeError, ValueError):
                 self.reject("unexpected query request")

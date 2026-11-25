@@ -78,7 +78,7 @@ pub fn entrypoint(extension: &Extension) -> Result<()> {
                 option: "qw_neo4j_config",
                 source: ProviderSource::RemoteEndpoint,
                 unknown_alias_error: None,
-                accepts_declared_catalog: false,
+                accepts_declared_catalog: true,
                 supports_timeout: true,
                 rewrite: ProviderRewrite::Disabled,
             },

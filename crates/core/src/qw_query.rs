@@ -56,6 +56,8 @@ static CONFIG_GENERATION: AtomicU64 = AtomicU64::new(0);
 /// Label and property names with their graph logical types, captured at registration.
 pub type GraphCatalog = BTreeMap<String, Vec<(String, String)>>;
 
+type DeclaredCatalog = BTreeMap<String, BTreeMap<String, String>>;
+
 /// Registration-time input sizes for DuckDB's cost model. A labeled match
 /// can emit fewer rows than its storage table or its provider-wide population.
 #[derive(Debug, Deserialize, Serialize)]
@@ -393,7 +395,7 @@ struct ConfigInput {
     timeout_ms: Option<u64>,
     max_batch_bytes: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    catalog: Option<BTreeMap<String, BTreeMap<String, String>>>,
+    catalog: Option<DeclaredCatalog>,
 }
 
 impl ConfigInput {
@@ -731,12 +733,13 @@ impl TableFunctionCallbacks for GraphQuery {
         }
         let language = GraphLanguage::parse(&dialect)?;
         let (provider, config) = self.providers.resolve_alias(context, &alias)?;
-        if provider.descriptor.source == ProviderSource::RemoteEndpoint
+        let remote = provider.descriptor.source == ProviderSource::RemoteEndpoint;
+        if remote
             && (!matches!(language, GraphLanguage::Cypher)
-                || self.kind != GraphQueryKind::DeclaredSchema)
+                || self.kind != GraphQueryKind::DeclaredSchema && fragment.is_none())
         {
             return Err(Error::invalid_input(
-                "QW_ARGUMENT: Remote graph reads require qw_query with an explicit Cypher schema",
+                "QW_ARGUMENT: Remote graph reads require GRAPH_TABLE or qw_query with an explicit Cypher schema",
             ));
         }
         let backend = &provider.backend;
@@ -790,14 +793,20 @@ impl TableFunctionCallbacks for GraphQuery {
                     "QW_SCHEMA: Catalog metadata unavailable for this graph generation",
                 )
             })?;
-            backend
-                .projection(catalog, &cypher)
-                .map_err(|err| match err {
-                    BackendError::Schema => {
-                        Error::invalid_input("QW_SCHEMA: Unknown or unsupported graph projection")
-                    }
-                    other => backend_error(other),
-                })?
+            let projection = if remote {
+                fragment
+                    .as_ref()
+                    .ok_or(BackendError::Schema)
+                    .and_then(|fragment| fragment.declared_projection(catalog))
+            } else {
+                backend.projection(catalog, &cypher)
+            };
+            projection.map_err(|err| match err {
+                BackendError::Schema => {
+                    Error::invalid_input("QW_SCHEMA: Unknown or unsupported graph projection")
+                }
+                other => backend_error(other),
+            })?
         };
         // A Relate declaration can claim BIGINT for a stored string. Pushing the
         // filter could hide a conversion error. Only its observed, kind-qualified
@@ -852,6 +861,15 @@ impl TableFunctionCallbacks for GraphQuery {
                     Error::invalid_input("QW_ARGUMENT: Expected bound graph parameter values")
                 })?,
             )?
+        } else if let Some(arg) = args.arg_by_name("bindings")? {
+            let bindings = arg.value()?.ok_or_else(|| {
+                Error::invalid_input("QW_ARGUMENT: Expected bound graph parameter values")
+            })?;
+            if bindings.is_null()? {
+                Vec::new()
+            } else {
+                parameters::from_struct(context, &bindings)?
+            }
         } else {
             Vec::new()
         };
@@ -1013,6 +1031,11 @@ pub fn register_query(
             .param(FunctionParameter::new::<String>("dialect"))
             .param(FunctionParameter::new::<String>("query"))
             .param(FunctionParameter::new::<String>("schema").kind(FunctionParameterKind::Named))
+            .param(
+                FunctionParameter::new::<duckdb_neo::types::Any>("bindings")
+                    .default_value(Option::<String>::None)
+                    .kind(FunctionParameterKind::Named),
+            )
             .documentation(
                 FunctionDocumentationBuilder::new()
                     .description(description)

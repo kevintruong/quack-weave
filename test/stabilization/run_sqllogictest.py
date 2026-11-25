@@ -157,7 +157,9 @@ def main():
         }
         test_dir = HERE / "sqllogic"
         if args.without_gql:
-            run_cases(unittest, scratch, variables, [test_dir / "feature_off.test", test_dir / "remote_policy.test"])
+            run_cases(unittest, scratch, variables, [test_dir / name for name in (
+                "feature_off.test", "remote_policy.test", "declared_bindings.test",
+            )])
             return
 
         duckgql_graph = scratch / "duckgql.lbdb"
@@ -189,7 +191,7 @@ def main():
             "reads.test", "gql_compatibility.test", "usage_relations.test", "usage_binding.test",
             "usage_boundary.test", "air_routes_fixture.test", "graph_metadata.test",
             "graph_entry.test", "graph_table.test", "graph_aggregate_pushdown.test", "table_watchlist.test", "hybrid_public.test",
-            "graph_parameters.test", "graph_values.test",
+            "graph_parameters.test", "declared_bindings.test", "graph_values.test",
             "bind.test", "admission.test", "scan.test", "host_access.test", "remote_policy.test", "limits.test",
             "timeout.test_slow", "artifact.test",
             "duckgql_admission.test", "duckgql_aggregates.test", "duckgql_basic.test",

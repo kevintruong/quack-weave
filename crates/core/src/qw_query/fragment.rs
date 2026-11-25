@@ -2,7 +2,7 @@
 //! alphabet as the grammar, so the versioned descriptor needs no quoting rules.
 use std::collections::HashMap;
 
-use super::{GraphPopulations, is_identifier};
+use super::{BackendError, ColumnSpec, GraphCatalog, GraphPopulations, ScalarType, is_identifier};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum EntityKind {
@@ -100,6 +100,51 @@ impl GraphFragment {
             entities,
             slots,
         })
+    }
+
+    /// Infer a remote scalar projection from this verified fragment and its catalog.
+    pub(super) fn declared_projection(
+        &self,
+        catalog: &GraphCatalog,
+    ) -> Result<Vec<ColumnSpec>, BackendError> {
+        if self.slots.is_empty() {
+            return Ok(vec![ColumnSpec {
+                name: "qw_row".to_owned(),
+                data_type: ScalarType::BigInt,
+            }]);
+        }
+        self.slots
+            .iter()
+            .enumerate()
+            .map(|(index, slot)| {
+                let entity = &self.entities[slot.entity];
+                if !entity.unambiguous {
+                    return Err(BackendError::Schema);
+                }
+                let kind = match entity.kind {
+                    EntityKind::Node => "node",
+                    EntityKind::Edge => "relationship",
+                };
+                let fields = catalog
+                    .get(&format!("{kind}:{}", entity.label))
+                    .ok_or(BackendError::Schema)?;
+                let (_, field_type) = fields
+                    .iter()
+                    .find(|(name, _)| name == &slot.field)
+                    .ok_or(BackendError::Schema)?;
+                let data_type = match field_type.as_str() {
+                    "BOOL" => ScalarType::Boolean,
+                    "INT64" => ScalarType::BigInt,
+                    "DOUBLE" => ScalarType::Double,
+                    "STRING" => ScalarType::Varchar,
+                    _ => return Err(BackendError::Schema),
+                };
+                Ok(ColumnSpec {
+                    name: format!("qw_col{index}"),
+                    data_type,
+                })
+            })
+            .collect()
     }
 
     pub(super) fn pattern(&self) -> &str {

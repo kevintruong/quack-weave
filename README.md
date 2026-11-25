@@ -137,19 +137,29 @@ SET GLOBAL qw_neo4j_config = '{
   "database":"neo4j",
   "credential_ref":"routes",
   "timeout_ms":5000,
-  "max_response_bytes":1048576
+  "max_response_bytes":1048576,
+  "catalog":{"node:airport":{"code":"VARCHAR"}}
 }';
 
 SELECT destination
 FROM qw_query(
     'routes_remote', 'cypher',
-    $$MATCH (o:airport)-[:route]->(d:airport) WHERE o.code = 'OSL'
+    $$MATCH (o:airport)-[:route]->(d:airport) WHERE o.code = $origin
       RETURN d.code AS destination$$,
-    schema := 'destination VARCHAR'
+    schema := 'destination VARCHAR', bindings := {'origin': 'OSL'}
+);
+
+SELECT destination
+FROM GRAPH_TABLE (
+    routes_remote MATCH (o:airport)-[e:route]->(d:airport)
+    WHERE o.code = 'OSL' COLUMNS (d.code AS destination)
 );
 ```
 
 The adapter accepts one admitted read and returns typed scalar columns from a bounded HTTPS response.
+The optional `bindings` struct supplies scalar values separately from the Cypher text. `GRAPH_TABLE`
+uses a declared `catalog` with `node:Label` and `relationship:TYPE` keys and scalar DuckDB types for
+referenced properties. DuckDB evaluates the SQL projections, filters, joins, and aggregations.
 `RESET GLOBAL qw_enable_remote_graphs` revokes access for new scans. Run
 `make mvp2-neo4j-test DUCKDB_UNITTEST=/path/to/duckdb-v2.0.1/unittest` to exercise the SQLLogic
 suite against a local TLS fixture with dummy credentials.

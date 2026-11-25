@@ -9,6 +9,8 @@ use duckdb_neo::{
 };
 use serde::{Deserialize, Serialize};
 
+use super::DeclaredCatalog;
+
 const ENABLE_REMOTE: &str = "qw_enable_remote_graphs";
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -100,6 +102,8 @@ pub(super) struct RemoteConfig {
     timeout_ms: u64,
     max_response_bytes: usize,
     pub(super) max_batch_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) catalog: Option<DeclaredCatalog>,
 }
 
 impl RemoteConfig {
