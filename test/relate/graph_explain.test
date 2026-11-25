@@ -71,6 +71,13 @@ EXPLAIN (ANALYZE, FORMAT JSON) SELECT id FROM edges JOIN watch USING(id);
 ----
 analyzed_plan	<REGEX>:.*"Graph Operation": "Optional runtime prefilter"[^}]*"DuckDB Residual": "SQL join".*
 
+# The graph is the preserved side of an outer join. The scan must also explain
+# the ordinary read when no execution-local key filter was planned.
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT id FROM edges LEFT JOIN watch USING(id);
+----
+analyzed_plan	<REGEX>:.*"Graph Operation": "Pattern scan"[^}]*"DuckDB Residual": "SQL join"[^}]*"Fallback Reason": "No eligible runtime key filter".*
+
 statement ok
 SET GLOBAL qw_relate_config = '{"alias":"routes","path":"{QW_RELATE}","max_batch_bytes":65536}';
 
