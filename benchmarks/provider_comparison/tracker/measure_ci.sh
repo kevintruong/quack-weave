@@ -43,12 +43,16 @@ import json, sys
 from pathlib import Path
 p = Path(sys.argv[1])
 record = json.loads((p / "record.json").read_text())
+if record["status"] == "regression":
+    series = ", ".join(r["series"] for r in record["regressions"])
+    print(f"::error::Latency gate for {p.name} flagged {series}. See the run summary for timings.")
+else:
+    print(f"::error::Benchmark measurement or verification failed for {p.name}")
 if record["status"] == "not_measured":
     (p / "snapshot.json").unlink(missing_ok=True)
     record["status"] = "failed"
     (p / "record.json").write_text(json.dumps(record) + "\n")
 PY
-        echo "::error::Benchmark failed for $sha"
         result=1
     fi
 done

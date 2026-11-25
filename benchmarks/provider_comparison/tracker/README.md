@@ -8,6 +8,18 @@ Use this tracker to measure the client-visible cost of submitting a graph query 
 | Graph-local equality, outer SQL equality, equality through a view | DuckDB SQL with `GRAPH_TABLE` | CSV result oracle and prior QuackWeave snapshots |
 | Literal watchlist join, DuckDB table watchlist join, full count and checksum | DuckDB SQL with `GRAPH_TABLE` | CSV result oracle and prior QuackWeave snapshots |
 
+### View CI benchmark tables
+
+Open a **CI** run and select **Summary**. Each measured commit has tables for standalone and hybrid workloads, including sample counts, median (p50) and p95 latency in milliseconds. The standalone ratio divides the QuackWeave median by the same provider's direct Cypher median. A regression report opens with the flagged series, their prior and current timings, and percentage changes. [CI runs](https://github.com/kevintruong/quack-weave/actions/workflows/CI.yml)
+
+The `benchmark-history` branch displays the latest published main run on its front page. For an individual commit, open `main/<commit>/<run>-<attempt>/` or `pull_request/<commit>/<run>-<attempt>/`. Each new attempt has a rendered README beside its JSON evidence. PRs and late-finishing older runs preserve the latest main report. [Latest main report](https://github.com/kevintruong/quack-weave/tree/benchmark-history)
+
+To display an earlier attempt, download its `qw-benchmark-…` artifact or open a local checkout of the archive, then render the folder containing `record.json`.
+
+```sh
+python3 benchmarks/provider_comparison/tracker/ci.py report path/to/attempt > benchmark.md
+```
+
 ### Full SF1 baseline
 
 The historical protocol 1 run on November 25, 2026 used the 3,809,607-edge creator projection and release binary `a4cb4aa8b23d` on macOS arm64. All 30 series completed, yielding 600 verified hot observations across four alternating blocks. The tables give warm p50 times in milliseconds. The snapshot also contains p95, per-process setup and RSS, and every individual timing. [Raw snapshot](sf1.json)

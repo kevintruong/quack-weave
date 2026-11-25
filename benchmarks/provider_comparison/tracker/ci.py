@@ -114,6 +114,66 @@ def judge(current, previous, percent, floor_ms):
             "baseline_sha": previous["workspace_head"], "thresholds": thresholds, "regressions": regressions}
 
 
+def report_label(value):
+    # History can include fork PRs. Render plain identifiers from the evidence.
+    if not isinstance(value, str) or not re.fullmatch(r"[a-zA-Z0-9_./ -]+", value):
+        raise ValueError("Invalid benchmark report label")
+    return value
+
+
+def markdown_report(record, snapshot):
+    sha = checked_sha(record["commit"])
+    status = record["status"]
+    if status not in RESULTS:
+        raise ValueError("Unknown benchmark status")
+    lines = [f"### Benchmark `{sha[:12]}` · {status}", ""]
+    if status in {"failed", "not_measured"}:
+        return "\n".join([*lines, "No verified timing snapshot is available.", ""])
+    if not isinstance(snapshot, dict) or snapshot["workspace_head"] != sha:
+        raise ValueError("Snapshot identifies a different source commit")
+    rows = snapshot["summary"]
+    if any(r["scope"] not in {"standalone", "hybrid"} for r in rows):
+        raise ValueError("Unknown benchmark scope")
+    environment = snapshot.get("ci_runner", {})
+    if not isinstance(environment, dict):
+        raise ValueError("Invalid runner metadata")
+    runner = report_label(environment.get("QW_RUNNER_CLASS", snapshot["machine"]))
+    lines.extend([f"{runner} · protocol {snapshot['protocol']:d} · {snapshot['edge_count']:,d} edges · "
+                  f"{len(rows)} series · {sum(r['n'] for r in rows):,d} warm samples.", ""])
+    if record.get("baseline_sha"):
+        lines.extend([f"Compared with main commit `{checked_sha(record['baseline_sha'])[:12]}`.", ""])
+    elif status == "baseline":
+        lines.extend(["First compatible baseline for this runner and protocol.", ""])
+    if "thresholds" in record:
+        thresholds = record["thresholds"]
+        lines.extend([f"The gate flags a series when p50 and p95 both rise by at least {thresholds['percent']:g}% "
+                      f"and p50 increases by at least {thresholds['floor_ms']:g} ms.", ""])
+
+    regressions = record.get("regressions", [])
+    if regressions:
+        lines.extend(["#### Slower than baseline", "",
+                      "| Series | Prior p50 (ms) | Current p50 (ms) | Change | Prior p95 (ms) | Current p95 (ms) | Change |",
+                      "|---|---:|---:|---:|---:|---:|---:|"])
+        for r in regressions:
+            old50, new50 = r["old_p50_ms"], r["new_p50_ms"]
+            old95, new95 = r["old_p95_ms"], r["new_p95_ms"]
+            lines.append(f"| {report_label(r['series'])} | {old50:,.3f} | {new50:,.3f} | {(new50/old50-1):+.1%} "
+                         f"| {old95:,.3f} | {new95:,.3f} | {(new95/old95-1):+.1%} |")
+        lines.append("")
+
+    for scope, title in (("standalone", "Standalone graph queries"), ("hybrid", "Hybrid SQL and graph queries")):
+        lines.extend([f"#### {title}", "",
+                      "| Provider | Route | Workload | Samples | p50 (ms) | p95 (ms) | p50 / direct |",
+                      "|---|---|---|---:|---:|---:|---:|"])
+        for row in rows:
+            if row["scope"] == scope:
+                keys = " | ".join(report_label(row[key]) for key in ("provider", "route", "case"))
+                ratio = f"{row['qw_over_direct']:.2f}×" if row.get("qw_over_direct") is not None else "—"
+                lines.append(f"| {keys} | {row['n']:d} | {row['p50_ms']:,.3f} | {row['p95_ms']:,.3f} | {ratio} |")
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -122,6 +182,8 @@ def main():
     init = sub.add_parser("init")
     init.add_argument("folder", type=Path)
     init.add_argument("commits", nargs="+")
+    report = sub.add_parser("report", help="Render an archived commit attempt as Markdown")
+    report.add_argument("folder", type=Path)
     check = sub.add_parser("judge")
     check.add_argument("folder", type=Path)
     check.add_argument("--ancestor")
@@ -137,6 +199,10 @@ def main():
             folder = args.folder / checked_sha(sha)
             folder.mkdir(parents=True, exist_ok=True)
             (folder / "record.json").write_text(json.dumps({"commit": sha, "status": "not_measured"}) + "\n")
+    elif args.cmd == "report":
+        record = json.loads((args.folder / "record.json").read_text())
+        path = args.folder / "snapshot.json"
+        print(markdown_report(record, json.loads(path.read_text()) if path.exists() else None), end="")
     else:
         sha = checked_sha(args.folder.name)
         snapshot_file = args.folder / "snapshot.json"
@@ -157,12 +223,7 @@ def main():
         record = {"commit": sha, **result}
         (args.folder / "record.json").write_text(json.dumps(record, indent=2) + "\n")
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
-            print(f"### Benchmark `{sha[:12]}` — {result['status']}", file=summary)
-            print(f"\n{len(snapshot['summary'])} verified series. Compared with "
-                  + (result["baseline_sha"] or "no compatible archived main ancestor (seed run)") + ".", file=summary)
-            for r in result["regressions"]:
-                print(f"\n- {r['series']} p50 {r['old_p50_ms']:.3f} → {r['new_p50_ms']:.3f} ms, "
-                      f"p95 {r['old_p95_ms']:.3f} → {r['new_p95_ms']:.3f} ms", file=summary)
+            summary.write(markdown_report(record, snapshot))
         return int(result["status"] == "regression")
 
 

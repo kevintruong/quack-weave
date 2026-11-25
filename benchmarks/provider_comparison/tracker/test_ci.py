@@ -93,6 +93,50 @@ class TrackerCI(unittest.TestCase):
         with self.assertRaises(ValueError):
             ci.judge(past, past, float("nan"), .25)
 
+    def test_judge_displays_and_archives_the_same_tables_on_regression(self):
+        previous = json.loads((HERE / "sf1.json").read_text())
+        current = deepcopy(previous)
+        sha = "b" * 40
+        current["workspace_head"] = sha
+        slow = next(r for r in current["summary"] if r["case"] == "full_scan_aggregate")
+        slow.update(p50_ms=slow["p50_ms"] * 2, p95_ms=slow["p95_ms"] * 2)
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / sha
+            folder.mkdir()
+            summary = Path(tmp) / "summary.md"
+            (folder / "snapshot.json").write_text(json.dumps(current))
+            env = {k: "fixture" for k in ("QW_RUNNER_CLASS", "QW_CPU", "QW_CORES", "QW_MEMORY")}
+            with (patch.dict(os.environ, {**env, "GITHUB_STEP_SUMMARY": str(summary)}, clear=True),
+                  patch.object(sys, "argv", ["ci.py", "judge", str(folder)]),
+                  patch.object(ci, "find_baseline", return_value=previous)):
+                self.assertEqual(ci.main(), 1)
+            report = summary.read_text()
+            self.assertIn("| Provider | Route | Workload | Samples |", report)
+            self.assertIn("+100.0%", report)
+            self.assertIn("600 warm samples", report)
+            for r in current["summary"]:
+                self.assertEqual(report.count(f"| {r['provider']} | {r['route']} | {r['case']} | {r['n']} |"), 1)
+            record = json.loads((folder / "record.json").read_text())
+            base = f"main/{sha}/100-1/"
+            files = {base + name: (folder / name).read_bytes() for name in ("record.json", "snapshot.json")}
+            archive.add_reports(files)
+            self.assertEqual(files[base + "README.md"].decode(), report)
+            output = subprocess.check_output([sys.executable, HERE / "ci.py", "report", folder], text=True)
+            self.assertEqual(output, report)
+
+    def test_reports_show_seed_and_missing_measurements(self):
+        sample = json.loads((HERE / "sf1.json").read_text())
+        sha = sample["workspace_head"]
+        seed = {"commit": sha, **ci.judge(sample, None, 20, .25)}
+        self.assertIn("First compatible baseline", ci.markdown_report(seed, sample))
+        for status in ("failed", "not_measured"):
+            output = ci.markdown_report({"commit": sha, "status": status}, None)
+            self.assertIn(status, output)
+            self.assertNotIn("| Provider |", output)
+        sample["summary"][0]["case"] = "[link](https://example.org)"
+        with self.assertRaises(ValueError):
+            ci.markdown_report(seed, sample)
+
     def test_rejects_misnamed_or_inconsistent_evidence(self):
         sha = "a" * 40
         record = {"commit": sha, "status": "passed"}
@@ -153,6 +197,28 @@ class TrackerCI(unittest.TestCase):
                 candidate["fixture"]["files"]["edges.csv"]["sha256"] = "different logical input"
                 self.assertIsNone(ci.find_baseline(candidate, tip))
 
+    def test_latest_main_table_survives_late_publication_and_pr_runs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo, remote = Path(tmp, "work"), Path(tmp, "history.git")
+            init_repo(repo)
+            git("init", "--bare", "-q", str(remote))
+            with chdir(repo):
+                def publish(event, run, attempt, sha):
+                    files = evidence(sha, "failed", event=event, run=run, attempt=attempt)
+                    archive.add_reports(files)
+                    archive.append(files, remote.as_uri(), main_report=(
+                        f"main/{sha}/{run}-{attempt}/README.md" if event == "main" else None))
+
+                publish("main", 100, 1, "a" * 40)
+                publish("main", 100, 2, "a" * 40)
+                publish("main", 99, 3, "b" * 40)
+                publish("pull_request", 101, 1, "c" * 40)
+                latest = git("show", f"{archive.REF}:README.md", cwd=remote)
+                self.assertIn(f"main/{'a' * 40}/100-2/", latest)
+                self.assertIn("No verified timing snapshot", latest)
+                self.assertNotIn("99-3", latest)
+                self.assertNotIn("101-1", latest)
+
     def test_concurrent_writers_keep_both_attempts(self):
         with tempfile.TemporaryDirectory() as tmp:
             remote = Path(tmp, "remote.git")
@@ -202,13 +268,16 @@ class TrackerCI(unittest.TestCase):
                     if cmd[-1].endswith("/0/zip"):
                         return pack({"commits.json": [first, head]})
                     self.assertTrue(cmd[-1].endswith("/2/zip"))
-                    return pack({f"{head}/record.json": {"commit": head, "status": "passed"},
-                                 f"{head}/snapshot.json": {"workspace_head": head}})
+                    sample = json.loads((HERE / "sf1.json").read_text())
+                    sample["workspace_head"] = head
+                    return pack({f"{head}/record.json": {"commit": head, "status": "baseline"},
+                                 f"{head}/snapshot.json": sample})
                 with patch.dict(os.environ, environment), patch.object(subprocess, "check_output", github_or_git):
                     archive.main()
-                for sha, status in ((first, "not_measured"), (head, "passed")):
+                for sha, status in ((first, "not_measured"), (head, "baseline")):
                     key = f"{archive.REF}:main/{sha}/90-2/record.json"
                     self.assertEqual(json.loads(git("show", key, cwd=remote))["status"], status)
+                self.assertIn("30 series", git("show", f"{archive.REF}:README.md", cwd=remote))
 
 
 if __name__ == "__main__":

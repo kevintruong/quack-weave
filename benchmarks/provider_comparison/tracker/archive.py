@@ -1,4 +1,4 @@
-"""Append inert JSON from one completed Actions run to the benchmark-history ref."""
+"""Archive JSON evidence and render benchmark tables from one completed Actions run."""
 import io
 import json
 import os
@@ -10,7 +10,7 @@ import tempfile
 import time
 import zipfile
 
-from ci import RESULTS, checked_sha
+from ci import RESULTS, checked_sha, markdown_report
 
 
 REF = "refs/heads/benchmark-history"
@@ -75,7 +75,40 @@ def complete_evidence(expected, files, event, run_id, attempt, head):
             json.dumps(record, separators=(",", ":")) + "\n").encode()
 
 
-def append(files, remote="origin"):
+def add_reports(files):
+    for path in list(files):
+        if not path.endswith("/record.json"):
+            continue
+        folder = path.removesuffix("record.json")
+        record = json.loads(files[path])
+        snapshot = files.get(folder + "snapshot.json")
+        try:
+            report = markdown_report(record, json.loads(snapshot) if snapshot else None)
+        except (KeyError, TypeError, ValueError, ArithmeticError):
+            # Keep the original evidence even when an older or invalid schema cannot render.
+            report = (f"### Benchmark `{checked_sha(record['commit'])[:12]}` · {record['status']}\n\n"
+                      "Timing tables are unavailable for this evidence. See the archived JSON files.\n")
+            print(f"Could not render timing tables for {path}")
+        files[folder + "README.md"] = report.encode()
+
+
+def update_latest_main(report_path, env):
+    # All main reports are indexed before this comparison, including after a push retry.
+    # Choose the event head within its run and order runs numerically across completions.
+    def attempt_key(path):
+        return tuple(map(int, path.split("/")[2].split("-")))
+
+    paths = git("ls-files", "--", "main/*/*/README.md", env=env).decode().splitlines()
+    if attempt_key(report_path) != max(map(attempt_key, paths)):
+        return
+    folder = report_path.rsplit("/", 1)[0]
+    header = f"# Latest main benchmark report\n\n[Archived attempt and raw data]({folder}/)\n\n"
+    body = git("show", ":" + report_path, env=env)
+    blob = git("hash-object", "-w", "--stdin", data=header.encode() + body + b"\n")
+    git("update-index", "--add", "--cacheinfo", "100644", blob.decode(), "README.md", env=env)
+
+
+def append(files, remote="origin", *, main_report=None):
     # Separate indexes and ordinary fast-forward pushes preserve concurrent runs.
     # Nothing from an artifact is checked out, imported, or used as a Git ref.
     with tempfile.TemporaryDirectory() as tmp:
@@ -94,13 +127,16 @@ def append(files, remote="origin"):
                 blob = git("hash-object", "-w", "--stdin", data=content)
                 previous = git("ls-files", "--stage", "--", name, env=env)
                 if previous:
-                    if previous.split()[1] != blob:
+                    # A replay keeps the report produced at publication time.
+                    if not name.endswith("/README.md") and previous.split()[1] != blob:
                         raise ValueError(f"Refusing to replace archived measurement {name}")
                     continue
                 git("update-index", "--add", "--cacheinfo", "100644", blob.decode(), name, env=env)
                 changed = True
             if not changed:
                 return
+            if main_report in files:
+                update_latest_main(main_report, env)
             tree = git("write-tree", env=env).decode()
             commit = git("commit-tree", tree, *(["-p", tip] if tip else []),
                          "-m", "Append verified benchmark observations and run outcomes", env=env).decode()
@@ -153,7 +189,8 @@ def main():
     reachable = set(git("rev-list", head).decode().splitlines())
     if head not in expected or expected - reachable:
         raise ValueError("Commit manifest disagrees with the triggering source history")
-    append(files)
+    add_reports(files)
+    append(files, main_report=f"main/{head}/{run_id}-{attempt}/README.md" if event == "main" else None)
     print(f"Archived {len(files)} files for run {run_id}, attempt {attempt}.")
 
 

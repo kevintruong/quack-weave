@@ -118,7 +118,7 @@ Run the integration suite with the pinned DuckDB SQLLogic runner and Ladybug CLI
 make mvp2-relate-test DUCKDB_UNITTEST=/path/to/duckdb-v2.0.1/unittest LBUG=/path/to/lbug-v0.22.3
 ```
 
-The provider benchmark compares Ladybug and RelateDB through this same extension on matched LSQB message–creator graphs. [Results notebook](benchmarks/provider_comparison/provider_benchmark.ipynb) · [Reproduction instructions](benchmarks/provider_comparison/README.md)
+The provider benchmark compares Ladybug and RelateDB through this same extension on matched LSQB message–creator graphs. [Results notebook](benchmarks/provider_comparison/provider_benchmark.ipynb) · [Reproduction instructions](benchmarks/provider_comparison/README.md) [Latest main benchmark table](https://github.com/kevintruong/quack-weave/tree/benchmark-history) · [CI benchmark reports](benchmarks/provider_comparison/tracker/README.md#view-ci-benchmark-tables)
 
 ### Standalone graph queries
 
