@@ -1,0 +1,34 @@
+# name: test/relate/bound_aggregate.test
+# description: Delegate aggregates only for validated SQL/PGQ fragments.
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_RELATE UNSET_QW_RELATE
+
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"routes","path":"{QW_RELATE}"}';
+
+# An authored read can contain the same internal-looking aliases as a structured scan.
+statement ok
+CREATE VIEW authored AS SELECT * FROM qw_graph_query('routes','cypher',
+    'MATCH (a:airport)-[r:route]->(b:airport) RETURN r.rid AS qw_col0');
+
+query II
+SELECT count(*), sum(qw_col0 % 11) FROM authored;
+----
+3	12
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT count(*),sum(qw_col0 % 11) FROM authored;
+----
+analyzed_plan	<REGEX>:.*"name": "UNGROUPED_AGGREGATE".*"intermediate_rows": 3,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT count(*),sum(id % 11) FROM GRAPH_TABLE (
+    routes MATCH (a:airport)-[r:route]->(b:airport) COLUMNS(r.rid AS id)) g;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 1,[^{}]*"name": "QW_QUERY".*

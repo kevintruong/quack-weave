@@ -25,73 +25,28 @@ bool IsSystem(const BoundSimpleFunction &fn) {
 	return fn.GetCatalogName() == "system" && fn.GetSchemaName() == "main";
 }
 
-bool IsIdentifier(const string &s) {
-	if (s.empty() || !(StringUtil::CharacterIsAlpha(s.front()) || s.front() == '_'))
-		return false;
-	for (auto c : s) {
-		if (!(StringUtil::CharacterIsAlpha(c) || StringUtil::CharacterIsDigit(c) || c == '_'))
-			return false;
-	}
-	return true;
-}
-
-// A vertex emits at most one row per node; a directed step at most one per edge.
-bool SinglePattern(const string &pattern) {
-	if (pattern.size() < 2 || pattern.front() != '(' || pattern.back() != ')')
-		return false;
-	auto named = [](const string &text) {
-		auto parts = StringUtil::Split(text, ':');
-		return parts.size() == 2 && IsIdentifier(parts[0]) && IsIdentifier(parts[1]);
-	};
-	const auto body = pattern.substr(1, pattern.size() - 2);
-	const auto elements = StringUtil::Split(body, ")-[");
-	if (elements.size() == 1)
-		return named(body);
-	if (elements.size() != 2)
-		return false;
-	const auto tail = StringUtil::Split(elements[1], "]->(");
-	return tail.size() == 2 && named(elements[0]) && named(tail[0]) && named(tail[1]);
-}
-
-// GRAPH_TABLE lowers to a single MATCH with simple, explicitly named property projections.
-// Validate the complete return list even for direct calls to the underlying public table function.
-string GraphInput(const LogicalGet &scan, bool relate, vector<string> &columns) {
-	if (scan.parameters.size() != 3 ||
-	    scan.parameters[1].ToString() != "cypher" || scan.table_filters.HasFilters() || scan.dynamic_filters ||
-	    scan.extra_info.sample_options || scan.at_clause || scan.row_group_order_options ||
-	    !scan.scan_partition_indices.empty() || scan.source_ordinality != OrdinalityType::WITHOUT_ORDINALITY ||
-	    scan.ordinality_idx.IsValid() || !scan.projection_ids.empty() || !scan.children.empty())
+// The provider binder verifies the complete PGQ descriptor, including the
+// native projection. Authored graph text has no such binding.
+string GraphInput(const LogicalGet &scan, const BindInfo &info, bool relate, vector<string> &columns) {
+	if (scan.table_filters.HasFilters() || scan.dynamic_filters || scan.extra_info.sample_options ||
+	    scan.at_clause || scan.row_group_order_options || !scan.scan_partition_indices.empty() ||
+	    scan.source_ordinality != OrdinalityType::WITHOUT_ORDINALITY || scan.ordinality_idx.IsValid() ||
+	    !scan.projection_ids.empty() || !scan.children.empty())
 		return "";
-	auto query = scan.parameters[2].ToString();
-	auto pos = query.find(" RETURN ");
-	if (!StringUtil::StartsWith(query, "MATCH (") || pos == string::npos)
+	const auto pattern = info.options.find("qw_match");
+	const auto steps = info.options.find("qw_pattern_steps");
+	const auto projection = info.options.find("qw_pgq_projection");
+	if (pattern == info.options.end() || steps == info.options.end() || projection == info.options.end() ||
+	    (relate && steps->second.GetValue<uint64_t>() > 1))
 		return "";
-	const auto match = query.substr(0, pos);
-	// Exclude quotes, comments, predicate expressions, unions, subqueries and additional query parts.
-	if (match.find(' ', 6) != string::npos ||
-	    match.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_ ()[]:->") !=
-	        string::npos)
-		return "";
-	if (relate && !SinglePattern(match.substr(6)))
-		return "";
-	const auto outputs = StringUtil::Split(query.substr(pos + 8), ", ");
-	if (outputs.size() != scan.names.size())
-		return "";
-	for (idx_t i = 0; i < outputs.size(); ++i) {
-		const auto &expr = outputs[i];
-		if (expr == "1 AS qw_row" && scan.names[i] == "qw_row") {
-			columns.push_back(relate ? "1" : "qw_row");
-			continue;
-		}
-		const string alias = "qw_col" + std::to_string(i);
-		const auto dot = expr.find('.');
-		const auto as = expr.find(" AS ");
-		if (as == string::npos || dot >= as || expr.substr(as + 4) != alias || scan.names[i] != Identifier(alias) ||
-		    !IsIdentifier(expr.substr(0, dot)) || !IsIdentifier(expr.substr(dot + 1, as - dot - 1)))
+	for (idx_t i = 0; i < scan.names.size(); ++i) {
+		const auto slot = info.options.find("qw_property_" + std::to_string(i));
+		if (slot == info.options.end())
 			return "";
-		columns.push_back(relate ? expr.substr(0, as) : alias);
+		columns.push_back(relate ? slot->second.GetValue<string>() : scan.names[i].GetIdentifierName());
 	}
-	return relate ? match : match + " WITH " + query.substr(pos + 8);
+	const auto match = pattern->second.GetValue<string>();
+	return relate ? match : match + " WITH " + projection->second.GetValue<string>();
 }
 
 // Follow bound references through purely relational column renames (including views).
@@ -139,14 +94,14 @@ string AggregateArgument(const Expression &expr, const vector<const LogicalProje
 
 // Both bind calls must refer to the same registration. An explicit resource limit
 // also precludes changing the provider's query and output batch boundaries.
-optional_idx AggregateGeneration(ClientContext &context, LogicalGet &get, optional_idx &row_bound) {
+BindInfo GraphBindInfo(ClientContext &context, LogicalGet &get) {
 	if (!get.bind_data || !get.function.get_bind_info)
-		return optional_idx();
+		return BindInfo(ScanType::EXTERNAL);
 	TableFunctionGetBindInfoInput input(context, get.bind_data.get());
-	auto info = get.function.get_bind_info(input);
-	auto bound = info.options.find("qw_single_pattern_row_bound");
-	if (bound != info.options.end())
-		row_bound = optional_idx(bound->second.GetValue<uint64_t>());
+	return get.function.get_bind_info(input);
+}
+
+optional_idx AggregateGeneration(const BindInfo &info) {
 	auto entry = info.options.find("qw_aggregate_generation");
 	return entry == info.options.end() ? optional_idx() : optional_idx(entry->second.GetValue<uint64_t>());
 }
@@ -171,13 +126,15 @@ void PushAggregate(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &
 	auto &scan = source->Cast<LogicalGet>();
 	if (!IsSystem(scan.function) || scan.function.GetName() != "qw_graph_query")
 		return;
-	optional_idx row_bound;
-	auto generation = AggregateGeneration(input.context, scan, row_bound);
+	auto info = GraphBindInfo(input.context, scan);
+	auto generation = AggregateGeneration(info);
 	if (!generation.IsValid())
 		return;
-	const auto relate = row_bound.IsValid();
+	const auto bound = info.options.find("qw_single_pattern_row_bound");
+	const bool relate = bound != info.options.end();
+	const auto max_rows = relate ? bound->second.GetValue<uint64_t>() : 0;
 	vector<string> columns;
-	const auto graph = GraphInput(scan, relate, columns);
+	const auto graph = GraphInput(scan, info, relate, columns);
 	if (graph.empty())
 		return;
 	vector<string> fields, schema;
@@ -200,8 +157,8 @@ void PushAggregate(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &
 			if (name == "sum" && expr->GetReturnType() == LogicalType::HUGEINT && relate) {
 				// Relate promotes overflowing integer sums to FLOAT and returns zero on
 				// empty input. Prove every partial sum fits i64 before delegating it.
-				if (!divisor || (row_bound.GetIndex() && uint64_t(divisor - 1) >
-				                    uint64_t(std::numeric_limits<int64_t>::max()) / row_bound.GetIndex()))
+				if (!divisor || (max_rows && uint64_t(divisor - 1) >
+				                    uint64_t(std::numeric_limits<int64_t>::max()) / max_rows))
 					return;
 				field = "CASE WHEN count(" + arg + ") = 0 THEN NULL ELSE sum(" + arg + ") END";
 				ty = "BIGINT";
@@ -240,7 +197,7 @@ void PushAggregate(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &
 		return;
 	}
 	auto &get = replacement.plan->Cast<LogicalGet>();
-	auto rebound = AggregateGeneration(input.context, get, row_bound);
+	auto rebound = AggregateGeneration(GraphBindInfo(input.context, get));
 	if (!rebound.IsValid() || rebound.GetIndex() != generation.GetIndex())
 		return;
 	get.ClearColumnIds();
