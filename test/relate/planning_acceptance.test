@@ -1,0 +1,79 @@
+# name: test/relate/planning_acceptance.test
+# description: Compare graph-local and outer SQL property predicates, projection and fallback across providers
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_LADYBUG UNSET_QW_LADYBUG
+
+test-env QW_RELATE UNSET_QW_RELATE
+
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"lady","path":"{QW_LADYBUG}"}';
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"rel","path":"{QW_RELATE}"}';
+
+statement ok
+CREATE VIEW lady_routes AS SELECT * FROM GRAPH_TABLE (
+  lady MATCH (a:airport)-[e:route]->(b:airport) COLUMNS(e.rid AS id, e.dist AS miles)
+) g;
+
+statement ok
+CREATE VIEW rel_routes AS SELECT * FROM GRAPH_TABLE (
+  rel MATCH (a:airport)-[e:route]->(b:airport) COLUMNS(e.rid AS id, e.dist AS miles)
+) g;
+
+# The output omits id; both scans must retain a filter-only property.
+query I rowsort
+SELECT miles FROM lady_routes WHERE id=101 UNION ALL
+SELECT miles FROM rel_routes WHERE id=201;
+----
+595
+946
+
+query I rowsort
+SELECT * FROM GRAPH_TABLE (
+  lady MATCH (a:airport)-[e:route]->(b:airport) WHERE e.rid=101 COLUMNS(e.dist AS miles)
+) g UNION ALL
+SELECT * FROM GRAPH_TABLE (
+  rel MATCH (a:airport)-[e:route]->(b:airport) WHERE e.rid=201 COLUMNS(e.dist AS miles)
+) g;
+----
+595
+946
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON)
+SELECT miles FROM lady_routes WHERE id=101 UNION ALL SELECT miles FROM rel_routes WHERE id=201;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 1,[^{}]*"name": "QW_GRAPH_QUERY".*"intermediate_rows": 1,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+# A host-owned expression still observes NULL from the unprojected provider rows.
+query IT rowsort
+SELECT id, 'lady' FROM lady_routes WHERE coalesce(miles,-1)=-1
+UNION ALL SELECT id, 'rel' FROM rel_routes WHERE coalesce(miles,-1)=-1;
+----
+105	lady
+203	rel
+
+# Batch-limit registrations must keep the result conversion error visible;
+# pushing a nonexistent key into either provider could otherwise hide it.
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"lady","path":"{QW_LADYBUG}","max_batch_bytes":1}';
+
+statement error
+SELECT miles FROM lady_routes WHERE id=99999;
+----
+QW_BATCH_BUDGET
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"rel","path":"{QW_RELATE}","max_batch_bytes":1}';
+
+statement error
+SELECT miles FROM rel_routes WHERE id=99999;
+----
+QW_BATCH_BUDGET

@@ -1,0 +1,1503 @@
+{
+  "start_utc": "2026-11-25T00:51:34.884502+00:00",
+  "platform": "macOS-26.7.1-arm64-arm-64bit-Mach-O",
+  "fixture": {
+    "source_sha256": "84cd660cac88e20b627b40f2adf8de0c2c6d8693237c0d9f422469825721693f",
+    "selection": "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE m.MessageId % 1 = 0 RETURN p.PersonId AS author, m.MessageId AS mid ORDER BY author, mid",
+    "modulus": 1,
+    "files": {
+      "edges.csv": {
+        "sha256": "4d7204dd0c29cfb2f058a6bb4f870dc5805f5aa77bff2a4e8e29a86ecfb7ba2b",
+        "bytes": 106025385
+      },
+      "social.lbdb": {
+        "sha256": "e510d6d1cb9bfc5766bf24cdd8ce4fd2ceef9a1ddaf8b68454e5306a99644733",
+        "bytes": 198979584
+      },
+      "social.rl": {
+        "sha256": "d2520f1cf8cfec09bc9266075307e3144199d31cc370f05ab129ff5f8889a48f",
+        "bytes": 156323840
+      }
+    }
+  },
+  "library_sha256": "aeaf2ab89938d40c4995ca478a1543a080ad180ea988ac4ba0793805e063c5dd",
+  "extensions": {
+    "baseline": "933742d94b9f0d92d5e482fc5c0f7d9e3f33885c76e538d35d83ac8bab1a0c3a",
+    "candidate": "a4cb4aa8b23d0c60c569fe192da7ce5caf3d0724b3e6ad992f5e876af62a7133"
+  },
+  "cases": {
+    "gql_lookup": [
+      "gql",
+      "MATCH (p:Person) WHERE p.PersonId = 4398046519825 RETURN p.PersonId AS id"
+    ],
+    "gql_fanout": [
+      "gql",
+      "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId = 4398046519825 RETURN m.MessageId AS id"
+    ],
+    "cypher_fanout": [
+      "cypher",
+      "MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId = 4398046519825 RETURN m.MessageId AS id"
+    ],
+    "graph_table_where": [
+      "gql",
+      "SELECT mid FROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId = 4398046519825 COLUMNS (m.MessageId AS mid)) AS g"
+    ],
+    "table_watchlist": [
+      "gql",
+      "SELECT author, count(*), sum(mid % 1000003) FROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person)  COLUMNS (p.PersonId AS author, m.MessageId AS mid)) AS g JOIN watch USING (author) GROUP BY author ORDER BY author"
+    ],
+    "full_scan_aggregate": [
+      "gql",
+      "SELECT count(*), sum(mid % 1000003) FROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person)  COLUMNS (m.MessageId AS mid)) AS g"
+    ],
+    "outer_where": [
+      "gql",
+      "SELECT mid FROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person)  COLUMNS (p.PersonId AS author, m.MessageId AS mid)) AS g WHERE author = 4398046519825"
+    ],
+    "view_where": [
+      "gql",
+      "SELECT mid FROM planning_pairs WHERE author = 4398046519825"
+    ]
+  },
+  "expected": {
+    "all_pairs": [
+      3809607,
+      "fafb2975abd7d22860cf963a35b6b77e5779f7f3cce29e5e1008dbe366b4c85c"
+    ],
+    "gql_lookup": [
+      1,
+      "8b01ac121f147e12ecb6e29308cbbeddf445f2af83566950fc639e5766f8c5ee"
+    ],
+    "gql_fanout": [
+      6465,
+      "708658f3d570935ad72db47441f594d20ce8f4371040b098e8d7a8e7bbdd3866"
+    ],
+    "cypher_fanout": [
+      6465,
+      "708658f3d570935ad72db47441f594d20ce8f4371040b098e8d7a8e7bbdd3866"
+    ],
+    "graph_table_where": [
+      6465,
+      "708658f3d570935ad72db47441f594d20ce8f4371040b098e8d7a8e7bbdd3866"
+    ],
+    "table_watchlist": [
+      4,
+      "01a3d7ad63d6a043d82fdf808c2e5f624dd54d3ce80296c1ed794c25e4618018"
+    ],
+    "full_scan_aggregate": [
+      1,
+      "ae46a374778efb764593bed0c71541b34381c261c943f1a7d4bd265b71747622"
+    ]
+  },
+  "blocks": 2,
+  "runs": 3,
+  "workers": [
+    {
+      "block": 0,
+      "provider": "ladybug",
+      "release": "baseline",
+      "setup": {
+        "load_ms": 10.185625,
+        "register_ms": 39.316958
+      },
+      "samples": [
+        {
+          "case": "gql_lookup",
+          "iteration": 1,
+          "wall_ms": 2.465167,
+          "cpu_ms": 2.467
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 1,
+          "wall_ms": 2.598958,
+          "cpu_ms": 2.601
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 1,
+          "wall_ms": 5.301875,
+          "cpu_ms": 5.301
+        },
+        {
+          "case": "view_where",
+          "iteration": 1,
+          "wall_ms": 280.039417,
+          "cpu_ms": 662.588
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 1,
+          "wall_ms": 3.368375,
+          "cpu_ms": 3.372
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 1,
+          "wall_ms": 96.250291,
+          "cpu_ms": 472.095
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 1,
+          "wall_ms": 8.319041,
+          "cpu_ms": 15.565
+        },
+        {
+          "case": "outer_where",
+          "iteration": 1,
+          "wall_ms": 283.804875,
+          "cpu_ms": 669.472
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 2,
+          "wall_ms": 2.720791,
+          "cpu_ms": 2.723
+        },
+        {
+          "case": "view_where",
+          "iteration": 2,
+          "wall_ms": 276.054708,
+          "cpu_ms": 649.557
+        },
+        {
+          "case": "outer_where",
+          "iteration": 2,
+          "wall_ms": 272.867791,
+          "cpu_ms": 648.408
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 2,
+          "wall_ms": 7.70725,
+          "cpu_ms": 14.509
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 2,
+          "wall_ms": 93.21,
+          "cpu_ms": 466.992
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 2,
+          "wall_ms": 3.690417,
+          "cpu_ms": 3.694
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 2,
+          "wall_ms": 2.810334,
+          "cpu_ms": 2.809
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 2,
+          "wall_ms": 5.714333,
+          "cpu_ms": 5.704
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 3,
+          "wall_ms": 2.503125,
+          "cpu_ms": 2.505
+        },
+        {
+          "case": "view_where",
+          "iteration": 3,
+          "wall_ms": 277.326708,
+          "cpu_ms": 657.206
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 3,
+          "wall_ms": 93.5395,
+          "cpu_ms": 469.173
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 3,
+          "wall_ms": 3.69075,
+          "cpu_ms": 3.693
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 3,
+          "wall_ms": 7.959708,
+          "cpu_ms": 14.894
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 3,
+          "wall_ms": 2.873542,
+          "cpu_ms": 2.876
+        },
+        {
+          "case": "outer_where",
+          "iteration": 3,
+          "wall_ms": 277.635166,
+          "cpu_ms": 664.49
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 3,
+          "wall_ms": 5.086416,
+          "cpu_ms": 5.089
+        }
+      ],
+      "provider_rows": {
+        "outer_where": 3809607,
+        "view_where": 3809607
+      },
+      "failures": {}
+    },
+    {
+      "block": 0,
+      "provider": "ladybug",
+      "release": "candidate",
+      "setup": {
+        "load_ms": 7.45325,
+        "register_ms": 35.978875
+      },
+      "samples": [
+        {
+          "case": "gql_lookup",
+          "iteration": 1,
+          "wall_ms": 2.224875,
+          "cpu_ms": 2.227
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 1,
+          "wall_ms": 2.492875,
+          "cpu_ms": 2.495
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 1,
+          "wall_ms": 4.789708,
+          "cpu_ms": 4.789
+        },
+        {
+          "case": "view_where",
+          "iteration": 1,
+          "wall_ms": 3.134541,
+          "cpu_ms": 3.137
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 1,
+          "wall_ms": 2.798875,
+          "cpu_ms": 2.801
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 1,
+          "wall_ms": 93.488333,
+          "cpu_ms": 466.183
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 1,
+          "wall_ms": 7.729,
+          "cpu_ms": 14.213
+        },
+        {
+          "case": "outer_where",
+          "iteration": 1,
+          "wall_ms": 3.045375,
+          "cpu_ms": 3.048
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 2,
+          "wall_ms": 2.351458,
+          "cpu_ms": 2.353
+        },
+        {
+          "case": "view_where",
+          "iteration": 2,
+          "wall_ms": 3.101292,
+          "cpu_ms": 3.103
+        },
+        {
+          "case": "outer_where",
+          "iteration": 2,
+          "wall_ms": 2.86225,
+          "cpu_ms": 2.864
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 2,
+          "wall_ms": 7.034208,
+          "cpu_ms": 14.492
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 2,
+          "wall_ms": 94.748125,
+          "cpu_ms": 473.032
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 2,
+          "wall_ms": 3.644708,
+          "cpu_ms": 3.646
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 2,
+          "wall_ms": 2.713667,
+          "cpu_ms": 2.715
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 2,
+          "wall_ms": 5.22075,
+          "cpu_ms": 5.223
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 3,
+          "wall_ms": 2.41525,
+          "cpu_ms": 2.411
+        },
+        {
+          "case": "view_where",
+          "iteration": 3,
+          "wall_ms": 3.654292,
+          "cpu_ms": 3.654
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 3,
+          "wall_ms": 98.604292,
+          "cpu_ms": 481.428
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 3,
+          "wall_ms": 3.910458,
+          "cpu_ms": 3.913
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 3,
+          "wall_ms": 8.775167,
+          "cpu_ms": 16.291
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 3,
+          "wall_ms": 2.735166,
+          "cpu_ms": 2.737
+        },
+        {
+          "case": "outer_where",
+          "iteration": 3,
+          "wall_ms": 3.218667,
+          "cpu_ms": 3.221
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 3,
+          "wall_ms": 5.0745,
+          "cpu_ms": 5.078
+        }
+      ],
+      "provider_rows": {
+        "outer_where": 6465,
+        "view_where": 6465
+      },
+      "failures": {}
+    },
+    {
+      "block": 0,
+      "provider": "relate",
+      "release": "baseline",
+      "setup": {
+        "load_ms": 7.230791,
+        "register_ms": 7790.979375
+      },
+      "samples": [
+        {
+          "case": "gql_lookup",
+          "iteration": 1,
+          "wall_ms": 2.322541,
+          "cpu_ms": 2.41
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 1,
+          "wall_ms": 5.174458,
+          "cpu_ms": 5.258
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 1,
+          "wall_ms": 7.394333,
+          "cpu_ms": 7.478
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 1,
+          "wall_ms": 43.429583,
+          "cpu_ms": 43.518
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 1,
+          "wall_ms": 6.162667,
+          "cpu_ms": 6.226
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 1,
+          "wall_ms": 2370.810333,
+          "cpu_ms": 2368.406
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 2,
+          "wall_ms": 2491.929083,
+          "cpu_ms": 2485.909
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 2,
+          "wall_ms": 44.172042,
+          "cpu_ms": 44.269
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 2,
+          "wall_ms": 7.758708,
+          "cpu_ms": 7.855
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 2,
+          "wall_ms": 6.049916,
+          "cpu_ms": 6.109
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 2,
+          "wall_ms": 5.322834,
+          "cpu_ms": 5.398
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 2,
+          "wall_ms": 2.2425,
+          "cpu_ms": 2.323
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 3,
+          "wall_ms": 2484.551875,
+          "cpu_ms": 2482.9
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 3,
+          "wall_ms": 7.715875,
+          "cpu_ms": 7.808
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 3,
+          "wall_ms": 43.735459,
+          "cpu_ms": 43.824
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 3,
+          "wall_ms": 6.194167,
+          "cpu_ms": 6.256
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 3,
+          "wall_ms": 5.418875,
+          "cpu_ms": 5.509
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 3,
+          "wall_ms": 2.377875,
+          "cpu_ms": 2.467
+        }
+      ],
+      "provider_rows": {},
+      "failures": {
+        "outer_where": "INTERNAL: Invalid Input Error: QW_EXECUTION: The provider could not execute the graph query",
+        "view_where": "INTERNAL: Invalid Input Error: QW_EXECUTION: The provider could not execute the graph query"
+      }
+    },
+    {
+      "block": 0,
+      "provider": "relate",
+      "release": "candidate",
+      "setup": {
+        "load_ms": 27.11425,
+        "register_ms": 8031.964208
+      },
+      "samples": [
+        {
+          "case": "gql_lookup",
+          "iteration": 1,
+          "wall_ms": 2.319167,
+          "cpu_ms": 2.407
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 1,
+          "wall_ms": 5.037916,
+          "cpu_ms": 5.126
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 1,
+          "wall_ms": 7.340708,
+          "cpu_ms": 7.425
+        },
+        {
+          "case": "view_where",
+          "iteration": 1,
+          "wall_ms": 6.100083,
+          "cpu_ms": 6.183
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 1,
+          "wall_ms": 5.747042,
+          "cpu_ms": 5.807
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 1,
+          "wall_ms": 2458.809542,
+          "cpu_ms": 2456.988
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 1,
+          "wall_ms": 44.945208,
+          "cpu_ms": 45.037
+        },
+        {
+          "case": "outer_where",
+          "iteration": 1,
+          "wall_ms": 6.518792,
+          "cpu_ms": 6.59
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 2,
+          "wall_ms": 2.653917,
+          "cpu_ms": 2.745
+        },
+        {
+          "case": "view_where",
+          "iteration": 2,
+          "wall_ms": 6.46775,
+          "cpu_ms": 6.558
+        },
+        {
+          "case": "outer_where",
+          "iteration": 2,
+          "wall_ms": 6.19475,
+          "cpu_ms": 6.257
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 2,
+          "wall_ms": 46.100791,
+          "cpu_ms": 46.128
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 2,
+          "wall_ms": 2555.182292,
+          "cpu_ms": 2548.036
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 2,
+          "wall_ms": 6.350333,
+          "cpu_ms": 6.423
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 2,
+          "wall_ms": 5.253208,
+          "cpu_ms": 5.345
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 2,
+          "wall_ms": 7.261041,
+          "cpu_ms": 7.351
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 3,
+          "wall_ms": 2.297292,
+          "cpu_ms": 2.366
+        },
+        {
+          "case": "view_where",
+          "iteration": 3,
+          "wall_ms": 6.173792,
+          "cpu_ms": 6.249
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 3,
+          "wall_ms": 2436.5165,
+          "cpu_ms": 2434.158
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 3,
+          "wall_ms": 6.17175,
+          "cpu_ms": 6.25
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 3,
+          "wall_ms": 43.407792,
+          "cpu_ms": 43.494
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 3,
+          "wall_ms": 5.289459,
+          "cpu_ms": 5.381
+        },
+        {
+          "case": "outer_where",
+          "iteration": 3,
+          "wall_ms": 5.524708,
+          "cpu_ms": 5.585
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 3,
+          "wall_ms": 7.053083,
+          "cpu_ms": 7.139
+        }
+      ],
+      "provider_rows": {
+        "outer_where": 6465,
+        "view_where": 6465
+      },
+      "failures": {}
+    },
+    {
+      "block": 1,
+      "provider": "relate",
+      "release": "candidate",
+      "setup": {
+        "load_ms": 7.337583,
+        "register_ms": 7977.7115
+      },
+      "samples": [
+        {
+          "case": "cypher_fanout",
+          "iteration": 1,
+          "wall_ms": 4.960583,
+          "cpu_ms": 5.052
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 1,
+          "wall_ms": 2.112625,
+          "cpu_ms": 2.199
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 1,
+          "wall_ms": 7.050833,
+          "cpu_ms": 7.14
+        },
+        {
+          "case": "view_where",
+          "iteration": 1,
+          "wall_ms": 6.061375,
+          "cpu_ms": 6.145
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 1,
+          "wall_ms": 2496.224667,
+          "cpu_ms": 2492.629
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 1,
+          "wall_ms": 6.256791,
+          "cpu_ms": 6.334
+        },
+        {
+          "case": "outer_where",
+          "iteration": 1,
+          "wall_ms": 5.99875,
+          "cpu_ms": 6.06
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 1,
+          "wall_ms": 44.645584,
+          "cpu_ms": 44.744
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 2,
+          "wall_ms": 7.991666,
+          "cpu_ms": 8.089
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 2,
+          "wall_ms": 43.443625,
+          "cpu_ms": 43.548
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 2,
+          "wall_ms": 2527.040208,
+          "cpu_ms": 2520.645
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 2,
+          "wall_ms": 6.521583,
+          "cpu_ms": 6.638
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 2,
+          "wall_ms": 7.227459,
+          "cpu_ms": 7.307
+        },
+        {
+          "case": "outer_where",
+          "iteration": 2,
+          "wall_ms": 7.123916,
+          "cpu_ms": 7.159
+        },
+        {
+          "case": "view_where",
+          "iteration": 2,
+          "wall_ms": 7.185583,
+          "cpu_ms": 7.289
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 2,
+          "wall_ms": 2.711459,
+          "cpu_ms": 2.815
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 3,
+          "wall_ms": 50.172958,
+          "cpu_ms": 50.275
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 3,
+          "wall_ms": 2.59325,
+          "cpu_ms": 2.686
+        },
+        {
+          "case": "view_where",
+          "iteration": 3,
+          "wall_ms": 6.397667,
+          "cpu_ms": 6.49
+        },
+        {
+          "case": "outer_where",
+          "iteration": 3,
+          "wall_ms": 6.104584,
+          "cpu_ms": 6.172
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 3,
+          "wall_ms": 5.974458,
+          "cpu_ms": 6.041
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 3,
+          "wall_ms": 7.498583,
+          "cpu_ms": 7.59
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 3,
+          "wall_ms": 2496.690792,
+          "cpu_ms": 2494.338
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 3,
+          "wall_ms": 5.455917,
+          "cpu_ms": 5.548
+        }
+      ],
+      "provider_rows": {
+        "outer_where": 6465,
+        "view_where": 6465
+      },
+      "failures": {}
+    },
+    {
+      "block": 1,
+      "provider": "relate",
+      "release": "baseline",
+      "setup": {
+        "load_ms": 7.41175,
+        "register_ms": 8316.993667
+      },
+      "samples": [
+        {
+          "case": "gql_lookup",
+          "iteration": 1,
+          "wall_ms": 2.472333,
+          "cpu_ms": 2.564
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 1,
+          "wall_ms": 7.479208,
+          "cpu_ms": 7.561
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 1,
+          "wall_ms": 2640.763584,
+          "cpu_ms": 2632.924
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 1,
+          "wall_ms": 47.520834,
+          "cpu_ms": 47.637
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 1,
+          "wall_ms": 6.529667,
+          "cpu_ms": 6.602
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 1,
+          "wall_ms": 5.506125,
+          "cpu_ms": 5.601
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 2,
+          "wall_ms": 6.094167,
+          "cpu_ms": 6.161
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 2,
+          "wall_ms": 7.636166,
+          "cpu_ms": 7.724
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 2,
+          "wall_ms": 5.358833,
+          "cpu_ms": 5.437
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 2,
+          "wall_ms": 46.84325,
+          "cpu_ms": 46.938
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 2,
+          "wall_ms": 2554.120542,
+          "cpu_ms": 2551.625
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 2,
+          "wall_ms": 2.790625,
+          "cpu_ms": 2.884
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 3,
+          "wall_ms": 6.216667,
+          "cpu_ms": 6.288
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 3,
+          "wall_ms": 2.516958,
+          "cpu_ms": 2.611
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 3,
+          "wall_ms": 5.37825,
+          "cpu_ms": 5.467
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 3,
+          "wall_ms": 7.725458,
+          "cpu_ms": 7.819
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 3,
+          "wall_ms": 47.001416,
+          "cpu_ms": 47.103
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 3,
+          "wall_ms": 2964.147708,
+          "cpu_ms": 2956.572
+        }
+      ],
+      "provider_rows": {},
+      "failures": {
+        "outer_where": "INTERNAL: Invalid Input Error: QW_EXECUTION: The provider could not execute the graph query",
+        "view_where": "INTERNAL: Invalid Input Error: QW_EXECUTION: The provider could not execute the graph query"
+      }
+    },
+    {
+      "block": 1,
+      "provider": "ladybug",
+      "release": "candidate",
+      "setup": {
+        "load_ms": 14.9855,
+        "register_ms": 170.060084
+      },
+      "samples": [
+        {
+          "case": "cypher_fanout",
+          "iteration": 1,
+          "wall_ms": 6.666708,
+          "cpu_ms": 6.654
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 1,
+          "wall_ms": 5.738167,
+          "cpu_ms": 5.742
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 1,
+          "wall_ms": 12.108,
+          "cpu_ms": 11.902
+        },
+        {
+          "case": "view_where",
+          "iteration": 1,
+          "wall_ms": 8.074667,
+          "cpu_ms": 8.061
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 1,
+          "wall_ms": 180.175166,
+          "cpu_ms": 833.292
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 1,
+          "wall_ms": 7.607333,
+          "cpu_ms": 7.613
+        },
+        {
+          "case": "outer_where",
+          "iteration": 1,
+          "wall_ms": 7.223125,
+          "cpu_ms": 7.229
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 1,
+          "wall_ms": 17.761083,
+          "cpu_ms": 30.785
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 2,
+          "wall_ms": 11.637708,
+          "cpu_ms": 11.644
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 2,
+          "wall_ms": 17.106042,
+          "cpu_ms": 27.954
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 2,
+          "wall_ms": 184.708625,
+          "cpu_ms": 825.396
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 2,
+          "wall_ms": 6.013125,
+          "cpu_ms": 6.009
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 2,
+          "wall_ms": 7.58275,
+          "cpu_ms": 7.59
+        },
+        {
+          "case": "outer_where",
+          "iteration": 2,
+          "wall_ms": 7.354375,
+          "cpu_ms": 7.316
+        },
+        {
+          "case": "view_where",
+          "iteration": 2,
+          "wall_ms": 7.601625,
+          "cpu_ms": 7.592
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 2,
+          "wall_ms": 6.784833,
+          "cpu_ms": 6.735
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 3,
+          "wall_ms": 17.411875,
+          "cpu_ms": 28.699
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 3,
+          "wall_ms": 6.3365,
+          "cpu_ms": 6.333
+        },
+        {
+          "case": "view_where",
+          "iteration": 3,
+          "wall_ms": 7.902083,
+          "cpu_ms": 7.909
+        },
+        {
+          "case": "outer_where",
+          "iteration": 3,
+          "wall_ms": 7.21575,
+          "cpu_ms": 7.206
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 3,
+          "wall_ms": 7.082375,
+          "cpu_ms": 7.089
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 3,
+          "wall_ms": 11.185958,
+          "cpu_ms": 11.19
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 3,
+          "wall_ms": 182.080125,
+          "cpu_ms": 832.985
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 3,
+          "wall_ms": 6.367541,
+          "cpu_ms": 6.358
+        }
+      ],
+      "provider_rows": {
+        "outer_where": 6465,
+        "view_where": 6465
+      },
+      "failures": {}
+    },
+    {
+      "block": 1,
+      "provider": "ladybug",
+      "release": "baseline",
+      "setup": {
+        "load_ms": 15.335083,
+        "register_ms": 69.817875
+      },
+      "samples": [
+        {
+          "case": "cypher_fanout",
+          "iteration": 1,
+          "wall_ms": 6.551834,
+          "cpu_ms": 6.26
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 1,
+          "wall_ms": 5.35875,
+          "cpu_ms": 5.327
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 1,
+          "wall_ms": 9.082041,
+          "cpu_ms": 9.088
+        },
+        {
+          "case": "view_where",
+          "iteration": 1,
+          "wall_ms": 522.8505,
+          "cpu_ms": 1130.275
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 1,
+          "wall_ms": 155.669292,
+          "cpu_ms": 762.778
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 1,
+          "wall_ms": 7.7845,
+          "cpu_ms": 7.777
+        },
+        {
+          "case": "outer_where",
+          "iteration": 1,
+          "wall_ms": 560.189125,
+          "cpu_ms": 1188.044
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 1,
+          "wall_ms": 14.489542,
+          "cpu_ms": 24.468
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 2,
+          "wall_ms": 10.084458,
+          "cpu_ms": 10.094
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 2,
+          "wall_ms": 13.828584,
+          "cpu_ms": 25.574
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 2,
+          "wall_ms": 177.923,
+          "cpu_ms": 783.458
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 2,
+          "wall_ms": 6.556458,
+          "cpu_ms": 6.535
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 2,
+          "wall_ms": 7.1155,
+          "cpu_ms": 7.121
+        },
+        {
+          "case": "outer_where",
+          "iteration": 2,
+          "wall_ms": 554.621042,
+          "cpu_ms": 1186.357
+        },
+        {
+          "case": "view_where",
+          "iteration": 2,
+          "wall_ms": 578.2805,
+          "cpu_ms": 1167.109
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 2,
+          "wall_ms": 6.670042,
+          "cpu_ms": 6.676
+        },
+        {
+          "case": "table_watchlist",
+          "iteration": 3,
+          "wall_ms": 18.045125,
+          "cpu_ms": 28.981
+        },
+        {
+          "case": "gql_lookup",
+          "iteration": 3,
+          "wall_ms": 7.407834,
+          "cpu_ms": 7.175
+        },
+        {
+          "case": "view_where",
+          "iteration": 3,
+          "wall_ms": 546.571708,
+          "cpu_ms": 1173.443
+        },
+        {
+          "case": "outer_where",
+          "iteration": 3,
+          "wall_ms": 498.925167,
+          "cpu_ms": 1099.056
+        },
+        {
+          "case": "graph_table_where",
+          "iteration": 3,
+          "wall_ms": 5.535084,
+          "cpu_ms": 5.519
+        },
+        {
+          "case": "gql_fanout",
+          "iteration": 3,
+          "wall_ms": 8.311416,
+          "cpu_ms": 8.297
+        },
+        {
+          "case": "full_scan_aggregate",
+          "iteration": 3,
+          "wall_ms": 156.772041,
+          "cpu_ms": 741.866
+        },
+        {
+          "case": "cypher_fanout",
+          "iteration": 3,
+          "wall_ms": 5.408333,
+          "cpu_ms": 5.402
+        }
+      ],
+      "provider_rows": {
+        "outer_where": 3809607,
+        "view_where": 3809607
+      },
+      "failures": {}
+    }
+  ],
+  "summary": {
+    "ladybug": {
+      "gql_lookup": {
+        "baseline": {
+          "n": 6,
+          "p50_ms": 4.0397704999999995,
+          "p95_ms": 7.407834
+        },
+        "candidate": {
+          "n": 6,
+          "p50_ms": 4.0767085,
+          "p95_ms": 6.784833
+        }
+      },
+      "gql_fanout": {
+        "baseline": {
+          "n": 6,
+          "p50_ms": 7.0128745,
+          "p95_ms": 10.084458
+        },
+        "candidate": {
+          "n": 6,
+          "p50_ms": 8.203354,
+          "p95_ms": 12.108
+        }
+      },
+      "cypher_fanout": {
+        "baseline": {
+          "n": 6,
+          "p50_ms": 4.1409375,
+          "p95_ms": 6.556458
+        },
+        "candidate": {
+          "n": 6,
+          "p50_ms": 4.3741455,
+          "p95_ms": 6.666708
+        }
+      },
+      "graph_table_where": {
+        "baseline": {
+          "n": 6,
+          "p50_ms": 4.612917,
+          "p95_ms": 7.7845
+        },
+        "candidate": {
+          "n": 6,
+          "p50_ms": 5.4964165000000005,
+          "p95_ms": 7.607333
+        }
+      },
+      "table_watchlist": {
+        "baseline": {
+          "n": 6,
+          "p50_ms": 11.073812499999999,
+          "p95_ms": 18.045125
+        },
+        "candidate": {
+          "n": 6,
+          "p50_ms": 12.9406045,
+          "p95_ms": 17.761083
+        }
+      },
+      "full_scan_aggregate": {
+        "baseline": {
+          "n": 6,
+          "p50_ms": 125.95979150000001,
+          "p95_ms": 177.923
+        },
+        "candidate": {
+          "n": 6,
+          "p50_ms": 139.389729,
+          "p95_ms": 184.708625
+        }
+      },
+      "outer_where": {
+        "baseline": {
+          "n": 6,
+          "p50_ms": 391.36502099999996,
+          "p95_ms": 560.189125
+        },
+        "candidate": {
+          "n": 6,
+          "p50_ms": 5.2172085,
+          "p95_ms": 7.354375
+        }
+      },
+      "view_where": {
+        "baseline": {
+          "n": 6,
+          "p50_ms": 401.4449585,
+          "p95_ms": 578.2805
+        },
+        "candidate": {
+          "n": 6,
+          "p50_ms": 5.6279585,
+          "p95_ms": 8.074667
+        }
+      }
+    },
+    "relate": {
+      "gql_lookup": {
+        "baseline": {
+          "n": 6,
+          "p50_ms": 2.425104,
+          "p95_ms": 2.790625
+        },
+        "candidate": {
+          "n": 6,
+          "p50_ms": 2.4562085,
+          "p95_ms": 2.711459
+        }
+      },
+      "gql_fanout": {
+        "baseline": {
+          "n": 6,
+          "p50_ms": 7.6760205,
+          "p95_ms": 7.758708
+        },
+        "candidate": {
+          "n": 6,
+          "p50_ms": 7.3008745,
+          "p95_ms": 7.991666
+        }
+      },
+      "cypher_fanout": {
+        "baseline": {
+          "n": 6,
+          "p50_ms": 5.3685415,
+          "p95_ms": 5.506125
+        },
+        "candidate": {
+          "n": 6,
+          "p50_ms": 5.2713335,
+          "p95_ms": 6.521583
+        }
+      },
+      "graph_table_where": {
+        "baseline": {
+          "n": 6,
+          "p50_ms": 6.178417,
+          "p95_ms": 6.529667
+        },
+        "candidate": {
+          "n": 6,
+          "p50_ms": 6.2142705,
+          "p95_ms": 7.227459
+        }
+      },
+      "table_watchlist": {
+        "baseline": {
+          "n": 6,
+          "p50_ms": 45.507645999999994,
+          "p95_ms": 47.520834
+        },
+        "candidate": {
+          "n": 6,
+          "p50_ms": 44.795396,
+          "p95_ms": 50.172958
+        }
+      },
+      "full_scan_aggregate": {
+        "baseline": {
+          "n": 6,
+          "p50_ms": 2523.0248125,
+          "p95_ms": 2964.147708
+        },
+        "candidate": {
+          "n": 6,
+          "p50_ms": 2496.4577295,
+          "p95_ms": 2555.182292
+        }
+      },
+      "outer_where": {
+        "baseline": {
+          "n": 0,
+          "p50_ms": null,
+          "p95_ms": null
+        },
+        "candidate": {
+          "n": 6,
+          "p50_ms": 6.149667,
+          "p95_ms": 7.123916
+        }
+      },
+      "view_where": {
+        "baseline": {
+          "n": 0,
+          "p50_ms": null,
+          "p95_ms": null
+        },
+        "candidate": {
+          "n": 6,
+          "p50_ms": 6.2857295,
+          "p95_ms": 7.185583
+        }
+      }
+    }
+  },
+  "finish_utc": "2026-11-25T00:53:26.197343+00:00"
+}
