@@ -178,9 +178,7 @@ unique_ptr<TableRef> ParsedGraphTable::Lower(const JoinRef *join) {
 	Candidate candidate;
 	const ParsedExpression *watch_key = nullptr;
 	string watch_variable, watch_property, watch_label;
-	if (result->where_clause) {
-		candidate = bindings.Prefilter(*result->where_clause);
-	} else if (join) {
+	if (!result->where_clause && join) {
 		auto predicate = QwWatchlistPredicate(*result, table_alias, *join, MAX_PREFILTER_KEYS);
 		if (predicate) {
 			candidate = bindings.Prefilter(*predicate);

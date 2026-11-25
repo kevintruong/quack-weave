@@ -45,7 +45,8 @@ impl ScanProjection {
         if base != bound.cypher || bound.watch.is_some() {
             return Ok(original(requested));
         }
-        if requested.iter().copied().eq(0..bound.schema.len()) {
+        let predicates: Vec<_> = bound.static_predicate_sql()?.into_iter().collect();
+        if requested.iter().copied().eq(0..bound.schema.len()) && predicates.is_empty() {
             return Ok(Self {
                 query: None,
                 schema: None,
@@ -53,6 +54,10 @@ impl ScanProjection {
             });
         }
         let mut query = fragment.pattern().to_owned();
+        if !predicates.is_empty() {
+            query.push_str(" WHERE ");
+            query.push_str(&predicates.join(" AND "));
+        }
         // A repeated SQL slot needs only one provider column. DuckDB's consumer
         // receives the requested ordering and multiplicity via output_columns.
         let mut positions = HashMap::new();

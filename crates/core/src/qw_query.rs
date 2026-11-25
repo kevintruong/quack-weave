@@ -29,6 +29,7 @@ use duckdb_neo::{
 use serde::{Deserialize, Serialize};
 
 mod aggregate_scan;
+mod filters;
 mod fragment;
 use fragment::GraphFragment;
 mod gql;
@@ -476,6 +477,7 @@ pub fn validate_graph_alias(context: &Context, alias: &str) -> Result<()> {
 }
 
 struct BoundRead {
+    static_predicate: std::sync::Mutex<Option<String>>,
     fragment: Option<GraphFragment>,
     provider: GraphProvider,
     watch: Option<RuntimeWatch>,
@@ -769,6 +771,7 @@ impl TableFunctionCallbacks for GraphQuery {
             Vec::new()
         };
         Ok(BoundRead {
+            static_predicate: Default::default(),
             fragment,
             provider: provider.clone(),
             watch,
@@ -981,6 +984,7 @@ fn register_query(
             },
         )
         .with_get_bind_info()
+        .with_filter_pushdown()
         .with_projection_pushdown(true)
         .register(extension)?;
     }

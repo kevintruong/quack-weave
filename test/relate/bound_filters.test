@@ -1,0 +1,107 @@
+# name: test/relate/bound_filters.test
+# description: DuckDB bound graph filters map SQL references to trusted PGQ properties
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_RELATE UNSET_QW_RELATE
+
+test-env QW_LADYBUG UNSET_QW_LADYBUG
+
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"rel_routes","path":"{QW_RELATE}"}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"lady_routes","path":"{QW_LADYBUG}"}';
+
+# The SQL aliases and their position differ from the graph identifiers and slot order.
+statement ok
+CREATE VIEW rel_v AS
+SELECT g.dest, g.n FROM GRAPH_TABLE (rel_routes MATCH (a:airport)-[r:route]->(b:airport)
+  COLUMNS(r.rid AS n,b.code AS dest)) g;
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT dest FROM rel_v WHERE n = 202;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 1,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+query T
+SELECT dest FROM rel_v WHERE n = 202;
+----
+AMS
+
+query T rowsort
+SELECT dest FROM rel_v WHERE n IN (201, -1, 203);
+----
+AMS
+RIX
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT dest FROM rel_v WHERE n IN (201,-1,203);
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 2,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT g.dist FROM GRAPH_TABLE (
+    lady_routes MATCH (a:airport)-[r:route]->(b:airport) COLUMNS(r.dist AS dist,r.rid AS n)
+) g WHERE 102 = n;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 1,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+# The SQL engine still enforces the residual.
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT n FROM rel_v WHERE n=203;
+----
+analyzed_plan	<REGEX>:.*"name": "FILTER".*
+
+# The two copies of a graph view have different pushed predicates.
+query I rowsort
+WITH a AS NOT MATERIALIZED (SELECT n FROM rel_v)
+SELECT n FROM a WHERE n=201 UNION ALL SELECT n FROM a WHERE n=202;
+----
+201
+202
+
+statement ok
+PREPARE eligible AS SELECT n FROM rel_v WHERE n=$1;
+
+query I
+EXECUTE eligible(201);
+----
+201
+
+query I
+EXECUTE eligible(202);
+----
+202
+
+# Converting the graph's string ID to BIGINT is a host error even if no stored ID matches.
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"rel_routes","path":"{QW_RELATE}","catalog":{"Item":{"ID":"BIGINT"}}}';
+
+statement error
+SELECT * FROM GRAPH_TABLE (rel_routes MATCH (a:Item) COLUMNS(a.ID AS id)) AS g WHERE g.id=8;
+----
+QW_SCHEMA
+
+# A selective outer predicate cannot remove an explicitly requested quota error.
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"rel_routes","path":"{QW_RELATE}","max_batch_bytes":1}';
+
+statement error
+SELECT n FROM rel_v WHERE n=-1;
+----
+QW_BATCH_BUDGET
+
+# Opaque explicit-schema reads may raise conversion errors or carry arbitrary graph expressions.
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"rel_routes","path":"{QW_RELATE}"}';
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM qw_query('rel_routes','cypher',
+  'MATCH (a:airport)-[r:route]->(b:airport) RETURN r.rid AS id',schema:='id BIGINT') t WHERE id=202;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 3,[^{}]*"name": "QW_QUERY".*

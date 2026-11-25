@@ -20,7 +20,7 @@ EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM GRAPH_TABLE (
   WHERE r.rid = 202 COLUMNS (d.code AS destination)
 ) g;
 ----
-analyzed_plan	<REGEX>:.*"intermediate_rows": 1,[^{}]*"name": "QW_GRAPH_QUERY_FILTERED".*
+analyzed_plan	<REGEX>:.*"intermediate_rows": 1,[^{}]*"name": "QW_GRAPH_QUERY".*
 
 query TI rowsort
 SELECT * FROM GRAPH_TABLE (
@@ -37,7 +37,7 @@ EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM GRAPH_TABLE (
   WHERE r.rid IN (201,201,-1,203) COLUMNS (d.code AS destination)
 ) g;
 ----
-analyzed_plan	<REGEX>:.*"intermediate_rows": 2,[^{}]*"name": "QW_GRAPH_QUERY_FILTERED".*
+analyzed_plan	<REGEX>:.*"intermediate_rows": 2,[^{}]*"name": "QW_GRAPH_QUERY".*
 
 # Node and relationship namespaces overlap on Item. Its lowercase node id is
 # BIGINT, the uppercase node ID and lowercase relationship id are VARCHAR.
@@ -46,7 +46,7 @@ EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM GRAPH_TABLE (
   routes MATCH (a:Item) WHERE a.id = 8 COLUMNS (a.ID AS text_id)
 ) g;
 ----
-analyzed_plan	<REGEX>:.*"intermediate_rows": 1,[^{}]*"name": "QW_GRAPH_QUERY_FILTERED".*
+analyzed_plan	<REGEX>:.*"intermediate_rows": 1,[^{}]*"name": "QW_GRAPH_QUERY".*
 
 query T
 SELECT * FROM GRAPH_TABLE (
@@ -123,7 +123,7 @@ EXPLAIN (ANALYZE, FORMAT JSON)
 SELECT * FROM GRAPH_TABLE (routes MATCH (a:airport)
   WHERE a.score = 2 COLUMNS(a.code AS code)) g;
 ----
-analyzed_plan	<REGEX>:.*"intermediate_rows": 4,[^{}]*"name": "QW_GRAPH_QUERY_FILTERED".*
+analyzed_plan	<REGEX>:.*"intermediate_rows": 4,[^{}]*"name": "QW_GRAPH_QUERY".*
 
 statement ok
 SET GLOBAL qw_relate_config = '{"alias":"routes","path":"{QW_RELATE}","max_batch_bytes":1}';
