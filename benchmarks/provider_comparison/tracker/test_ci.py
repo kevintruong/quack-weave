@@ -1,0 +1,215 @@
+"""Exercise the Actions range, gate and history writer with real temporary Git refs."""
+from contextlib import chdir
+from copy import deepcopy
+import io
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+import zipfile
+
+import archive
+import ci
+
+
+HERE = Path(__file__).resolve().parent
+
+
+def git(*args, cwd=None):
+    return subprocess.check_output(["git", *args], text=True, cwd=cwd, stderr=subprocess.PIPE).strip()
+
+
+def init_repo(path):
+    git("init", "-q", "-b", "main", str(path))
+    git("config", "user.name", "Tracker test", cwd=path)
+    git("config", "user.email", "tracker@example.invalid", cwd=path)
+
+
+def commit(label):
+    git("commit", "--allow-empty", "-qm", label)
+    return git("rev-parse", "HEAD")
+
+
+def pack(entries):
+    data = io.BytesIO()
+    with zipfile.ZipFile(data, "w", zipfile.ZIP_DEFLATED) as bundle:
+        for name, obj in entries.items():
+            bundle.writestr(name, json.dumps(obj))
+    return data.getvalue()
+
+
+def evidence(sha, status, snapshot=None, event="main", run=100, attempt=1):
+    entries = {f"{sha}/record.json": {"commit": sha, "status": status}}
+    if snapshot is not None:
+        entries[f"{sha}/snapshot.json"] = snapshot
+    return dict(archive.records(pack(entries), event, run, attempt, sha))
+
+
+class TrackerCI(unittest.TestCase):
+    def test_pr_and_push_include_each_introduced_commit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            init_repo(tmp)
+            with chdir(tmp):
+                main = commit("main")
+                old = commit("one")
+                two = commit("two")
+                head = commit("three")
+                pr = {"pull_request": {"head": {"sha": head}, "base": {"sha": main}}}
+                self.assertEqual(ci.commits("pull_request", pr), [old, two, head])
+                self.assertEqual(ci.commits("pull_request", {**pr, "before": old}), [two, head])
+                self.assertEqual(ci.commits("push", {"before": old, "after": head}), [two, head])
+                self.assertEqual(ci.commits("push", {"before": head, "after": head}), [head])
+                with self.assertRaises(ValueError):
+                    ci.commits("push", {"after": "HEAD"})
+                git("checkout", "-q", "-b", "replacement", main)
+                new = commit("force push")
+                self.assertEqual(ci.commits("push", {"before": head, "after": new}), [new])
+                missing = "f" * 40
+                git("remote", "add", "origin", Path(tmp).as_uri())
+                pr["pull_request"]["head"]["sha"] = new
+                self.assertEqual(ci.commits("pull_request", {**pr, "before": missing}), [new])
+
+    def test_sharding_keeps_order_and_all_commits(self):
+        shas = [f"{n:040x}" for n in range(650)]
+        chunks = ci.matrix(shas)["include"]
+        self.assertLessEqual(len(chunks), 32)
+        self.assertEqual([s for x in chunks for s in x["commits"].split()], shas)
+        self.assertEqual([x["index"] for x in chunks], list(range(len(chunks))))
+
+    def test_regression_needs_both_percentiles_and_absolute_floor(self):
+        row = {"provider": "ladybug", "route": "qw_pgq", "case": "aggregate", "p50_ms": 1, "p95_ms": 2}
+        past = {"workspace_head": "c" * 40, "summary": [row]}
+        self.assertEqual(ci.judge(past, None, 20, .25)["status"], "baseline")
+        for p50, p95, expected in [(1.24, 2.8, "passed"), (2, 2.39, "passed"), (1.25, 2.4, "regression")]:
+            with self.subTest(p50=p50, p95=p95):
+                current = {"summary": [{**row, "p50_ms": p50, "p95_ms": p95}]}
+                decision = ci.judge(current, past, 20, .25)
+                self.assertEqual(decision["status"], expected)
+                self.assertEqual(decision["baseline_sha"], past["workspace_head"])
+        with self.assertRaises(ValueError):
+            ci.judge(past, past, float("nan"), .25)
+
+    def test_rejects_misnamed_or_inconsistent_evidence(self):
+        sha = "a" * 40
+        record = {"commit": sha, "status": "passed"}
+        valid = {f"{sha}/record.json": record, f"{sha}/snapshot.json": {"workspace_head": sha}}
+        for bad in [{}, {f"{sha}/record.json": record}, {**valid, "../main/a": {}},
+                    {**valid, f"{sha}/snapshot.json": {"workspace_head": "b" * 40}},
+                    {**valid, f"{sha}/record.json": {**record, "status": "failed"}},
+                    {**valid, f"{sha}/record.json": {**record, "extra": "a" * 4_000_000}}]:
+            with self.assertRaises(ValueError):
+                list(archive.records(pack(bad), "pull_request", 33, 1, sha))
+        stored = evidence(sha, "not_measured", event="pull_request", run=33)
+        record = json.loads(stored[f"pull_request/{sha}/33-1/record.json"])
+        self.assertEqual((record["run_id"], record["head_sha"]), (33, sha))
+
+    def test_missing_shard_retains_a_status_for_every_planned_commit(self):
+        one, two = "a" * 40, "b" * 40
+        expected = archive.planned_commits(pack({"commits.json": [one, two]}))
+        files = evidence(one, "failed", event="pull_request", run=91)
+        archive.complete_evidence(expected, files, "pull_request", 91, 1, two)
+        self.assertEqual(json.loads(files[f"pull_request/{one}/91-1/record.json"])["status"], "failed")
+        self.assertEqual(json.loads(files[f"pull_request/{two}/91-1/record.json"])["status"], "not_measured")
+        with self.assertRaises(ValueError):
+            archive.complete_evidence({two}, files, "pull_request", 91, 1, two)
+        for bad in ([], [one, one], ["HEAD"]):
+            with self.assertRaises(ValueError):
+                archive.planned_commits(pack({"commits.json": bad}))
+
+    def test_archive_replay_regression_and_compatible_ancestor(self):
+        sample = json.loads((HERE / "sf1.json").read_text())
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "work"
+            init_repo(repo)
+            remote = Path(tmp, "history.git").as_uri()
+            git("init", "--bare", "-q", str(Path(tmp, "history.git")))
+            with chdir(repo):
+                base = commit("base")
+                tip = commit("tip")
+                sample["workspace_head"] = base
+                sample["ci_runner"] = {"cpu": "test"}
+                first = evidence(base, "baseline", sample)
+                archive.append(first, remote)
+                ref = git("ls-remote", remote, archive.REF)
+                archive.append(first, remote)
+                self.assertEqual(git("ls-remote", remote, archive.REF), ref)
+                with self.assertRaisesRegex(ValueError, "replace"):
+                    archive.append({next(iter(first)): b"changed"}, remote)
+                candidate = deepcopy(sample)
+                candidate["workspace_head"] = tip
+                archive.append(evidence(tip, "passed", candidate, event="pull_request"), remote)
+                archive.append(evidence(tip, "regression", candidate, attempt=2), remote)
+                other = {**candidate, "ci_runner": {"cpu": "different"}}
+                archive.append(evidence(tip, "baseline", other, attempt=3), remote)
+                git("fetch", "-q", remote, f"{archive.REF}:{ci.HISTORY}")
+                candidate["fixture"]["files"]["social.rl"]["sha256"] = "regenerated"
+                self.assertEqual(ci.find_baseline(candidate, tip)["workspace_head"], base)
+                for field in ("versions", "ci_runner"):
+                    self.assertIsNone(ci.find_baseline({**candidate, field: {}}, tip))
+                candidate["fixture"]["files"]["edges.csv"]["sha256"] = "different logical input"
+                self.assertIsNone(ci.find_baseline(candidate, tip))
+
+    def test_concurrent_writers_keep_both_attempts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            remote = Path(tmp, "remote.git")
+            git("init", "--bare", "-q", str(remote))
+            procs = []
+            for attempt in (1, 2):
+                work = Path(tmp, f"work-{attempt}")
+                init_repo(work)
+                name = f"main/{'a' * 40}/10-{attempt}/record.json"
+                procs.append(subprocess.Popen(
+                    [sys.executable, "-B", "-c",
+                     "import archive,sys; archive.append({sys.argv[1]: b'{}'}, sys.argv[2])",
+                     name, remote.as_uri()], cwd=work, env={**os.environ, "PYTHONPATH": str(HERE)},
+                    stderr=subprocess.PIPE, text=True))
+            for proc in procs:
+                _, err = proc.communicate(timeout=60)
+                self.assertEqual(proc.returncode, 0, err)
+            names = git("ls-tree", "-r", "--name-only", archive.REF, cwd=remote).splitlines()
+            self.assertEqual(len(names), 2)
+            self.assertEqual(git("rev-list", "--count", archive.REF, cwd=remote), "2")
+
+    def test_publisher_reads_planned_and_partial_artifacts_from_workflow_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp, "work")
+            init_repo(repo)
+            remote = Path(tmp, "origin.git")
+            git("init", "--bare", "-q", str(remote))
+            with chdir(repo):
+                first = commit("first")
+                head = commit("second")
+                git("remote", "add", "origin", remote.as_uri())
+                git("push", "-q", "origin", "main")
+                payload = {"workflow_run": {"event": "push", "id": 90, "run_attempt": 2,
+                           "path": ".github/workflows/Benchmark.yml", "head_sha": head,
+                           "head_branch": "main", "head_repository": {"id": 7}}, "repository": {"id": 7}}
+                Path("event.json").write_text(json.dumps(payload))
+                environment = {"GITHUB_EVENT_PATH": "event.json", "GITHUB_REPOSITORY": "owner/repo"}
+                artifacts = [dict(name=name, id=i, expired=False, size_in_bytes=500)
+                             for i, name in enumerate(("qw-plan-90-1", "qw-benchmark-90-1-0",
+                                                       "qw-benchmark-90-2-1"))]
+                real_output = subprocess.check_output
+                def github_or_git(cmd, **kwargs):
+                    if cmd[0] != "gh":
+                        return real_output(cmd, **kwargs)
+                    if "--paginate" in cmd:
+                        return json.dumps([{"artifacts": artifacts}]).encode()
+                    if cmd[-1].endswith("/0/zip"):
+                        return pack({"commits.json": [first, head]})
+                    self.assertTrue(cmd[-1].endswith("/2/zip"))
+                    return pack({f"{head}/record.json": {"commit": head, "status": "passed"},
+                                 f"{head}/snapshot.json": {"workspace_head": head}})
+                with patch.dict(os.environ, environment), patch.object(subprocess, "check_output", github_or_git):
+                    archive.main()
+                for sha, status in ((first, "not_measured"), (head, "passed")):
+                    key = f"{archive.REF}:main/{sha}/90-2/record.json"
+                    self.assertEqual(json.loads(git("show", key, cwd=remote))["status"], status)
+
+
+if __name__ == "__main__":
+    unittest.main()

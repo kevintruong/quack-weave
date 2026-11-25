@@ -1,0 +1,70 @@
+# name: benchmarks/provider_comparison/tracker/snapshot.test
+# description: Check a full provider matrix and independently derive its published timings from warm samples
+# group: [quack_weave]
+
+require json
+
+test-env QW_TRACKER_SNAPSHOT UNSET_QW_TRACKER_SNAPSHOT
+
+statement ok
+CREATE TEMP TABLE snapshot AS FROM read_json_auto('{QW_TRACKER_SNAPSHOT}');
+
+statement ok
+CREATE TEMP VIEW series AS SELECT unnest(summary, recursive := true) FROM snapshot;
+
+statement ok
+CREATE TEMP VIEW samples AS
+SELECT w.provider, w.route, w.block, s."case" AS workload, s.repetition, s.wall_ms
+FROM snapshot, unnest(workers) AS worker(w), unnest(w.samples) AS sample(s);
+
+# Only standalone QuackWeave runs have a native denominator.
+query TTII rowsort
+SELECT scope, route, count(*), count(qw_over_direct) FROM series GROUP BY ALL;
+----
+hybrid	qw_pgq	12	0
+standalone	direct_cypher	6	0
+standalone	qw_cypher	6	6
+standalone	qw_gql	6	6
+
+# Every series includes one warmup and exactly the requested hot samples per block.
+query I
+SELECT count(*) FROM (
+    SELECT provider, route, block, workload FROM samples GROUP BY ALL
+    HAVING count(*) <> (SELECT runs + 1 FROM snapshot) OR min(repetition) <> 0
+        OR max(repetition) <> (SELECT runs FROM snapshot) OR count(DISTINCT repetition) <> count(*)
+);
+----
+0
+
+# Recompute nearest-rank p95, median, and sample count from the saved measurements.
+query I
+WITH warm AS (
+    SELECT provider, route, workload, count(*) AS n, median(wall_ms) AS p50,
+           quantile_disc(wall_ms, .95) AS p95 FROM samples WHERE repetition > 0 GROUP BY ALL
+)
+SELECT count(*) FROM warm FULL JOIN series s
+  ON (warm.provider,warm.route,warm.workload) = (s.provider,s.route,s."case")
+WHERE warm.n IS DISTINCT FROM s.n OR s.n <> (SELECT blocks * runs FROM snapshot)
+   OR s.p50_ms IS NULL OR s.p95_ms IS NULL OR s.p50_ms <= 0
+   OR abs(warm.p50 - s.p50_ms) > 1e-8 OR abs(warm.p95 - s.p95_ms) > 1e-8;
+----
+0
+
+query I
+SELECT count(*) FROM series q LEFT JOIN series d
+  ON d.route='direct_cypher' AND d.provider=q.provider AND d."case"=q."case"
+WHERE q.route IN ('qw_gql','qw_cypher')
+  AND (d.n IS NULL OR abs(q.qw_over_direct - q.p50_ms/d.p50_ms) > 1e-8);
+----
+0
+
+# The same selected creator set reaches DuckDB for all three predicate placements.
+query I
+SELECT count(*) FROM snapshot, unnest(workers) AS worker(w) WHERE w.route='qw_pgq' AND (
+  w.graph_scan_rows.graph_table_where IS DISTINCT FROM expected.graph_table_where[1]::BIGINT OR
+  w.graph_scan_rows.outer_where IS DISTINCT FROM w.graph_scan_rows.graph_table_where OR
+  w.graph_scan_rows.view_where IS DISTINCT FROM w.graph_scan_rows.graph_table_where OR
+  w.graph_scan_rows.values_watchlist IS DISTINCT FROM w.graph_scan_rows.table_watchlist OR
+  w.graph_scan_rows.full_scan_aggregate IS DISTINCT FROM 1);
+----
+0

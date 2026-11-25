@@ -2,6 +2,8 @@
 
 The notebook compares the same DuckDB SQL through the two providers. Its DuckDB cells read baseline and optimized observations, including SQL, fixture hashes, result checksums and measured graph-scan row counts. [Executed comparison notebook](provider_benchmark.ipynb)
 
+The benchmark tracker also measures direct Ladybug and direct RelateDB for standalone graph queries. It tracks hybrid SQL workloads through QuackWeave on both providers, with immutable snapshots and a DuckDB history query. [Standalone baselines and hybrid tracker](tracker/README.md)
+
 ## Optimized release on the full SF1 creator graph
 
 All six queries completed on both providers using the same pinned DuckDB build, graph files, SQL and CSV-derived expected results as the baseline. The table shows median warm, end-to-end fetch latency over six observations per successful query. Timing includes DuckDB binding and graph-to-Arrow conversion. [Optimized full-scale observations](optimized/mod1.json) · [Baseline observations](mod1.json)

@@ -1427,9 +1427,11 @@ name = "rusty_quack"
 version = "0.1.0"
 dependencies = [
  "duckdb-neo",
+ "libc",
  "relate",
  "relate-parser",
  "rusty_quack_core",
+ "serde_json",
 ]
 
 [[package]]

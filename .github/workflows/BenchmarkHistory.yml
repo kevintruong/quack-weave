@@ -1,0 +1,24 @@
+name: Archive benchmark history
+on:
+  workflow_run:
+    workflows: [Benchmark tracker]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  append:
+    runs-on: ubuntu-latest
+    steps:
+      # workflow_run runs the publisher from the default branch, including for fork PRs.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          filter: blob:none
+      - name: Append this attempt to benchmark-history
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 benchmarks/provider_comparison/tracker/archive.py
