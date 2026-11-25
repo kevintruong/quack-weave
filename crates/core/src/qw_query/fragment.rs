@@ -5,25 +5,28 @@ use std::collections::HashMap;
 use super::{GraphPopulations, is_identifier};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum EntityKind {
+enum EntityKind {
     Node,
     Edge,
 }
 
-pub(super) struct GraphProperty {
-    pub(super) variable: String,
-    pub(super) field: String,
-    pub(super) label: String,
-    pub(super) kind: EntityKind,
+struct GraphEntity {
+    variable: String,
+    label: String,
+    kind: EntityKind,
     unambiguous: bool,
+}
+
+struct GraphProperty {
+    entity: usize,
+    field: String,
 }
 
 pub(super) struct GraphFragment {
     pattern: String,
     projection: String,
+    entities: Vec<GraphEntity>,
     slots: Vec<GraphProperty>,
-    steps: usize,
-    population_label: String,
 }
 
 impl GraphFragment {
@@ -34,8 +37,7 @@ impl GraphFragment {
         let (path, fields) = wire.strip_prefix("v1|")?.split_once('|')?;
         let mut pattern = String::from("MATCH ");
         let mut bindings = HashMap::new();
-        let mut element_count = 0;
-        let mut population_label = String::new();
+        let mut entities = Vec::<GraphEntity>::new();
         for (index, token) in path.split(',').enumerate() {
             let (tag, names) = token.split_once(':')?;
             let (variable, label) = names.split_once(':')?;
@@ -53,16 +55,18 @@ impl GraphFragment {
                 }
                 _ => return None,
             };
-            if index <= 1 {
-                population_label = label.to_owned();
+            let first = *bindings.entry(variable).or_insert(index);
+            if first != index {
+                entities[first].unambiguous = false;
             }
-            bindings
-                .entry(variable)
-                .and_modify(|(_, _, unique)| *unique = false)
-                .or_insert((kind, label, true));
-            element_count = index + 1;
+            entities.push(GraphEntity {
+                variable: variable.to_owned(),
+                label: label.to_owned(),
+                kind,
+                unambiguous: first == index,
+            });
         }
-        if element_count % 2 != 1 {
+        if entities.len() % 2 != 1 {
             return None;
         }
 
@@ -71,16 +75,13 @@ impl GraphFragment {
         if !fields.is_empty() {
             for (index, reference) in fields.split(',').enumerate() {
                 let (variable, field) = reference.split_once('.')?;
-                let &(kind, label, unambiguous) = bindings.get(variable)?;
+                let &entity = bindings.get(variable)?;
                 if !is_identifier(field) {
                     return None;
                 }
                 slots.push(GraphProperty {
-                    variable: variable.to_owned(),
+                    entity,
                     field: field.to_owned(),
-                    label: label.to_owned(),
-                    kind,
-                    unambiguous,
                 });
                 expressions.push(format!("{reference} AS qw_col{index}"));
             }
@@ -96,9 +97,8 @@ impl GraphFragment {
         Some(Self {
             pattern,
             projection,
+            entities,
             slots,
-            steps: element_count / 2,
-            population_label,
         })
     }
 
@@ -111,22 +111,33 @@ impl GraphFragment {
     }
 
     pub(super) fn steps(&self) -> usize {
-        self.steps
+        self.entities.len() / 2
     }
 
     pub(super) fn estimate(&self, populations: &GraphPopulations) -> Option<u64> {
-        match (self.steps, populations) {
-            (0 | 1, GraphPopulations::ByTable(tables)) => {
-                tables.get(&self.population_label).copied()
+        let driver = match self.entities.as_slice() {
+            [node] => node,
+            [_, edge, _] => edge,
+            _ => return None,
+        };
+        match populations {
+            // Ladybug's catalog has a single ASCII case-insensitive table namespace.
+            GraphPopulations::ByTable(tables) => {
+                tables.get(&driver.label.to_ascii_lowercase()).copied()
             }
-            (0, GraphPopulations::ByEntity { nodes, .. }) => Some(*nodes),
-            (1, GraphPopulations::ByEntity { edges, .. }) => Some(*edges),
-            _ => None,
+            GraphPopulations::ByEntity { nodes, edges } => Some(match driver.kind {
+                EntityKind::Node => *nodes,
+                EntityKind::Edge => *edges,
+            }),
         }
     }
 
-    pub(super) fn property(&self, index: usize) -> Option<&GraphProperty> {
-        self.slots.get(index).filter(|slot| slot.unambiguous)
+    pub(super) fn property(&self, index: usize) -> Option<(&str, &str)> {
+        let slot = self.slots.get(index)?;
+        let entity = &self.entities[slot.entity];
+        entity
+            .unambiguous
+            .then_some((&entity.variable, &slot.field))
     }
 
     pub(super) fn expr(&self, index: usize) -> Option<String> {
@@ -135,6 +146,6 @@ impl GraphFragment {
         }
         self.slots
             .get(index)
-            .map(|slot| format!("{}.{}", slot.variable, slot.field))
+            .map(|slot| format!("{}.{}", self.entities[slot.entity].variable, slot.field))
     }
 }

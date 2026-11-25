@@ -89,7 +89,7 @@ fn translate(
     {
         return Ok(None);
     }
-    let Some(property) = fragment.property(index) else {
+    let Some((variable, field)) = fragment.property(index) else {
         return Ok(None);
     };
     let mut literals = Vec::with_capacity(values.len());
@@ -104,7 +104,7 @@ fn translate(
         };
         literals.push(value.to_string());
     }
-    let name = format!("{}.{}", property.variable, property.field);
+    let name = format!("{variable}.{field}");
     Ok(Some(if literals.len() == 1 {
         format!("{name} = {}", literals[0])
     } else {

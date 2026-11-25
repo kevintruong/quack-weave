@@ -27,6 +27,22 @@ EXPLAIN (ANALYZE, FORMAT JSON) SELECT id FROM flights;
 ----
 analyzed_plan	<REGEX>:.*"Estimated Cardinality": "5"[^}]*\},[^{}]*"intermediate_rows": 5,[^{}]*"name": "QW_GRAPH_QUERY".*
 
+# Ladybug resolves table names without regard to letter case, including inside views.
+statement ok
+CREATE VIEW mixed_flights AS SELECT * FROM GRAPH_TABLE (
+  lg MATCH (a:AirPort)-[e:RoUtE]->(b:AIRPORT) COLUMNS(a.code AS origin, e.rid AS id)
+) g;
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT origin FROM mixed_flights;
+----
+analyzed_plan	<REGEX>:.*"Estimated Cardinality": "5"[^}]*\},[^{}]*"intermediate_rows": 5,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM GRAPH_TABLE (lg MATCH (a:AiRpOrT) COLUMNS(a.code)) g;
+----
+analyzed_plan	<REGEX>:.*"Estimated Cardinality": "6"[^}]*\},[^{}]*"intermediate_rows": 6,[^{}]*"name": "QW_GRAPH_QUERY".*
+
 query TT
 EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM GRAPH_TABLE (lg MATCH (a:airport) COLUMNS(a.code)) g;
 ----
@@ -34,6 +50,11 @@ analyzed_plan	<REGEX>:.*"Estimated Cardinality": "6"[^}]*\},[^{}]*"intermediate_
 
 # Relate reports global populations at registration: 6 nodes, 4 edges in the fixture.
 # A query restricted to :airport or :route is estimated, so its actual rows may differ.
+statement error
+SELECT * FROM GRAPH_TABLE (rl MATCH (a:AiRpOrT) COLUMNS(a.code)) g;
+----
+QW_SCHEMA
+
 query TT
 EXPLAIN (ANALYZE, FORMAT JSON) SELECT * FROM GRAPH_TABLE (rl MATCH (a:airport) COLUMNS(a.code)) g;
 ----

@@ -42,7 +42,7 @@ pub(super) fn snapshot(path: &Path) -> Option<(GraphCatalog, BTreeMap<String, u6
         let name = CString::new(label.as_str()).ok()?;
         let mut count = 0;
         if unsafe { qw_ladybug_table_population(&connection.0, name.as_ptr(), &mut count) } {
-            populations.insert(label.clone(), count);
+            populations.insert(label.to_ascii_lowercase(), count);
         }
         let quoted = label.replace('\\', "\\\\").replace('\'', "\\\'");
         let query = format!(
