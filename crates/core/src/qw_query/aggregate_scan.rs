@@ -4,6 +4,26 @@ use super::{BoundRead, Context, GraphQuery, ProviderKind, Result, ToValue};
 
 impl TableGetBindInfoCallbacks for GraphQuery {
     fn bind_info(&self, context: &Context, bound: &BoundRead, info: BindInfoApi<'_>) -> Result<()> {
+        info.set_option("qw_provider", &bound.provider.kind.name().value(context)?)?;
+        let mode = match bound.fragment.as_ref() {
+            None => "native",
+            Some(fragment)
+                if bound.cypher
+                    != format!("{} RETURN {}", fragment.pattern(), fragment.projection()) =>
+            {
+                "literal"
+            }
+            Some(_)
+                if bound.config.config.max_batch_bytes.is_some()
+                    || bound.config.config.timeout_ms.is_some() =>
+            {
+                "limit"
+            }
+            Some(_) if !bound.allows_pgq_rewrite() => "catalog",
+            Some(_) if bound.static_predicate_sql()?.is_some() => "static",
+            Some(_) => "pattern",
+        };
+        info.set_option("qw_scan_mode", &mode.value(context)?)?;
         if bound.allows_pgq_rewrite()
             && let Some(fragment) = &bound.fragment
         {

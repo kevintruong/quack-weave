@@ -1,0 +1,88 @@
+# name: test/relate/graph_explain.test
+# description: EXPLAIN describes the provider boundary without echoing graph paths, literals or watch keys
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_RELATE UNSET_QW_RELATE
+
+test-env QW_LADYBUG UNSET_QW_LADYBUG
+
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"routes","path":"{QW_RELATE}"}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"lady","path":"{QW_LADYBUG}"}';
+
+statement ok
+CREATE VIEW edges AS SELECT * FROM GRAPH_TABLE (routes MATCH (o:airport)-[r:route]->(d:airport)
+    COLUMNS(r.rid AS id, d.code AS dest)) g;
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT dest FROM edges WHERE id = 201;
+----
+analyzed_plan	<REGEX>:.*"Graph Provider": "RelateDB"[^}]*"Graph Operation": "Static prefilter"[^}]*"DuckDB Residual": "SQL predicate".*
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT dest FROM edges;
+----
+analyzed_plan	<REGEX>:.*"Graph Provider": "RelateDB"[^}]*"Graph Operation": "Pattern scan".*
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT dest FROM edges WHERE length(dest)>2;
+----
+analyzed_plan	<REGEX>:.*"Graph Operation": "Pattern scan"[^}]*"Fallback Reason": "Unsupported relational operation".*
+
+statement ok
+SESSION SET GRAPH lady;
+
+statement ok
+PREPARE graph_read AS MATCH (o:airport) RETURN o.code AS code;
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE graph_read;
+----
+analyzed_plan	<REGEX>:.*"Graph Provider": "Ladybug"[^}]*"Graph Operation": "Native graph read".*
+
+# The native statement carries sensitive text as a graph value. The plan's
+# operator descriptions must not echo it or either fixture file path.
+query TT
+EXPLAIN (FORMAT JSON) SELECT * FROM qw_query('routes', 'cypher',
+  'MATCH (o:airport) WHERE o.code = ''example_secret_marker'' RETURN o.code AS code', schema := 'code VARCHAR');
+----
+physical_plan	<!REGEX>:(?s).*(example_secret_marker|routes[.]rl|routes[.]lbdb).*
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT sum(id%11) FROM edges;
+----
+analyzed_plan	<REGEX>:.*"Graph Provider": "RelateDB"[^}]*"Graph Operation": "Delegated scalar aggregate".*
+
+statement ok
+CREATE TABLE watch(id BIGINT);
+
+statement ok
+INSERT INTO watch VALUES (201),(202);
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT id FROM edges JOIN watch USING(id);
+----
+analyzed_plan	<REGEX>:.*"Graph Operation": "Optional runtime prefilter"[^}]*"DuckDB Residual": "SQL join".*
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"routes","path":"{QW_RELATE}","max_batch_bytes":65536}';
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT sum(id%11) FROM edges;
+----
+analyzed_plan	<REGEX>:.*"Graph Operation": "Pattern scan"[^}]*"Fallback Reason": "Explicit resource limit".*
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"routes","path":"{QW_RELATE}","catalog":{"airport":{"code":"VARCHAR"},"route":{"rid":"BIGINT"}}}';
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT dest FROM edges WHERE id=202;
+----
+analyzed_plan	<REGEX>:.*"Graph Operation": "Pattern scan"[^}]*"Fallback Reason": "Declared property catalog".*

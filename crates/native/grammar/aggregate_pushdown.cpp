@@ -1,4 +1,5 @@
 #include "aggregate_pushdown.hpp"
+#include "graph_explain.hpp"
 
 #include <limits>
 
@@ -200,6 +201,7 @@ void PushAggregate(OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &
 	auto rebound = AggregateGeneration(GraphBindInfo(input.context, get));
 	if (!rebound.IsValid() || rebound.GetIndex() != generation.GetIndex())
 		return;
+	QwMarkDelegatedAggregate(get, relate);
 	get.ClearColumnIds();
 	vector<unique_ptr<Expression>> results;
 	for (idx_t i = 0; i < types.size(); ++i) {

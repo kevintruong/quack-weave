@@ -110,7 +110,12 @@ fn build_graph_grammar(manifest: &Path, out: &Path) {
         "cargo:rerun-if-changed={}",
         sources.join("aggregate_pushdown.hpp").display()
     );
+    println!(
+        "cargo:rerun-if-changed={}",
+        sources.join("graph_explain.hpp").display()
+    );
     for unit in [
+        "graph_explain",
         "standalone",
         "graph_table",
         "watchlist",
