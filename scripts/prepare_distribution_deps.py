@@ -44,7 +44,8 @@ def build_openssl():
         subprocess.run(["perl", str(source / "Configure"), "no-shared", "no-tests",
                         "no-apps", "no-docs", "-fPIC"], cwd=staging, check=True)
         jobs = len(os.sched_getaffinity(0))
-        subprocess.run(["make", f"-j{jobs}", "libcrypto.a", "libssl.a"], cwd=staging, check=True)
+        # OpenSSL's public target generates the headers before compiling the libraries.
+        subprocess.run(["make", f"-j{jobs}", "build_libs"], cwd=staging, check=True)
         package = staging / destination.name
         package.mkdir()
         for file in required[:2]:
