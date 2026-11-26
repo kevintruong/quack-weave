@@ -6,7 +6,7 @@
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
-EXTENSION_NAME=rusty_quack
+EXTENSION_NAME ?= rusty_quack
 
 # Mark the extension as C_STRUCT_UNSTABLE: DuckDB 2.x requires the _init_c_api_v2 entrypoint.
 # Binaries load only in the exact TARGET_DUCKDB_VERSION, not in newer DuckDB releases.
@@ -16,6 +16,30 @@ CAPI_VERSION=2
 # Target DuckDB version
 TARGET_DUCKDB_VERSION=v2.0.1
 
+ifeq ($(EXTENSION_NAME),quack_weave)
+.PHONY: configure_ci release test_release community-deps
+COMMUNITY_ARTIFACT := build/release/extension/quack_weave/quack_weave.duckdb_extension
+COMMUNITY_TOOLS := $(abspath build/deps/gql-antlr)
+COMMUNITY_PYTHON ?= $(or $(wildcard /opt/python/cp312-cp312/bin/python),python3)
+COMMUNITY_DUCKDB := $(COMMUNITY_TOOLS)/duckdb-cli-$(DUCKDB_PLATFORM)/duckdb
+COMMUNITY_LBUG := $(COMMUNITY_TOOLS)/ladybug-cli-$(DUCKDB_PLATFORM)/lbug
+ifeq ($(shell uname -s),Linux)
+export OPENSSL_LIB_DIR := $(COMMUNITY_TOOLS)/openssl-static
+endif
+
+configure_ci:
+
+community-deps: native-deps
+	$(COMMUNITY_PYTHON) -B scripts/prepare_distribution_deps.py $(DUCKDB_PLATFORM)
+
+release: community-deps
+	$(call package_native,$(NATIVE_CARGO_DIR),--release,release,$(COMMUNITY_ARTIFACT))
+	$(call check_community_release)
+
+test_release:
+	$(call check_community_release)
+
+else
 all: configure debug
 
 # Include makefiles from DuckDB
@@ -41,14 +65,20 @@ test_release: test_extension_release
 
 clean: clean_build clean_rust
 clean_all: clean_configure clean
+endif
 
-# Native ARM64 packages.
+# Native packages with pinned vendor archives.
 NATIVE_EXTENSION_VERSION := v0.2.0
-ifeq ($(shell uname -s),Linux)
+NATIVE_HOST := $(shell uname -s):$(shell uname -m)
+ifeq ($(NATIVE_HOST),Linux:aarch64)
 NATIVE_TARGET := aarch64-unknown-linux-gnu
 NATIVE_PLATFORM := linux_arm64
 NATIVE_SUFFIX := so
-else
+else ifeq ($(NATIVE_HOST),Linux:x86_64)
+NATIVE_TARGET := x86_64-unknown-linux-gnu
+NATIVE_PLATFORM := linux_amd64
+NATIVE_SUFFIX := so
+else ifeq ($(NATIVE_HOST),Darwin:arm64)
 NATIVE_TARGET := aarch64-apple-darwin
 NATIVE_PLATFORM := osx_arm64
 NATIVE_SUFFIX := dylib
@@ -61,7 +91,7 @@ NATIVE_DEBUG_ARTIFACT ?= build/native/debug/extension/quack_weave/quack_weave.du
 NATIVE_RELEASE_ARTIFACT ?= build/native/release/extension/quack_weave/quack_weave.duckdb_extension
 NEO4J_TLS_TEST_ARTIFACT := build/native/test-tls/extension/quack_weave/quack_weave.duckdb_extension
 
-PYTHON_BIN ?= python3
+PYTHON_BIN ?= $(or $(COMMUNITY_PYTHON),python3)
 DUCKDB ?= duckdb
 LBUG ?= lbug
 ifneq ($(wildcard build/benchmark-host/release/src/libduckdb.$(NATIVE_SUFFIX)),)
@@ -78,7 +108,8 @@ native-deps:
 	$(PYTHON_BIN) -B scripts/prepare_gql_deps.py
 
 define build_native
-	@case "$$(uname -s):$$(uname -m)" in Darwin:arm64|Linux:aarch64) ;; *) echo "Expected a native ARM64 builder" >&2; exit 1;; esac
+	@test -n '$(NATIVE_TARGET)' || { echo 'Unsupported native build host $(NATIVE_HOST)' >&2; exit 1; }
+	@test -z '$(DUCKDB_PLATFORM)' || test '$(DUCKDB_PLATFORM)' = '$(NATIVE_PLATFORM)' || { echo 'DuckDB platform $(DUCKDB_PLATFORM) does not match native host $(NATIVE_HOST)' >&2; exit 1; }
 	cargo build --locked --package rusty_quack --target $(NATIVE_TARGET) --target-dir '$(1)' $(2)
 endef
 
@@ -89,9 +120,13 @@ endef
 
 define check_native
 	QUACK_WEAVE_TEST_ARTIFACT='$(1)' $(PYTHON_BIN) -B test/native_package_test.py
-	$(PYTHON_BIN) -B test/cypher_acceptance.py --duckdb '$(DUCKDB)' --lbug '$(LBUG)' --extension '$(1)'
-	$(PYTHON_BIN) -B test/gql_bind_test.py --duckdb '$(DUCKDB)' --lbug '$(LBUG)' --extension '$(1)'
-	$(PYTHON_BIN) -B test/gql_acceptance.py --duckdb '$(DUCKDB)' --lbug '$(LBUG)' --extension '$(1)'
+	$(PYTHON_BIN) -B test/cypher_acceptance.py --duckdb '$(or $(2),$(DUCKDB))' --lbug '$(or $(3),$(LBUG))' --extension '$(1)'
+	$(PYTHON_BIN) -B test/gql_bind_test.py --duckdb '$(or $(2),$(DUCKDB))' --lbug '$(or $(3),$(LBUG))' --extension '$(1)'
+	$(PYTHON_BIN) -B test/gql_acceptance.py --duckdb '$(or $(2),$(DUCKDB))' --lbug '$(or $(3),$(LBUG))' --extension '$(1)'
+endef
+
+define check_community_release
+	$(call check_native,$(COMMUNITY_ARTIFACT),$(COMMUNITY_DUCKDB),$(COMMUNITY_LBUG))
 endef
 
 native:

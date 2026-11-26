@@ -51,6 +51,13 @@ def install_duckdb_headers():
     # Grammar extensions use DuckDB's exact C++ ABI. A shallow checkout verifies
     # the source identity independently of the platform of the loading process.
     destination = ROOT.parent / f"duckdb-{DUCKDB_REVISION}"
+    checkout = ROOT.parents[2] / "duckdb"
+    if not destination.exists() and (checkout / "src/include/duckdb.hpp").is_file():
+        verify_duckdb_revision(checkout)
+        try:
+            destination.symlink_to(checkout, target_is_directory=True)
+        except FileExistsError:
+            pass
     if not destination.exists():
         with tempfile.TemporaryDirectory(dir=ROOT.parent) as directory:
             staged = pathlib.Path(directory) / "source"
@@ -72,12 +79,13 @@ def main():
     install_duckdb_headers()
     target, checksum = {
         ("Linux", "aarch64"): ("linux-arm64", "3d581ff935f1836363cc459e640737cdc1892ab3ed69e74853e93f01d9d071f0"),
+        ("Linux", "x86_64"): ("linux-amd64", "2d5655fd5948dfb0cd16df5fc8f7cdf0b37948374cf0629af995cf4a5e3a4c82"),
         ("Darwin", "arm64"): ("osx-arm64", "adaada35202db67d010b06277320aa700f1313d9997b549a948349c9fd749a41"),
     }[platform.system(), platform.machine()]
     asset = f"duckdb-static-libs-{target}.tar.gz"
     install(
         asset, f"https://github.com/duckdb/duckdb/releases/download/v2.0.1/{asset}", checksum,
-        "duckdb-static-v2.0.1-linux-arm64" if target == "linux-arm64" else "duckdb-static-v2.0.1",
+        f"duckdb-static-v2.0.1-{target}" if target.startswith("linux-") else "duckdb-static-v2.0.1",
         "libduckdb_static.a",
         flat=True,
     )

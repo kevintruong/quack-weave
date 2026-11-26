@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -32,6 +33,49 @@ class NativePackageTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("scripts/package_native.py", result.stdout)
         self.assertIn("build/native/debug/extension/quack_weave/quack_weave.duckdb_extension", result.stdout)
+
+    def test_community_release_builds_the_product_for_requested_platform(self):
+        targets = (
+            ("Linux", "x86_64", "linux_amd64", "x86_64-unknown-linux-gnu"),
+            ("Linux", "aarch64", "linux_arm64", "aarch64-unknown-linux-gnu"),
+            ("Darwin", "arm64", "osx_arm64", "aarch64-apple-darwin"),
+        )
+        for system, machine, platform, target in targets:
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as directory:
+                uname = pathlib.Path(directory) / "uname"
+                uname.write_text(f'#!/bin/sh\ncase "$1" in -s) echo {system};; -m) echo {machine};; esac\n')
+                uname.chmod(0o755)
+                env = {**os.environ, "PATH": f"{directory}:{os.environ['PATH']}",
+                       "EXTENSION_NAME": "quack_weave", "DUCKDB_PLATFORM": platform}
+                result = subprocess.run(["make", "-n", "release"], cwd=ROOT, env=env,
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f"--target {target}", result.stdout)
+                self.assertIn("build/release/extension/quack_weave/quack_weave.duckdb_extension", result.stdout)
+                self.assertNotIn("template-compat", result.stdout)
+
+    def test_linux_amd64_dependency_archives(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        try:
+            import prepare_gql_deps
+            import prepare_ladybug_deps
+        finally:
+            sys.path.pop(0)
+        for module, call, asset in (
+            (prepare_gql_deps, "install", "duckdb-static-libs-linux-amd64.tar.gz"),
+            (prepare_ladybug_deps, "install_archive", "liblbug-static-linux-x86_64-compat.tar.gz"),
+        ):
+            with self.subTest(asset=asset), tempfile.TemporaryDirectory() as directory:
+                with patch.object(module, "ROOT", pathlib.Path(directory)), \
+                     patch.object(module.platform, "system", return_value="Linux"), \
+                     patch.object(module.platform, "machine", return_value="x86_64"), \
+                     patch.object(module, call) as install:
+                    if module is prepare_gql_deps:
+                        with patch.object(module, "install_duckdb_headers"):
+                            module.main()
+                    else:
+                        module.main()
+                self.assertEqual(install.call_args_list[0].args[0], asset)
 
     def test_footer_identifies_exact_unstable_duckdb_abi(self):
         sys.path.insert(0, str(ROOT / "scripts"))
@@ -62,12 +106,27 @@ class NativePackageTest(unittest.TestCase):
         self.assertNotIn("gql", native["features"])
 
     @unittest.skipUnless(os.environ.get("QUACK_WEAVE_TEST_ARTIFACT"), "requires a native package")
+    def test_native_package_includes_the_project_license(self):
+        artifact = pathlib.Path(os.environ["QUACK_WEAVE_TEST_ARTIFACT"])
+        notices = artifact.parent / "licenses"
+        package_without_footer = artifact.read_bytes()[:-512]
+        for license_name in ("QuackWeave-LICENSE", "Ladybug-LICENSE", "OpenSSL-LICENSE.txt"):
+            with self.subTest(license=license_name):
+                license_file = notices / license_name
+                self.assertTrue(license_file.is_file(), f"Missing {license_name} in {artifact.parent}")
+                if license_name == "QuackWeave-LICENSE":
+                    self.assertEqual(license_file.read_bytes(), (ROOT / "LICENSE").read_bytes())
+                self.assertIn(license_file.read_bytes(), package_without_footer)
+
+    @unittest.skipUnless(os.environ.get("QUACK_WEAVE_TEST_ARTIFACT"), "requires a native package")
     def test_native_binary_uses_only_system_runtime_dependencies(self):
         artifact = os.environ["QUACK_WEAVE_TEST_ARTIFACT"]
         imports, symbols = native_dependencies(artifact)
         self.assertTrue(imports)
         if sys.platform == "linux":
-            system = {"libc.so.6", "libstdc++.so.6", "libgcc_s.so.1", "libm.so.6", "ld-linux-aarch64.so.1"}
+            system = {"libc.so.6", "libstdc++.so.6", "libgcc_s.so.1", "libm.so.6",
+                      "libdl.so.2", "libpthread.so.0", "librt.so.1",
+                      "ld-linux-aarch64.so.1", "ld-linux-x86-64.so.2"}
             self.assertTrue(set(imports) <= system, imports)
         else:
             self.assertTrue(all(dep.startswith(("/usr/lib/", "/System/Library/")) for dep in imports), imports)

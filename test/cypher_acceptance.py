@@ -115,6 +115,22 @@ def run_cases(duckdb_binary, lbug, extension, graph):
     select = f"SELECT * FROM {graph_query(TRAVERSAL)};\n"
 
     expect_rows(duckdb(duckdb_binary, setup + select), [["101"]])
+    expect_rows(
+        duckdb(duckdb_binary, load + "SELECT provider_id FROM qw_graph_providers() ORDER BY 1;\n"),
+        [["ladybug"], ["neo4j"], ["relate"]],
+    )
+    expect_rows(
+        duckdb(duckdb_binary, setup + """
+            SELECT document_id
+            FROM GRAPH_TABLE (
+                kg MATCH (src:Document)-[edge:LINKS_TO]->(dst:Document)
+                WHERE src.id = 100
+                COLUMNS (dst.id AS document_id)
+            );
+        """),
+        [["101"]],
+    )
+    print("PASS all_providers_and_graph_table")
     print("PASS normal_graph_read")
     multi_hop = graph_query(
         "MATCH (src:Document {id: 100})-[:LINKS_TO*1..2]->(dst:Document) "

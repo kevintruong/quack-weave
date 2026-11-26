@@ -58,13 +58,16 @@ def main():
     elif system == ("Linux", "aarch64"):
         asset = "liblbug-static-linux-aarch64-compat.tar.gz"
         checksum = "4bf57a7ccd46f96765aa10a9b797f2e01f4390fd40484d74110f943e766359d8"
+    elif system == ("Linux", "x86_64"):
+        asset = "liblbug-static-linux-x86_64-compat.tar.gz"
+        checksum = "269bdde6173a35ba4a4e885ac187c37965df2becdbc4a48311651d3654f0e07a"
     else:
         raise SystemExit(f"Unsupported native target {system}")
 
     ROOT.mkdir(parents=True, exist_ok=True)
     install_archive(
         asset, f"{RELEASE}/{asset}", checksum,
-        "static-linux-aarch64" if system[0] == "Linux" else "static",
+        f"static-linux-{system[1]}" if system[0] == "Linux" else "static",
         "liblbug.a",
     )
     install_archive(

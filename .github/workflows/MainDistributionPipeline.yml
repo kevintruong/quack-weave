@@ -4,7 +4,7 @@
 name: Main Extension Distribution Pipeline
 on:
   push:
-    branches: [main]
+    branches: [main, community-registration]
   pull_request:
   workflow_dispatch:
 
@@ -18,7 +18,9 @@ jobs:
     uses: duckdb/extension-ci-tools/.github/workflows/_extension_distribution.yml@v2.0-cyanoptera
     with:
       duckdb_version: v2.0.1
+      duckdb_commit: 8d78114e90a53823803660bf821f6073ac87da8c
       ci_tools_version: v2.0-cyanoptera
-      extension_name: rusty_quack
-      extra_toolchains: rust;python3
-      exclude_archs: 'linux_amd64_musl'
+      extension_name: quack_weave
+      extra_toolchains: rust
+      reduced_ci_mode: disabled
+      exclude_archs: windows_amd64;windows_amd64_mingw;wasm_mvp;wasm_eh;wasm_threads

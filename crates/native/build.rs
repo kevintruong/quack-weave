@@ -17,12 +17,13 @@ fn main() {
     let native = manifest_dir.join("src/ladybug_admission.cpp");
     let source = configured("LADYBUG_SOURCE_DIR", pinned.join("ladybug-0.22.3"));
     let macos = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos");
+    let arch = env::var("CARGO_CFG_TARGET_ARCH").expect("Cargo target architecture");
     let library = configured(
         "LADYBUG_LIB_DIR",
         pinned.join(if macos {
-            "static"
+            "static".to_owned()
         } else {
-            "static-linux-aarch64"
+            format!("static-linux-{arch}")
         }),
     );
     let ssl = env::var_os("OPENSSL_LIB_DIR")
@@ -197,11 +198,15 @@ fn build_duckdb_shims(manifest: &Path, out: &Path, neo4j: bool) {
     // Upstream EXTENSION_STATIC_BUILD links DuckDB privately so loaders using
     // RTLD_LOCAL can resolve the C++ ABI. Keep only referenced symbols.
     let macos = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos");
-    let libraries = manifest.join("../../build/deps/gql-antlr").join(if macos {
-        "duckdb-static-v2.0.1"
-    } else {
-        "duckdb-static-v2.0.1-linux-arm64"
-    });
+    let library_dir = match (macos, env::var("CARGO_CFG_TARGET_ARCH").as_deref()) {
+        (true, Ok("aarch64")) => "duckdb-static-v2.0.1",
+        (false, Ok("aarch64")) => "duckdb-static-v2.0.1-linux-arm64",
+        (false, Ok("x86_64")) => "duckdb-static-v2.0.1-linux-amd64",
+        _ => panic!("Unsupported native DuckDB target"),
+    };
+    let libraries = manifest
+        .join("../../build/deps/gql-antlr")
+        .join(library_dir);
     let archive = libraries.join("libduckdb_static.a");
     require_file(&archive, "Run make native-deps.");
     if macos {

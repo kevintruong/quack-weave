@@ -6,16 +6,16 @@ QuackWeave is a read-only graph extension for DuckDB. Its SQL/PGQ interface embe
 
 ## Build and query a graph
 
-Build one QuackWeave extension for DuckDB `v2.0.1` on Linux ARM64 or macOS ARM64. It includes Ladybug `v0.22.3`, RelateDB `v1.2.0`, and Neo4j AuraDB. Load it once, then register the graphs you want to query.
+Build one QuackWeave extension for DuckDB `v2.0.1` on Linux x86-64, Linux ARM64, or macOS ARM64. It includes Ladybug `v0.22.3`, RelateDB `v1.2.0`, and Neo4j AuraDB. Load it once, then register the graphs you want to query.
 
-Install Rust, a C++20 compiler, CMake, Python 3.12 or later, and OpenSSL 3 static libraries. The build locates OpenSSL through Homebrew or `OPENSSL_LIB_DIR`. On Ubuntu 24.04 ARM64 set `CXX=g++-13` and `OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu`.
+Install Rust, a C++20 compiler, CMake, Python 3.12 or later, and OpenSSL 3 static libraries. The build locates OpenSSL through Homebrew or `OPENSSL_LIB_DIR`. On Ubuntu 24.04 set `CXX=g++-13` and `OPENSSL_LIB_DIR=/usr/lib/$(gcc -dumpmachine)`.
 
 ```sh
 make native-deps && make native-release
 /path/to/duckdb-v2.0.1 -unsigned
 ```
 
-The commands build `build/native/release/extension/quack_weave/quack_weave.duckdb_extension`. Plain `make` produces the corresponding debug package in `build/native/debug/`. The adjacent `licenses/` directory contains the notices for the pinned DuckDB, DuckGQL, openGQL, ANTLR, and RelateDB sources.
+The commands build `build/native/release/extension/quack_weave/quack_weave.duckdb_extension`. Plain `make` produces the corresponding debug package in `build/native/debug/`. The package contains the Quack Weave and third-party license notices. Local builds also write those notices to the adjacent `licenses/` directory.
 
 Open an existing Ladybug graph with `Document` nodes and `LINKS_TO` relationships. `GRAPH_TABLE` makes the matches available to standard SQL.
 
@@ -481,3 +481,7 @@ with the following error on extension load:
 IO Error: Extension '<name>.duckdb_extension' could not be loaded: The specified module could not be found
 ```
 This was resolved by using python 3.12
+
+## License
+
+Quack Weave is distributed under the [Apache License 2.0](LICENSE). Third-party components retain their respective licenses.
