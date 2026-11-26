@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use duckdb_neo::table_function::InitColumnData;
 
-use super::{BoundRead, ColumnSpec, Error, Result};
+use super::{BoundRead, ColumnSpec, Context, Error, Result, runtime_watch};
 
 pub(super) struct ScanProjection {
     query: Option<String>,
@@ -14,7 +14,11 @@ pub(super) struct ScanProjection {
 }
 
 impl ScanProjection {
-    pub(super) fn new(bound: &BoundRead, columns: InitColumnData<'_>) -> Result<Self> {
+    pub(super) fn new(
+        context: &Context,
+        bound: &BoundRead,
+        columns: InitColumnData<'_>,
+    ) -> Result<Self> {
         // For count(*) / SELECT 1 the pinned C API requests the first physical
         // column as its row carrier. The grammar supplies qw_row for a constant-only projection.
         let requested = (0..columns.count()?)
@@ -25,27 +29,39 @@ impl ScanProjection {
                 "Graph scan received an unknown output column",
             ));
         }
-        let original = |output_columns| Self {
-            query: bound.watch.as_ref().and_then(|watch| {
+        let original = |output_columns| {
+            let query = if let Some(watch) = &bound.watch
+                && runtime_watch::enabled(context)?
+            {
                 watch.query(&bound.provider.backend.runtime_watch_keys(watch.column))
-            }),
-            schema: None,
-            output_columns,
+            } else {
+                None
+            };
+            Ok(Self {
+                query,
+                schema: None,
+                output_columns,
+            })
         };
         let Some(fragment) = bound
             .fragment
             .as_ref()
             .filter(|_| bound.allows_pgq_rewrite())
         else {
-            return Ok(original(requested));
+            return original(requested);
         };
         // Legacy literal watchlists can bind an already filtered native query.
         // Preserve that read instead of replacing its existing predicate.
         let base = format!("{} RETURN {}", fragment.pattern(), fragment.projection());
         if base != bound.cypher {
-            return Ok(original(requested));
+            return original(requested);
         }
-        let predicates: Vec<_> = [bound.static_predicate_sql()?, bound.runtime_predicate()]
+        let runtime_predicate = if runtime_watch::enabled(context)? {
+            bound.runtime_predicate()
+        } else {
+            None
+        };
+        let predicates: Vec<_> = [bound.static_predicate_sql()?, runtime_predicate]
             .into_iter()
             .flatten()
             .collect();

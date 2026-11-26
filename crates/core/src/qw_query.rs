@@ -841,12 +841,15 @@ impl TableFunctionCallbacks for GraphQuery {
 
     fn init_local_state(
         &self,
-        _: &Context,
+        context: &Context,
         bound: &BoundRead,
         _: Option<&()>,
         columns: InitColumnData<'_>,
     ) -> Result<Option<Self::LocalState>> {
-        Ok(Some((Scan::Dormant, ScanProjection::new(bound, columns)?)))
+        Ok(Some((
+            Scan::Dormant,
+            ScanProjection::new(context, bound, columns)?,
+        )))
     }
 
     fn max_threads(
@@ -960,6 +963,7 @@ pub fn register_query(
 ) -> Result<ProviderRegistry> {
     let providers = ProviderRegistry::new(providers)?;
     remote::register(extension)?;
+    runtime_watch::register(extension)?;
     providers.register_options(extension)?;
     TableFunctionBuilder::new(
         "qw_graph_providers",

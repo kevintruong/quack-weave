@@ -1,9 +1,63 @@
 //! Recognize the grammar's direct-property scan before applying an execution-time key filter.
 //! The internal table function can also be called from SQL, so validate its hints against
 //! the actual pattern and projection before moving a predicate into the provider.
+use duckdb_neo::{
+    DuckDBType, FromValue, Result, ToValue,
+    connection::{Context, SettingScope},
+    custom_option::{CustomOptionBuilder, CustomOptionCallbacks},
+    error::Error,
+    extension::Extension,
+    value::Value,
+};
+
 use super::{BoundRead, ScalarType, is_identifier};
 
 pub(super) const MAX_KEYS: usize = 64;
+const ENABLE_WATCHLIST: &str = "qw_enable_runtime_watchlist";
+
+struct WatchlistOption;
+
+impl CustomOptionCallbacks for WatchlistOption {
+    fn update(
+        &self,
+        context: &Context,
+        value: Value,
+        scope: SettingScope,
+        is_reset: bool,
+    ) -> Result<Value> {
+        if !matches!(scope, SettingScope::Session) {
+            return Err(Error::invalid_input(
+                "QW_CONFIG: Use SET SESSION for qw_enable_runtime_watchlist",
+            ));
+        }
+        if is_reset {
+            return true.value(context);
+        }
+        if bool::from_value(&value)?.is_none() {
+            return Err(Error::invalid_input(
+                "QW_CONFIG: Expected a boolean for qw_enable_runtime_watchlist",
+            ));
+        }
+        Ok(value)
+    }
+}
+
+pub(super) fn register(extension: &Extension) -> Result<()> {
+    CustomOptionBuilder::new(
+        ENABLE_WATCHLIST,
+        "Apply exact execution-local watchlist keys to QuackWeave graph reads",
+        bool::logical_type(extension)?,
+        WatchlistOption,
+    )
+    .default_value(true.value(extension)?)
+    .default_scope(SettingScope::Session)
+    .register(extension)
+}
+
+pub(super) fn enabled(context: &Context) -> Result<bool> {
+    let (value, _) = context.config()?.get_value(ENABLE_WATCHLIST)?;
+    Ok(bool::from_value(&value)? == Some(true))
+}
 
 impl BoundRead {
     /// DuckDB supplies optional filters only during initialization of this

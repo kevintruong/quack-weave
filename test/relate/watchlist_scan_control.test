@@ -1,0 +1,80 @@
+# name: test/relate/watchlist_scan_control.test
+# description: Change QuackWeave's runtime prefilter without disabling the DuckDB join optimizer.
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_RELATE UNSET_QW_RELATE
+
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"routes","path":"{QW_RELATE}"}';
+
+statement ok
+CREATE TEMP TABLE watch(k BIGINT);
+
+statement ok
+INSERT INTO watch VALUES (202),(202),(NULL);
+
+statement ok
+PREPARE watched AS SELECT k, g.distance FROM GRAPH_TABLE (
+    routes MATCH (a:airport)-[r:route]->(b:airport) COLUMNS(r.rid AS k, r.dist AS distance)
+) g JOIN watch USING(k);
+
+query II rowsort
+EXECUTE watched;
+----
+202	600
+202	600
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE watched;
+----
+analyzed_plan	<REGEX>:.*"name": "HASH_JOIN".*"intermediate_rows": 1,[^{}]*"name": "QW_GRAPH_QUERY[^\"]*".*
+
+statement ok
+SET SESSION qw_enable_runtime_watchlist = false;
+
+query T
+SELECT contains(current_setting('disabled_optimizers'), 'join_filter_pushdown')::VARCHAR;
+----
+false
+
+query T other_connection
+SELECT current_setting('qw_enable_runtime_watchlist')::VARCHAR;
+----
+true
+
+query II rowsort
+EXECUTE watched;
+----
+202	600
+202	600
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE watched;
+----
+analyzed_plan	<REGEX>:.*"name": "HASH_JOIN".*"intermediate_rows": 3,[^{}]*"name": "QW_GRAPH_QUERY[^\"]*".*
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) SELECT g.distance FROM GRAPH_TABLE (
+    routes MATCH (a:airport)-[r:route]->(b:airport) COLUMNS(r.rid AS k, r.dist AS distance)
+) g WHERE g.k = 202;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 1,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+statement ok
+RESET SESSION qw_enable_runtime_watchlist;
+
+query II rowsort
+EXECUTE watched;
+----
+202	600
+202	600
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE watched;
+----
+analyzed_plan	<REGEX>:.*"name": "HASH_JOIN".*"intermediate_rows": 1,[^{}]*"name": "QW_GRAPH_QUERY[^\"]*".*
