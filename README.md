@@ -1,55 +1,57 @@
 # Latest main benchmark report
 
-[Archived attempt and raw data](main/d9e4a395038c54d3e3cb2e9619d5213d20ba2164/45732040345-1/)
+[Archived attempt and raw data](main/54b2db6047ca5dacf702382200298b894e33ca10/45798658494-1/)
 
-### Benchmark `d9e4a395038c` · passed
+### Benchmark `54b2db6047ca` · passed
 
 github-hosted/ubuntu-24.04-arm/arm64 · protocol 2 · 3,809,607 edges · 30 series · 600 warm samples.
 
-Compared with main commit `193c286db665` on the same runner. The two releases alternated order across measurement blocks.
+Compared with main commit `01a9f5abdbf9` on the same runner. The two releases alternated order across measurement blocks.
 
 Latency is advisory. A rise of 10% or more in either p50 or p95 warrants review. Negative changes mean faster queries.
 
-**1 workloads with regressions · 22 with faster timings**
+**3 workloads with regressions · 27 with faster timings**
 
-- ladybug/direct_cypher/lookup_miss (p50 +10.3%, p95 +23.4%)
+- ladybug/qw_gql/fanout (p95 +11.5%)
+- ladybug/qw_gql/lookup (p95 +13.8%)
+- ladybug/qw_gql/lookup_miss (p95 +21.3%)
 
 #### Standalone graph queries
 
 | Provider | Route | Workload | Samples | p50 (ms) | p95 (ms) | p50 / direct | Baseline p50 (ms) | p50 change | Baseline p95 (ms) | p95 change |
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| ladybug | direct_cypher | fanout | 20 | 4.336 | 4.569 | — | 4.356 | **-0.5% faster** | 4.483 | +1.9% acceptable |
-| ladybug | direct_cypher | lookup | 20 | 1.069 | 1.253 | — | 1.031 | +3.7% acceptable | 1.148 | +9.2% acceptable |
-| ladybug | direct_cypher | lookup_miss | 20 | 0.368 | 0.553 | — | 0.334 | **+10.3% regression** | 0.448 | **+23.4% regression** |
-| ladybug | qw_cypher | fanout | 20 | 5.544 | 6.006 | 1.28× | 5.435 | +2.0% acceptable | 5.994 | +0.2% acceptable |
-| ladybug | qw_cypher | lookup | 20 | 1.779 | 2.600 | 1.66× | 1.877 | **-5.2% faster** | 2.605 | **-0.2% faster** |
-| ladybug | qw_cypher | lookup_miss | 20 | 1.899 | 2.567 | 5.16× | 1.772 | +7.2% acceptable | 2.629 | **-2.4% faster** |
-| ladybug | qw_gql | fanout | 20 | 5.859 | 6.240 | 1.35× | 5.759 | +1.7% acceptable | 6.013 | +3.8% acceptable |
-| ladybug | qw_gql | lookup | 20 | 2.112 | 2.737 | 1.98× | 2.065 | +2.3% acceptable | 2.600 | +5.3% acceptable |
-| ladybug | qw_gql | lookup_miss | 20 | 2.130 | 2.586 | 5.78× | 2.028 | +5.0% acceptable | 2.515 | +2.8% acceptable |
-| relate | direct_cypher | fanout | 20 | 10.849 | 11.178 | — | 10.919 | **-0.6% faster** | 11.059 | +1.1% acceptable |
-| relate | direct_cypher | lookup | 20 | 0.191 | 0.336 | — | 0.187 | +2.2% acceptable | 0.344 | **-2.5% faster** |
-| relate | direct_cypher | lookup_miss | 20 | 0.260 | 0.445 | — | 0.273 | **-4.8% faster** | 0.428 | +4.2% acceptable |
-| relate | qw_cypher | fanout | 20 | 11.590 | 11.774 | 1.07× | 11.341 | +2.2% acceptable | 11.797 | **-0.2% faster** |
-| relate | qw_cypher | lookup | 20 | 2.171 | 2.787 | 11.36× | 2.166 | +0.3% acceptable | 3.007 | **-7.3% faster** |
-| relate | qw_cypher | lookup_miss | 20 | 2.207 | 2.770 | 8.50× | 2.158 | +2.3% acceptable | 2.724 | +1.7% acceptable |
-| relate | qw_gql | fanout | 20 | 11.671 | 12.141 | 1.08× | 11.717 | **-0.4% faster** | 12.224 | **-0.7% faster** |
-| relate | qw_gql | lookup | 20 | 2.314 | 3.038 | 12.11× | 2.513 | **-7.9% faster** | 3.139 | **-3.2% faster** |
-| relate | qw_gql | lookup_miss | 20 | 2.420 | 2.998 | 9.32× | 2.542 | **-4.8% faster** | 3.275 | **-8.4% faster** |
+| ladybug | direct_cypher | fanout | 20 | 4.322 | 4.410 | — | 4.318 | +0.1% acceptable | 4.364 | +1.1% acceptable |
+| ladybug | direct_cypher | lookup | 20 | 1.038 | 1.168 | — | 1.040 | **-0.1% faster** | 1.105 | +5.8% acceptable |
+| ladybug | direct_cypher | lookup_miss | 20 | 0.335 | 0.394 | — | 0.337 | **-0.4% faster** | 0.390 | +1.0% acceptable |
+| ladybug | qw_cypher | fanout | 20 | 5.364 | 5.505 | 1.24× | 5.406 | **-0.8% faster** | 5.599 | **-1.7% faster** |
+| ladybug | qw_cypher | lookup | 20 | 1.753 | 1.856 | 1.69× | 1.822 | **-3.8% faster** | 1.956 | **-5.1% faster** |
+| ladybug | qw_cypher | lookup_miss | 20 | 1.725 | 1.878 | 5.15× | 1.795 | **-3.9% faster** | 2.052 | **-8.5% faster** |
+| ladybug | qw_gql | fanout | 20 | 5.647 | 6.394 | 1.31× | 5.611 | +0.6% acceptable | 5.732 | **+11.5% regression** |
+| ladybug | qw_gql | lookup | 20 | 1.984 | 2.511 | 1.91× | 2.009 | **-1.2% faster** | 2.207 | **+13.8% regression** |
+| ladybug | qw_gql | lookup_miss | 20 | 1.970 | 2.540 | 5.88× | 1.978 | **-0.4% faster** | 2.094 | **+21.3% regression** |
+| relate | direct_cypher | fanout | 20 | 10.974 | 11.066 | — | 10.961 | +0.1% acceptable | 11.245 | **-1.6% faster** |
+| relate | direct_cypher | lookup | 20 | 0.186 | 0.312 | — | 0.184 | +1.4% acceptable | 0.295 | +5.8% acceptable |
+| relate | direct_cypher | lookup_miss | 20 | 0.297 | 0.394 | — | 0.294 | +1.1% acceptable | 0.400 | **-1.4% faster** |
+| relate | qw_cypher | fanout | 20 | 11.197 | 11.349 | 1.02× | 11.399 | **-1.8% faster** | 11.504 | **-1.3% faster** |
+| relate | qw_cypher | lookup | 20 | 1.871 | 2.350 | 10.04× | 2.060 | **-9.2% faster** | 2.479 | **-5.2% faster** |
+| relate | qw_cypher | lookup_miss | 20 | 1.863 | 2.231 | 6.28× | 2.129 | **-12.5% faster** | 2.562 | **-12.9% faster** |
+| relate | qw_gql | fanout | 20 | 11.479 | 11.645 | 1.05× | 11.630 | **-1.3% faster** | 11.778 | **-1.1% faster** |
+| relate | qw_gql | lookup | 20 | 2.135 | 2.659 | 11.46× | 2.299 | **-7.2% faster** | 2.838 | **-6.3% faster** |
+| relate | qw_gql | lookup_miss | 20 | 2.189 | 2.540 | 7.37× | 2.483 | **-11.8% faster** | 2.830 | **-10.2% faster** |
 
 #### Hybrid SQL and graph queries
 
 | Provider | Route | Workload | Samples | p50 (ms) | p95 (ms) | p50 / direct | Baseline p50 (ms) | p50 change | Baseline p95 (ms) | p95 change |
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| ladybug | qw_pgq | full_scan_aggregate | 20 | 284.288 | 320.625 | — | 292.688 | **-2.9% faster** | 298.070 | +7.6% acceptable |
-| ladybug | qw_pgq | graph_table_where | 20 | 6.845 | 7.385 | — | 7.098 | **-3.6% faster** | 7.265 | +1.7% acceptable |
-| ladybug | qw_pgq | outer_where | 20 | 6.963 | 7.439 | — | 7.057 | **-1.3% faster** | 7.402 | +0.5% acceptable |
-| ladybug | qw_pgq | table_watchlist | 20 | 14.942 | 15.909 | — | 15.334 | **-2.6% faster** | 16.046 | **-0.9% faster** |
-| ladybug | qw_pgq | values_watchlist | 20 | 14.514 | 15.593 | — | 14.463 | +0.4% acceptable | 15.617 | **-0.2% faster** |
-| ladybug | qw_pgq | view_where | 20 | 7.797 | 8.417 | — | 7.994 | **-2.5% faster** | 8.347 | +0.8% acceptable |
-| relate | qw_pgq | full_scan_aggregate | 20 | 4,939.829 | 4,990.985 | — | 4,995.359 | **-1.1% faster** | 5,044.978 | **-1.1% faster** |
-| relate | qw_pgq | graph_table_where | 20 | 13.567 | 19.324 | — | 13.742 | **-1.3% faster** | 18.352 | +5.3% acceptable |
-| relate | qw_pgq | outer_where | 20 | 13.618 | 14.117 | — | 13.706 | **-0.6% faster** | 21.037 | **-32.9% faster** |
-| relate | qw_pgq | table_watchlist | 20 | 92.763 | 100.088 | — | 92.730 | <+0.1% acceptable | 97.197 | +3.0% acceptable |
-| relate | qw_pgq | values_watchlist | 20 | 91.451 | 92.532 | — | 90.910 | +0.6% acceptable | 97.016 | **-4.6% faster** |
-| relate | qw_pgq | view_where | 20 | 14.481 | 14.910 | — | 14.618 | **-0.9% faster** | 15.013 | **-0.7% faster** |
+| ladybug | qw_pgq | full_scan_aggregate | 20 | 280.054 | 285.465 | — | 280.215 | **-0.1% faster** | 284.839 | +0.2% acceptable |
+| ladybug | qw_pgq | graph_table_where | 20 | 6.683 | 6.986 | — | 6.526 | +2.4% acceptable | 7.038 | **-0.7% faster** |
+| ladybug | qw_pgq | outer_where | 20 | 6.625 | 7.032 | — | 6.648 | **-0.3% faster** | 7.083 | **-0.7% faster** |
+| ladybug | qw_pgq | table_watchlist | 20 | 14.628 | 15.081 | — | 14.601 | +0.2% acceptable | 15.651 | **-3.6% faster** |
+| ladybug | qw_pgq | values_watchlist | 20 | 14.177 | 14.769 | — | 14.036 | +1.0% acceptable | 15.116 | **-2.3% faster** |
+| ladybug | qw_pgq | view_where | 20 | 7.531 | 7.905 | — | 7.610 | **-1.0% faster** | 7.929 | **-0.3% faster** |
+| relate | qw_pgq | full_scan_aggregate | 20 | 4,962.812 | 5,045.405 | — | 4,964.996 | **>-0.1% faster** | 5,017.079 | +0.6% acceptable |
+| relate | qw_pgq | graph_table_where | 20 | 13.463 | 13.734 | — | 13.672 | **-1.5% faster** | 23.684 | **-42.0% faster** |
+| relate | qw_pgq | outer_where | 20 | 13.477 | 13.753 | — | 13.749 | **-2.0% faster** | 14.252 | **-3.5% faster** |
+| relate | qw_pgq | table_watchlist | 20 | 92.977 | 95.979 | — | 92.593 | +0.4% acceptable | 98.727 | **-2.8% faster** |
+| relate | qw_pgq | values_watchlist | 20 | 91.058 | 92.582 | — | 90.824 | +0.3% acceptable | 93.614 | **-1.1% faster** |
+| relate | qw_pgq | view_where | 20 | 14.254 | 14.465 | — | 14.557 | **-2.1% faster** | 14.996 | **-3.5% faster** |
