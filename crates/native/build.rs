@@ -107,8 +107,9 @@ fn main() {
         );
         "c++"
     } else {
-        // The vendor archives introduce references after rustc's default system
-        // libraries. Resolve glibc's nonshared stubs and GCC's atomic helpers here.
+        // GNU ld must see nonshared C++ runtime objects, glibc stubs and atomic
+        // helpers after the vendor archives that reference them.
+        println!("cargo:rustc-link-arg=-lstdc++");
         println!("cargo:rustc-link-arg=-lc");
         println!("cargo:rustc-link-arg=-lgcc");
         println!("cargo:rustc-link-arg=-Wl,-z,defs");
