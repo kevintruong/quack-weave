@@ -13,7 +13,7 @@ import tempfile
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from mvp1_acceptance import graph_query, provision, sql_literal
+from cypher_acceptance import graph_query, provision, sql_literal
 from run_sqllogictest import DUCKDB_PIN_SOURCE, DUCKDB_PIN_VERSION
 
 

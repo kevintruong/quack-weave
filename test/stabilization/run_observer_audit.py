@@ -67,8 +67,6 @@ def main():
         for label, crate in (("native", "rusty_quack"), ("core", "rusty_quack_core")):
             if args.observer_test_dir is None:
                 command = ["cargo", "test", "--locked", "--package", crate]
-                if label == "native":
-                    command.extend(["--features", "gql"])
                 command.extend(["fixture_observer", "--"])
             else:
                 command = [(args.observer_test_dir / crate).resolve(strict=True), "fixture_observer"]

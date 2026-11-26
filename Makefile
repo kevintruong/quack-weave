@@ -1,8 +1,8 @@
-.DEFAULT_GOAL := mvp1
+.DEFAULT_GOAL := native
 
-.PHONY: clean clean_all mvp1 mvp1-release mvp1-deps mvp1-test mvp2-deps
-.PHONY: mvp2 mvp2-release mvp2-test mvp2-stabilization-test mvp2-stabilization-test-prebuilt public-client-test public-client-test-prebuilt
-.PHONY: mvp2-relate-release mvp2-relate-test
+.PHONY: clean clean_all native native-release native-deps native-test
+.PHONY: native-stabilization-test native-stabilization-test-prebuilt public-client-test public-client-test-prebuilt
+.PHONY: native-provider-test native-neo4j-tls-test
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -27,7 +27,7 @@ IS_EXAMPLE=
 ifneq ($(DUCKDB_WASM_PLATFORM),)
 	TARGET_INFO=--target $(TARGET) --package rusty_quack_wasm
 else
-	TARGET_INFO+=--package rusty_quack --features template-compat
+	TARGET_INFO+=--package rusty_quack --no-default-features --features template-compat
 endif
 
 configure: venv platform extension_version
@@ -43,27 +43,23 @@ clean: clean_build clean_rust
 clean_all: clean_configure clean
 
 # Native ARM64 packages.
-MVP1_DUCKDB_VERSION := v2.0.1
-MVP1_EXTENSION_VERSION := v0.1.0
+NATIVE_EXTENSION_VERSION := v0.2.0
 ifeq ($(shell uname -s),Linux)
-MVP1_TARGET := aarch64-unknown-linux-gnu
+NATIVE_TARGET := aarch64-unknown-linux-gnu
 NATIVE_PLATFORM := linux_arm64
 NATIVE_SUFFIX := so
 else
-MVP1_TARGET := aarch64-apple-darwin
+NATIVE_TARGET := aarch64-apple-darwin
 NATIVE_PLATFORM := osx_arm64
 NATIVE_SUFFIX := dylib
 endif
 NATIVE_LIBRARY := librusty_quack.$(NATIVE_SUFFIX)
-MVP1_CARGO_DIR := $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),target)
-MVP1_DEBUG_ARTIFACT := build/debug/extension/quack_weave/quack_weave.duckdb_extension
-MVP1_RELEASE_ARTIFACT := build/release/extension/quack_weave/quack_weave.duckdb_extension
-MVP2_EXTENSION_VERSION := v0.2.0
-MVP2_CARGO_DIR := $(MVP1_CARGO_DIR)/mvp2
-MVP2_RELATE_CARGO_DIR ?= $(MVP1_CARGO_DIR)/mvp2-relate
-MVP2_DEBUG_ARTIFACT := build/mvp2/debug/extension/quack_weave/quack_weave.duckdb_extension
-MVP2_RELEASE_ARTIFACT := build/mvp2/release/extension/quack_weave/quack_weave.duckdb_extension
-MVP2_RELATE_ARTIFACT := build/mvp2-relate/release/extension/quack_weave/quack_weave.duckdb_extension
+CARGO_BUILD_ROOT := $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),target)
+NATIVE_CARGO_DIR ?= $(CARGO_BUILD_ROOT)/native
+NATIVE_TLS_CARGO_DIR ?= $(CARGO_BUILD_ROOT)/native-test-tls
+NATIVE_DEBUG_ARTIFACT ?= build/native/debug/extension/quack_weave/quack_weave.duckdb_extension
+NATIVE_RELEASE_ARTIFACT ?= build/native/release/extension/quack_weave/quack_weave.duckdb_extension
+NEO4J_TLS_TEST_ARTIFACT := build/native/test-tls/extension/quack_weave/quack_weave.duckdb_extension
 
 PYTHON_BIN ?= python3
 DUCKDB ?= duckdb
@@ -77,83 +73,62 @@ DUCKDB_LIB ?= build/duckdb-v2.0.1/src/libduckdb.$(NATIVE_SUFFIX)
 endif
 STABILIZATION_REPORT_DIR ?= build/stabilization-reports
 
-mvp1-deps:
-	$(PYTHON_BIN) scripts/prepare_mvp1_deps.py
-
-mvp2-deps: mvp1-deps
+native-deps:
+	$(PYTHON_BIN) -B scripts/prepare_ladybug_deps.py
 	$(PYTHON_BIN) -B scripts/prepare_gql_deps.py
 
 define build_native
 	@case "$$(uname -s):$$(uname -m)" in Darwin:arm64|Linux:aarch64) ;; *) echo "Expected a native ARM64 builder" >&2; exit 1;; esac
-	cargo build --locked --package rusty_quack --target $(MVP1_TARGET) $(1)
+	cargo build --locked --package rusty_quack --target $(NATIVE_TARGET) --target-dir '$(1)' $(2)
 endef
 
-define make_mvp1
-	$(call build_native,$(1))
-	$(PYTHON_BIN) scripts/package_mvp1.py '$(MVP1_CARGO_DIR)/$(MVP1_TARGET)/$(2)/$(NATIVE_LIBRARY)' '$(3)' $(MVP1_DUCKDB_VERSION) $(NATIVE_PLATFORM) $(MVP1_EXTENSION_VERSION)
-endef
-
-define make_mvp2
-	$(call build_native,$(1) --features $(if $(4),$(4),gql) --target-dir '$(MVP2_CARGO_DIR)')
-	$(PYTHON_BIN) -B scripts/package_mvp2.py '$(MVP2_CARGO_DIR)/$(MVP1_TARGET)/$(2)/$(NATIVE_LIBRARY)' '$(3)' $(MVP1_DUCKDB_VERSION) $(NATIVE_PLATFORM) $(MVP2_EXTENSION_VERSION) $(if $(filter relate-provider,$(4)),--relate)
+define package_native
+	$(call build_native,$(1),$(2) $(if $(5),--features '$(5)'))
+	$(PYTHON_BIN) -B scripts/package_native.py '$(1)/$(NATIVE_TARGET)/$(3)/$(NATIVE_LIBRARY)' '$(4)' $(TARGET_DUCKDB_VERSION) $(NATIVE_PLATFORM) $(NATIVE_EXTENSION_VERSION)
 endef
 
 define check_native
-	QUACK_WEAVE_TEST_ARTIFACT='$(1)' $(PYTHON_BIN) test/native_package_test.py
-	$(PYTHON_BIN) test/mvp1_acceptance.py --duckdb '$(DUCKDB)' --lbug '$(LBUG)' --extension '$(1)'
+	QUACK_WEAVE_TEST_ARTIFACT='$(1)' $(PYTHON_BIN) -B test/native_package_test.py
+	$(PYTHON_BIN) -B test/cypher_acceptance.py --duckdb '$(DUCKDB)' --lbug '$(LBUG)' --extension '$(1)'
+	$(PYTHON_BIN) -B test/gql_bind_test.py --duckdb '$(DUCKDB)' --lbug '$(LBUG)' --extension '$(1)'
+	$(PYTHON_BIN) -B test/gql_acceptance.py --duckdb '$(DUCKDB)' --lbug '$(LBUG)' --extension '$(1)'
 endef
 
-define check_mvp2
-	$(call check_native,$(1))
-	$(PYTHON_BIN) -B test/mvp2_bind_test.py --duckdb '$(DUCKDB)' --lbug '$(LBUG)' --extension '$(1)'
-	$(PYTHON_BIN) -B test/mvp2_acceptance.py --duckdb '$(DUCKDB)' --lbug '$(LBUG)' --extension '$(1)'
-endef
+native:
+	$(call package_native,$(NATIVE_CARGO_DIR),,debug,$(NATIVE_DEBUG_ARTIFACT))
 
-mvp1:
-	$(call make_mvp1,,debug,$(MVP1_DEBUG_ARTIFACT))
+native-release:
+	$(call package_native,$(NATIVE_CARGO_DIR),--release,release,$(NATIVE_RELEASE_ARTIFACT))
 
-mvp1-release:
-	$(call make_mvp1,--release,release,$(MVP1_RELEASE_ARTIFACT))
+native-provider-test: native-release
+	$(call build_native,$(NATIVE_CARGO_DIR),--release --example relate_fixture)
+	$(PYTHON_BIN) -B test/relate/run.py --duckdb-unittest '$(DUCKDB_UNITTEST)' --fixture-builder '$(NATIVE_CARGO_DIR)/$(NATIVE_TARGET)/release/examples/relate_fixture' --extension '$(NATIVE_RELEASE_ARTIFACT)' --lbug '$(LBUG)'
+	$(MAKE) native-neo4j-tls-test
 
-mvp1-test: mvp1
-	$(call check_native,$(MVP1_DEBUG_ARTIFACT))
+native-neo4j-tls-test:
+	$(call package_native,$(NATIVE_TLS_CARGO_DIR),,debug,$(NEO4J_TLS_TEST_ARTIFACT),neo4j-test-fixture)
+	$(PYTHON_BIN) -B test/neo4j/run.py --duckdb-unittest '$(DUCKDB_UNITTEST)' --extension '$(NEO4J_TLS_TEST_ARTIFACT)'
 
-mvp2:
-	$(call make_mvp2,,debug,$(MVP2_DEBUG_ARTIFACT))
+native-test: native native-release
+	$(call check_native,$(NATIVE_DEBUG_ARTIFACT))
+	$(call check_native,$(NATIVE_RELEASE_ARTIFACT))
 
-mvp2-release:
-	$(call make_mvp2,--release,release,$(MVP2_RELEASE_ARTIFACT))
-
-mvp2-relate-release mvp2-relate-test: MVP2_CARGO_DIR = $(MVP2_RELATE_CARGO_DIR)
-
-mvp2-relate-release:
-	$(call make_mvp2,--release,release,$(MVP2_RELATE_ARTIFACT),relate-provider)
-
-mvp2-relate-test: mvp2-relate-release
-	$(call build_native,--release --features relate-provider --target-dir '$(MVP2_CARGO_DIR)' --example relate_fixture)
-	$(PYTHON_BIN) -B test/relate/run.py --duckdb-unittest '$(DUCKDB_UNITTEST)' --fixture-builder '$(MVP2_CARGO_DIR)/$(MVP1_TARGET)/release/examples/relate_fixture' --extension '$(MVP2_RELATE_ARTIFACT)' --lbug '$(LBUG)'
-
-mvp2-test: mvp2 mvp2-release
-	$(call check_mvp2,$(MVP2_DEBUG_ARTIFACT))
-	$(call check_mvp2,$(MVP2_RELEASE_ARTIFACT))
-
-public-client-test: mvp2-release
+public-client-test: native-release
 public-client-test public-client-test-prebuilt:
-	$(PYTHON_BIN) -B test/public_client/run.py --duckdb-unittest '$(DUCKDB_UNITTEST)' --duckdb-library '$(DUCKDB_LIB)' --lbug '$(LBUG)' --extension '$(MVP2_RELEASE_ARTIFACT)'
+	$(PYTHON_BIN) -B test/public_client/run.py --duckdb-unittest '$(DUCKDB_UNITTEST)' --duckdb-library '$(DUCKDB_LIB)' --lbug '$(LBUG)' --extension '$(NATIVE_RELEASE_ARTIFACT)'
 
 stabilization_slt = $(PYTHON_BIN) -B test/stabilization/run_sqllogictest.py --duckdb-unittest '$(DUCKDB_UNITTEST)' --lbug '$(LBUG)'
-stabilization_observer = $(PYTHON_BIN) -B test/stabilization/run_observer_audit.py --duckdb-unittest '$(DUCKDB_UNITTEST)' --duckdb-library '$(DUCKDB_LIB)' --lbug '$(LBUG)' --extension '$(MVP2_RELEASE_ARTIFACT)' --report-dir '$(STABILIZATION_REPORT_DIR)/observer' $(if $(OBSERVER_TEST_DIR),--observer-test-dir '$(OBSERVER_TEST_DIR)')
+stabilization_observer = $(PYTHON_BIN) -B test/stabilization/run_observer_audit.py --duckdb-unittest '$(DUCKDB_UNITTEST)' --duckdb-library '$(DUCKDB_LIB)' --lbug '$(LBUG)' --extension '$(NATIVE_RELEASE_ARTIFACT)' --report-dir '$(STABILIZATION_REPORT_DIR)/observer' $(if $(OBSERVER_TEST_DIR),--observer-test-dir '$(OBSERVER_TEST_DIR)')
 
 define record_stabilization
 	$(2) > '$(STABILIZATION_REPORT_DIR)/$(1).log' 2>&1 || { qw_gate_exit=$$?; cat '$(STABILIZATION_REPORT_DIR)/$(1).log' >&2; exit $$qw_gate_exit; }
 	@cat '$(STABILIZATION_REPORT_DIR)/$(1).log'
 endef
 
-mvp2-stabilization-test: mvp2 mvp2-release mvp1
-mvp2-stabilization-test mvp2-stabilization-test-prebuilt:
+native-stabilization-test: native native-release
+native-stabilization-test native-stabilization-test-prebuilt:
 	mkdir -p '$(STABILIZATION_REPORT_DIR)'
-	$(call record_stabilization,mvp2-debug,$(stabilization_slt) --extension '$(MVP2_DEBUG_ARTIFACT)')
-	$(call record_stabilization,mvp2-release,$(stabilization_slt) --extension '$(MVP2_RELEASE_ARTIFACT)')
-	$(call record_stabilization,cypher-only,$(stabilization_slt) --extension '$(MVP1_DEBUG_ARTIFACT)' --without-gql)
+	$(call record_stabilization,native-debug,$(stabilization_slt) --extension '$(NATIVE_DEBUG_ARTIFACT)')
+	$(call record_stabilization,native-release,$(stabilization_slt) --extension '$(NATIVE_RELEASE_ARTIFACT)')
 	$(call record_stabilization,observer,$(stabilization_observer))
 	$(PYTHON_BIN) -B test/stabilization/check_coverage.py --report-dir '$(STABILIZATION_REPORT_DIR)'

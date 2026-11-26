@@ -56,8 +56,15 @@ class NativeRelease(unittest.TestCase):
             makefile = repo / "Makefile"
             makefile.write_text("mvp2-deps:\n\t@true\nmvp2-relate-release:\n\t@false\n")
             bad = revision("no release")
+            legacy_package = Path("build/mvp2-relate/release/extension/quack_weave")
             makefile.write_text(
                 "mvp2-deps:\n\t@true\nmvp2-relate-release:\n"
+                f"\tmkdir -p {legacy_package}/licenses\n"
+                f"\tgit rev-parse HEAD > {legacy_package}/{artifacts.EXTENSION}\n"
+                f"\ttouch {legacy_package}/licenses/Relate-LICENSE\n")
+            legacy = revision("historical release")
+            makefile.write_text(
+                "native-deps:\n\t@true\nnative-release:\n"
                 f"\tmkdir -p {artifacts.PACKAGE}/licenses\n"
                 f"\tgit rev-parse HEAD > {artifacts.PACKAGE}/{artifacts.EXTENSION}\n"
                 f"\ttouch {artifacts.PACKAGE}/licenses/Relate-LICENSE\n")
@@ -68,14 +75,15 @@ class NativeRelease(unittest.TestCase):
             for name in ("artifacts.py", "ci.py"):
                 shutil.copy2(here / name, control)
             (repo / "build/deps").mkdir(parents=True)
-            result = subprocess.run(["bash", here / "build_releases.sh", bad, good, head], cwd=repo,
+            result = subprocess.run(["bash", here / "build_releases.sh", bad, good, legacy, head], cwd=repo,
                                     env={**os.environ, "SOURCE_HEAD": head, "RUNNER_TEMP": tmp},
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 1, result.stderr)
             releases = repo / "build/historical"
-            self.assertEqual([p.name for p in releases.iterdir()], [good])
-            artifacts.verify(releases / good, good)
-            self.assertEqual((releases / good / artifacts.EXTENSION).read_text().strip(), good)
+            self.assertEqual({p.name for p in releases.iterdir()}, {good, legacy})
+            for sha in (good, legacy):
+                artifacts.verify(releases / sha, sha)
+                self.assertEqual((releases / sha / artifacts.EXTENSION).read_text().strip(), sha)
 
 
 class RestoredRelease(unittest.TestCase):

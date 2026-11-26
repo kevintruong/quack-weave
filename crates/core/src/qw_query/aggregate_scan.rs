@@ -1,10 +1,13 @@
 use duckdb_neo::table_function::{BindInfoApi, TableGetBindInfoCallbacks};
 
-use super::{BoundRead, Context, GraphQuery, ProviderKind, Result, ToValue};
+use super::{BoundRead, Context, GraphQuery, ProviderRewrite, Result, ToValue};
 
 impl TableGetBindInfoCallbacks for GraphQuery {
     fn bind_info(&self, context: &Context, bound: &BoundRead, info: BindInfoApi<'_>) -> Result<()> {
-        info.set_option("qw_provider", &bound.provider.kind.name().value(context)?)?;
+        info.set_option(
+            "qw_provider",
+            &bound.provider.descriptor.name.value(context)?,
+        )?;
         let mode = match bound.fragment.as_ref() {
             None => "native",
             Some(fragment)
@@ -41,11 +44,15 @@ impl TableGetBindInfoCallbacks for GraphQuery {
         // the original scan whenever the caller configured an explicit execution limit.
         let config = &bound.config.config;
         if !config.has_resource_limit() {
-            if bound.provider.kind == ProviderKind::Relate {
-                let Some(bound_rows) = bound.config.single_pattern_row_bound else {
-                    return Ok(());
-                };
-                info.set_option("qw_single_pattern_row_bound", &bound_rows.value(context)?)?;
+            match bound.provider.descriptor.rewrite {
+                ProviderRewrite::Disabled => return Ok(()),
+                ProviderRewrite::LabelCatalog => {}
+                ProviderRewrite::ObservedCatalog => {
+                    let Some(bound_rows) = bound.config.single_pattern_row_bound else {
+                        return Ok(());
+                    };
+                    info.set_option("qw_single_pattern_row_bound", &bound_rows.value(context)?)?;
+                }
             }
             info.set_option(
                 "qw_aggregate_generation",

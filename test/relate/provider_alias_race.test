@@ -1,0 +1,56 @@
+# name: test/relate/provider_alias_race.test
+# description: Provider aliases remain unique across concurrent registrations and reset
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_RELATE UNSET_QW_RELATE
+
+test-env QW_LADYBUG UNSET_QW_LADYBUG
+
+statement ok
+LOAD '{QW_EXT}';
+
+concurrentforeach action set_relate reset_relate set_ladybug
+
+onlyif action=set_relate
+statement maybe
+SET GLOBAL qw_relate_config = '{"alias":"Contended","path":"{QW_RELATE}"}';
+----
+<REGEX>:.*QW_CONFIG: (Graph alias must be unique across providers|Graph registration changed during preparation).*
+
+onlyif action=reset_relate
+statement ok
+RESET GLOBAL qw_relate_config;
+
+onlyif action=set_ladybug
+statement maybe
+SET GLOBAL qw_ladybug_config = '{"alias":"CONTENDED","path":"{QW_LADYBUG}"}';
+----
+QW_CONFIG: Graph alias must be unique
+
+endloop
+
+query I
+SELECT count(*) <= 1
+FROM qw_graph_providers()
+WHERE lower(active_alias) = 'contended';
+----
+true
+
+# Reconfiguration clears a stale slot. Inventory and the query entry point see the same owner.
+statement ok
+RESET GLOBAL qw_ladybug_config;
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"recovered","path":"{QW_RELATE}"}';
+
+query TT
+SELECT provider_id, active_alias FROM qw_graph_providers() WHERE active_alias IS NOT NULL;
+----
+relate	recovered
+
+query I
+SELECT count(*) FROM GRAPH_TABLE (recovered MATCH (a:airport) COLUMNS(a.code AS code)) AS g;
+----
+4

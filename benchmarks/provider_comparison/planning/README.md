@@ -58,7 +58,7 @@ py=build/usage-client-venv/bin/python
 bench=benchmarks/provider_comparison
 fixture=build/perf/provider-comparison/mod1
 baseline=/path/to/baseline/quack_weave.duckdb_extension
-candidate=build/mvp2-relate/release/extension/quack_weave/quack_weave.duckdb_extension
+candidate=build/native/release/extension/quack_weave/quack_weave.duckdb_extension
 out=build/perf/planning
 
 "$py" -B "$bench/run.py" --fixture "$fixture" --extension "$baseline" \

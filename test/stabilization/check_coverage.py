@@ -21,9 +21,9 @@ SUITE_SUFFIXES = {".test", ".test_slow"}
 CASE_ID = r"[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*"
 CASE_MARKER = re.compile(rf"# case:[ \t]+({CASE_ID})(?:[ \t]+.*)?")
 SQL_BLOCK = re.compile(r"(?:query [TIR]+|statement (?:ok|error))(?:[ \t]+.*)?")
-CASE_COUNT = 140
-PROFILE_COUNTS = {"mvp2-debug": 132, "mvp2-release": 132, "cypher-only": 1, "observer": 7}
-PROFILE_FILES = {"feature_off.test": ("cypher-only",), "observer_audit.test": ("observer",)}
+CASE_COUNT = 142
+PROFILE_COUNTS = {"native-debug": 135, "native-release": 135, "observer": 7}
+NATIVE_PROFILES = ("native-debug", "native-release")
 PREAMBLE_BLOCKS = {"limits.test": 2, "observer_audit.test": 6}
 PIN_PROBE = "<stdin>"
 SOURCE_RECORD = "[QW_SLT_SOURCE]"
@@ -56,7 +56,7 @@ def read_manifest():
             if not re.fullmatch(r"[a-z0-9_]+\.test(?:_slow)?", name):
                 raise ValueError(f"invalid manifest test file {name!r}")
             profiles = tuple(profile_field.split("|"))
-            expected_profiles = PROFILE_FILES.get(name, ("mvp2-debug", "mvp2-release"))
+            expected_profiles = ("observer",) if name == "observer_audit.test" else NATIVE_PROFILES
             observer_case = case.startswith("observer.")
             if profiles != expected_profiles or observer_case != (profiles == ("observer",)):
                 raise ValueError(f"invalid manifest profile assignment for {case!r}")
@@ -235,8 +235,8 @@ def check_coverage(report_dir):
             "pin_probe_blocks": observed[PIN_PROBE],
             "artifact": artifact,
         }
-    if profiles["observer"]["artifact"]["sha256"] != profiles["mvp2-release"]["artifact"]["sha256"]:
-        raise ValueError("observer and mvp2-release tested different artifact SHA-256 values")
+    if profiles["observer"]["artifact"]["sha256"] != profiles["native-release"]["artifact"]["sha256"]:
+        raise ValueError("observer and native-release tested different artifact SHA-256 values")
     return {
         "schema_version": 1,
         "case_count": len(cases),

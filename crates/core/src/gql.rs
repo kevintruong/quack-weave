@@ -73,7 +73,6 @@ pub enum ParseErrorKind {
     Unsupported,
     Limit,
     Internal,
-    Unavailable,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]

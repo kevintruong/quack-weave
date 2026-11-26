@@ -1,5 +1,5 @@
 # name: test/stabilization/sqllogic/artifact.test
-# description: Relocated MVP2 package identity, feature independence and both dialects
+# description: Relocated native package identity, feature independence and both dialects
 # group: [quack_weave]
 
 test-env QW_EXT UNSET_QW_EXT

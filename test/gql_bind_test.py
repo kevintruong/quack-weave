@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from mvp1_acceptance import (
+from cypher_acceptance import (
     FIXTURE,
     TRAVERSAL,
     duckdb,
@@ -84,17 +84,11 @@ class BindTests(unittest.TestCase):
         repeated = "MATCH (a:Document)-[:LINKS_TO]->(a:Document) RETURN a.id AS document_id"
         expect_rows(self.select(repeated), [["101"]])
 
-    def test_gql_unavailable_in_the_cypher_only_build(self):
-        expect_failure(self.select(GQL_SELECT, explain="EXPLAIN "), "QW_GQL_UNAVAILABLE")
-        expect_rows(self.select(TRAVERSAL, "cypher"), [["101"], ["103"]])
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--duckdb", required=True)
     parser.add_argument("--lbug", required=True)
     parser.add_argument("--extension", required=True, type=Path)
-    parser.add_argument("--without-frontend", action="store_true")
     options = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="qw-gql-bind-") as directory:
         graph = Path(directory) / "documents.lbdb"
@@ -103,12 +97,7 @@ def main():
         BindTests.setup = (
             f"LOAD {sql_literal(options.extension.resolve(strict=True))};\n" + provision(graph)
         )
-        unavailable = "test_gql_unavailable_in_the_cypher_only_build"
-        suite = unittest.TestSuite(
-            BindTests(name)
-            for name in unittest.defaultTestLoader.getTestCaseNames(BindTests)
-            if (name == unavailable) == options.without_frontend
-        )
+        suite = unittest.defaultTestLoader.loadTestsFromTestCase(BindTests)
         return unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful()
 
 

@@ -1,5 +1,4 @@
 use std::cell::Cell;
-#[cfg(feature = "gql")]
 use std::fmt::Write;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -65,7 +64,6 @@ pub(crate) fn event(name: &str, outcome: &str, value: &str) {
     });
 }
 
-#[cfg(feature = "gql")]
 pub(crate) fn hex(bytes: &[u8]) -> String {
     let mut output = String::with_capacity(bytes.len() * 2);
     for byte in bytes {

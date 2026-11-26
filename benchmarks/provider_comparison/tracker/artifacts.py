@@ -1,4 +1,4 @@
-"""Stage or verify the dual-provider DuckDB release passed between CI jobs."""
+"""Stage or verify the Quack Weave release passed between CI jobs."""
 import argparse
 import hashlib
 import json
@@ -15,8 +15,14 @@ from ci import checked_sha
 
 
 PLATFORM = "linux_arm64" if sys.platform == "linux" else "osx_arm64"
-PROFILE = f"mvp2-relate-release/{PLATFORM}/duckdb-v2.0.1"
-PACKAGE = Path("build/mvp2-relate/release/extension/quack_weave")
+PROFILE = f"native-release/{PLATFORM}/duckdb-v2.0.1"
+PACKAGE = Path("build/native/release/extension/quack_weave")
+# Keep previously published artifacts and historical benchmark commits readable.
+PACKAGE_PROFILES = {
+    PACKAGE: PROFILE,
+    Path("build/native-relate/release/extension/quack_weave"): f"native-relate-release/{PLATFORM}/duckdb-v2.0.1",
+    Path("build/mvp2-relate/release/extension/quack_weave"): f"mvp2-relate-release/{PLATFORM}/duckdb-v2.0.1",
+}
 EXTENSION = "quack_weave.duckdb_extension"
 
 
@@ -28,19 +34,24 @@ def digest(path):
 def stage(checkout, output):
     sha = checked_sha(subprocess.check_output(
         ["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True).strip())
-    source = checkout / PACKAGE
-    if not (source / "licenses/Relate-LICENSE").is_file():
+    for location, profile in PACKAGE_PROFILES.items():
+        source = checkout / location
+        if (source / "licenses/Relate-LICENSE").is_file():
+            break
+    else:
         raise ValueError("Expected the packaged release with RelateDB")
     folder = output / sha
     shutil.copytree(source, folder)
-    manifest = {"commit": sha, "profile": PROFILE, "sha256": digest(folder / EXTENSION)}
+    manifest = {"commit": sha, "profile": profile, "sha256": digest(folder / EXTENSION)}
     (folder / "manifest.json").write_text(json.dumps(manifest) + "\n")
 
 
 def verify(folder, sha, expected_digest=None):
     manifest = json.loads((folder / "manifest.json").read_text())
     checksum = digest(folder / EXTENSION)
-    if (manifest != {"commit": checked_sha(sha), "profile": PROFILE, "sha256": checksum}
+    profile = manifest.get("profile")
+    identity = {"commit": checked_sha(sha), "profile": profile, "sha256": checksum}
+    if (profile not in PACKAGE_PROFILES.values() or manifest != identity
             or (expected_digest is not None and checksum != expected_digest)):
         raise ValueError(f"Release artifact identity or SHA-256 mismatch for {sha}")
 

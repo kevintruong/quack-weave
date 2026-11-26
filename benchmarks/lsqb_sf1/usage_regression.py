@@ -41,7 +41,7 @@ GRAPH = PERF / "sf1.lbdb"
 LIB = ROOT / "build/deps/duckdb-v2.0.1/libduckdb.dylib"
 PACKAGES = {
     "baseline": PERF / "baseline-ecfcd8e/quack_weave.duckdb_extension",
-    "current": ROOT / "build/mvp2/release/extension/quack_weave/quack_weave.duckdb_extension",
+    "current": ROOT / "build/native/release/extension/quack_weave/quack_weave.duckdb_extension",
 }
 PINS = {
     "baseline": ("ecfcd8e", "1385701536ca193c1f423d2c6c60c68b60ac1463d9941a9fbf7e310b9ed97c14"),

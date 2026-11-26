@@ -1,0 +1,15 @@
+# name: test/relate/provider_inventory.test
+# description: Enabled graph providers are discovered without opening a database
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+statement ok
+LOAD '{QW_EXT}';
+
+query TT rowsort
+SELECT provider_id, setting_name FROM qw_graph_providers();
+----
+ladybug	qw_ladybug_config
+neo4j	qw_neo4j_config
+relate	qw_relate_config

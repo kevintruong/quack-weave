@@ -110,9 +110,9 @@ The **CI** workflow plans one measurement for every commit introduced by a push 
 | Build output | Revision and configuration | Consumers |
 |---|---|---|
 | DuckDB SQLLogic runner and ADBC library | DuckDB 2.0.1 release-build artifact for the selected ARM64 platform | Native stabilization, provider integration and all benchmark shards |
-| Stabilization packages, licenses and Rust observer test executables | CI checkout, including the merge revision on PRs. Cypher-only debug, GQL debug and GQL release | Stabilization and public-client tests |
-| Dual-provider release and integration fixture builder | PR source head or main push tip, `mvp2-relate-release` | Provider integration and SF1 measurements use the same extension bytes. |
-| Earlier dual-provider releases | One release per additional source SHA in a multi-commit event | The corresponding commit's SF1 measurement |
+| Stabilization packages, licenses and Rust observer test executables | CI checkout, including the merge revision on PRs. Native debug and release | Stabilization and public-client tests |
+| Native release and RelateDB fixture builder | PR source head or main push tip, `native-release` | Provider integration and SF1 measurements use the same extension bytes. |
+| Earlier releases with RelateDB | One release per additional source SHA in a multi-commit event | The corresponding commit's SF1 measurement |
 
 The planner selects GitHub's `ubuntu-24.04-arm` for commits with a Linux build target. An event containing an older macOS-only commit runs its entire comparison on `macos-15`. Hardware, platform and protocol are part of baseline selection. The measurement job consumes the compiled QuackWeave artifact for each SHA and installs the pinned standalone clients. RelateDB's embedded Rust crate is part of the extension build.
 

@@ -6,7 +6,7 @@ import tarfile
 import tempfile
 import urllib.request
 
-from prepare_mvp1_deps import verify
+from prepare_ladybug_deps import verify
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1] / "build" / "deps" / "gql-antlr"

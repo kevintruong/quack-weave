@@ -18,7 +18,7 @@ import time
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "test"))
-from mvp1_acceptance import provision, sql_literal
+from cypher_acceptance import provision, sql_literal
 
 GRAPH_SHA = "84cd660cac88e20b627b40f2adf8de0c2c6d8693237c0d9f422469825721693f"
 KEYS = [4398046519825, 2435, 6575, 28587302326226, -1]

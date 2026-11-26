@@ -16,7 +16,7 @@ import tempfile
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
-from mvp1_acceptance import LADYBUG_VERSION, ladybug
+from cypher_acceptance import LADYBUG_VERSION, ladybug
 from native_package_test import native_dependencies
 
 DUCKDB_PIN_VERSION = "v2.0.1"
@@ -40,6 +40,8 @@ NOTICE_HASHES = {
     "DuckGQL-LICENSE": "bc65d3cde8d481d55c682ee88518ded59793453091a9f34edd3f1957d0251e8a",
     "openGQL-LICENSE": "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1",
     "ANTLR-LICENSE.txt": "3db1fb3ee79a4b4f9918fc4d0f6133bf18a3cf787f126cd22f8aa9b862281c0c",
+    "Relate-LICENSE": "ac87d12e27d69f09130a7b4178e48e995ab131e4b476aa188e58ffac7ed7fab3",
+    "Relate-THIRDPARTY-NOTICES.md": "d81c94a78eeb4b2bba3052cb3740bdd2f234b377f8063ad4ae59816af1718172",
 }
 
 
@@ -131,7 +133,6 @@ def main():
     parser.add_argument("--duckdb-unittest", required=True, type=Path)
     parser.add_argument("--lbug", required=True, type=Path)
     parser.add_argument("--extension", required=True, type=Path)
-    parser.add_argument("--without-gql", action="store_true")
     args = parser.parse_args()
     unittest = args.duckdb_unittest.resolve(strict=True)
     lbug = args.lbug.resolve(strict=True)
@@ -156,10 +157,6 @@ def main():
             "QW_EXT": relocated, "QW_ROOT": scratch,
         }
         test_dir = HERE / "sqllogic"
-        if args.without_gql:
-            run_cases(unittest, scratch, variables, [test_dir / "feature_off.test"])
-            return
-
         duckgql_graph = scratch / "duckgql.lbdb"
         ladybug(lbug, duckgql_graph, (HERE / "fixtures/duckgql_reads.cypher").read_text(encoding="utf-8"))
         variables["QW_DUCKGQL_GRAPH"] = duckgql_graph
@@ -188,9 +185,10 @@ def main():
         run_cases(unittest, scratch, variables, [test_dir / name for name in (
             "reads.test", "gql_compatibility.test", "usage_relations.test", "usage_binding.test",
             "usage_boundary.test", "air_routes_fixture.test", "graph_metadata.test",
-            "graph_entry.test", "graph_table.test", "graph_aggregate_pushdown.test", "table_watchlist.test", "hybrid_public.test",
-            "graph_parameters.test", "graph_values.test",
-            "bind.test", "admission.test", "scan.test", "host_access.test", "limits.test",
+            "native_surface.test", "graph_entry.test", "graph_table.test",
+            "graph_aggregate_pushdown.test", "table_watchlist.test", "hybrid_public.test",
+            "graph_parameters.test", "declared_bindings.test", "graph_values.test",
+            "bind.test", "admission.test", "scan.test", "host_access.test", "remote_policy.test", "limits.test",
             "timeout.test_slow", "artifact.test",
             "duckgql_admission.test", "duckgql_aggregates.test", "duckgql_basic.test",
             "duckgql_paths.test", "duckgql_reachability.test", "duckgql_scalars.test",

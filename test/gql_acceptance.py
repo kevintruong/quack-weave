@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import tempfile
 
-from mvp1_acceptance import (
+from cypher_acceptance import (
     DUCKDB_VERSION, FIXTURE, LADYBUG_VERSION, VECTOR_FIXTURE_ROWS, duckdb, expect_failure, expect_rows,
     graph_query, ladybug, provision, read_rows, snapshot_graph, sql_literal,
 )
@@ -139,13 +139,13 @@ def check_package_metadata_and_notices(extension):
         metadata = package.read(256)
     version = metadata[4 * 32 : 5 * 32].rstrip(b"\0")
     if version != b"v0.2.0":
-        raise AssertionError(f"Expected MVP2 footer version v0.2.0, received {version!r}")
+        raise AssertionError(f"Expected native footer version v0.2.0, received {version!r}")
     notices = extension.resolve().parent / "licenses"
     for name in ("DuckGQL-LICENSE", "openGQL-LICENSE", "ANTLR-LICENSE.txt"):
         license_file = notices / name
         if not license_file.is_file() or not license_file.read_bytes():
             raise AssertionError(f"Missing third-party notice {license_file}")
-    print("PASS mvp2_footer_and_third_party_notices_shipped")
+    print("PASS native_footer_and_third_party_notices_shipped")
 
 
 def main():
@@ -163,7 +163,7 @@ def main():
     if not version or version[-1] != LADYBUG_VERSION:
         parser.error(f"Ladybug {LADYBUG_VERSION} is required")
 
-    with tempfile.TemporaryDirectory(prefix="quack-weave-mvp2-") as root:
+    with tempfile.TemporaryDirectory(prefix="quack-weave-gql-") as root:
         graph = Path(root).resolve() / "documents.lbdb"
         ladybug(args.lbug, graph, PARITY_FIXTURE)
         check_relocation(binary, args.extension, graph)

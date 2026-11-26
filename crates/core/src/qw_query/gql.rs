@@ -11,8 +11,7 @@ use super::is_identifier;
 pub type GqlParser = fn(&str) -> std::result::Result<ParsedRead, ParseError>;
 
 /// Compile one supported GQL read to the Cypher admitted by the selected backend.
-pub fn compile_gql_query(query: &str, parser: Option<GqlParser>) -> Result<String> {
-    let parser = parser.ok_or_else(|| frontend_error(ParseErrorKind::Unavailable, None))?;
+pub fn compile_gql_query(query: &str, parser: GqlParser) -> Result<String> {
     let parsed = parser(query).map_err(|error| frontend_error(error.kind, error.location))?;
     lower(&parsed)
 }
@@ -25,7 +24,6 @@ fn frontend_error(kind: ParseErrorKind, location: Option<Location>) -> Error {
         }
         ParseErrorKind::Limit => "QW_GQL_PARSE: GQL input exceeds parser limits",
         ParseErrorKind::Internal => "QW_GQL_PARSE: GQL frontend could not parse the query",
-        ParseErrorKind::Unavailable => "QW_GQL_UNAVAILABLE: This build has no GQL frontend",
     };
     input_error(message, location)
 }

@@ -39,7 +39,11 @@ mod parameters;
 mod projection;
 use projection::ScanProjection;
 mod providers;
-use providers::{AliasReservations, GraphProvider, ProviderKind, resolve_alias};
+pub use providers::{
+    GraphProvider, ProviderDescriptor, ProviderRegistry, ProviderRewrite, ProviderSource,
+};
+mod remote;
+pub use remote::{RemoteCredential, RemoteSource, ScanLimits};
 mod schema;
 use schema::is_identifier;
 pub use schema::{ColumnSpec, ScalarType};
@@ -55,6 +59,8 @@ static CONFIG_GENERATION: AtomicU64 = AtomicU64::new(0);
 /// Label and property names with their graph logical types, captured at registration.
 pub type GraphCatalog = BTreeMap<String, Vec<(String, String)>>;
 
+type DeclaredCatalog = BTreeMap<String, BTreeMap<String, String>>;
+
 /// Registration-time input sizes for DuckDB's cost model. A labeled match
 /// can emit fewer rows than its storage table or its provider-wide population.
 #[derive(Debug, Deserialize, Serialize)]
@@ -63,13 +69,16 @@ pub enum GraphPopulations {
     ByEntity { nodes: u64, edges: u64 },
 }
 
+/// A retired native resource to drop outside the registry mutex.
+pub type RetiredRegistration = Box<dyn Send>;
+
 /// Resources prepared for a registration are published only after every
 /// configuration, file identity and alias check succeeds.
 pub struct PreparedRegistration<'a> {
     pub catalog: Option<GraphCatalog>,
     pub single_pattern_row_bound: Option<u64>,
     pub populations: Option<GraphPopulations>,
-    pub activate: Box<dyn FnOnce() + 'a>,
+    pub activate: Box<dyn FnOnce() -> Option<RetiredRegistration> + 'a>,
 }
 
 /// A backend that exclusively opens read-only database handles.
@@ -111,7 +120,7 @@ pub trait ReadBackend: Send + Sync {
         Err(BackendError::Schema)
     }
 
-    fn native_gql(&self, query: String, parser: Option<GqlParser>) -> Result<String> {
+    fn native_gql(&self, query: String, parser: GqlParser) -> Result<String> {
         compile_gql_query(&query, parser)
     }
 
@@ -120,9 +129,11 @@ pub trait ReadBackend: Send + Sync {
         Vec::new()
     }
 
-    /// Publish the active registration after its metadata is captured. Readers that
-    /// already own their sessions remain valid when the registration changes.
-    fn set_generation(&self, _generation: Option<u64>) {}
+    /// Swap the active native cache owner without opening or dropping resources.
+    /// Readers that already own their sessions remain valid across registration changes.
+    fn set_generation(&self, _generation: Option<u64>) -> Option<RetiredRegistration> {
+        None
+    }
 
     /// Open a scan for an admitted graph generation. Stateless backends can
     /// keep implementing only `open_projected` or `open`.
@@ -147,9 +158,28 @@ pub trait ReadBackend: Send + Sync {
 
     fn open(
         &self,
-        path: &Path,
-        timeout_ms: Option<u64>,
-    ) -> std::result::Result<Box<dyn ReadSession>, BackendError>;
+        _path: &Path,
+        _timeout_ms: Option<u64>,
+    ) -> std::result::Result<Box<dyn ReadSession>, BackendError> {
+        Err(BackendError::Open)
+    }
+
+    /// Check the connector-specific endpoint and credential reference without network I/O.
+    fn validate_remote(&self, _source: &RemoteSource) -> std::result::Result<(), BackendError> {
+        Err(BackendError::RemoteConfig)
+    }
+
+    /// Construct the session with the executing connection's context.
+    /// Submit the remote read only in `execute_with_params`.
+    fn open_remote(
+        &self,
+        _context: &Context,
+        _source: &RemoteSource,
+        _limits: &ScanLimits,
+        _schema: &[ColumnSpec],
+    ) -> std::result::Result<Box<dyn ReadSession>, BackendError> {
+        Err(BackendError::Open)
+    }
 }
 
 pub trait ReadSession: Send {
@@ -189,6 +219,10 @@ pub enum BackendError {
     Arrow,
     BatchBudget,
     Timeout,
+    RemoteConfig,
+    RemoteAuth,
+    RemoteTransport,
+    ResponseBudget,
 }
 
 fn backend_error(error: BackendError) -> Error {
@@ -202,6 +236,12 @@ fn backend_error(error: BackendError) -> Error {
         BackendError::Arrow => "QW_ARROW: Graph result batch could not be decoded",
         BackendError::BatchBudget => "QW_BATCH_BUDGET: Graph result batch exceeds max_batch_bytes",
         BackendError::Timeout => "QW_TIMEOUT: Graph query timed out",
+        BackendError::RemoteConfig => "QW_CONFIG: Invalid or unapproved remote graph endpoint",
+        BackendError::RemoteAuth => "QW_AUTH: Remote graph credentials unavailable or rejected",
+        BackendError::RemoteTransport => "QW_TRANSPORT: Remote graph request failed",
+        BackendError::ResponseBudget => {
+            "QW_RESPONSE_BUDGET: Remote graph response exceeds max_response_bytes"
+        }
     };
     Error::invalid_input(message)
 }
@@ -309,7 +349,7 @@ struct ConfigInput {
     timeout_ms: Option<u64>,
     max_batch_bytes: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    catalog: Option<BTreeMap<String, BTreeMap<String, String>>>,
+    catalog: Option<DeclaredCatalog>,
 }
 
 impl ConfigInput {
@@ -337,15 +377,28 @@ fn parse_config(text: &str) -> Result<ConfigInput> {
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
 pub struct GraphGeneration {
     id: u64,
-    length: u64,
-    modified_ns: i128,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    length: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    modified_ns: Option<i128>,
     #[cfg(unix)]
-    device_inode: (u64, u64),
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    device_inode: Option<(u64, u64)>,
 }
 
 impl GraphGeneration {
     pub fn id(&self) -> u64 {
         self.id
+    }
+
+    fn remote(id: u64) -> Self {
+        Self {
+            id,
+            length: None,
+            modified_ns: None,
+            #[cfg(unix)]
+            device_inode: None,
+        }
     }
 
     pub fn capture(id: u64, path: &Path) -> Result<Self> {
@@ -362,12 +415,12 @@ impl GraphGeneration {
         };
         Ok(Self {
             id,
-            length: metadata.len(),
-            modified_ns,
+            length: Some(metadata.len()),
+            modified_ns: Some(modified_ns),
             #[cfg(unix)]
             device_inode: {
                 use std::os::unix::fs::MetadataExt;
-                (metadata.dev(), metadata.ino())
+                Some((metadata.dev(), metadata.ino()))
             },
         })
     }
@@ -383,11 +436,43 @@ impl GraphGeneration {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+enum RegisteredConfig {
+    Local(ConfigInput),
+    Remote(remote::RemoteConfig),
+}
+
+impl RegisteredConfig {
+    fn alias(&self) -> &str {
+        match self {
+            Self::Local(config) => &config.alias,
+            Self::Remote(config) => &config.alias,
+        }
+    }
+
+    fn max_batch_bytes(&self) -> Option<usize> {
+        match self {
+            Self::Local(config) => config.max_batch_bytes,
+            Self::Remote(config) => config.max_batch_bytes,
+        }
+    }
+
+    fn has_resource_limit(&self) -> bool {
+        match self {
+            Self::Local(config) => config.has_resource_limit(),
+            Self::Remote(_) => true,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 struct ConfigSnapshot {
     generation: GraphGeneration,
-    config: ConfigInput,
+    config: RegisteredConfig,
     #[serde(default)]
     catalog: Option<GraphCatalog>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    observed_catalog: bool,
     #[serde(default)]
     single_pattern_row_bound: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -431,23 +516,13 @@ fn admit_local_path(context: &Context, path: &str) -> Result<String> {
     Ok(canonical.to_owned())
 }
 
-/// Validate a session graph selection against this instance's provisioned names.
-pub fn validate_graph_alias(context: &Context, alias: &str) -> Result<()> {
-    resolve_alias(
-        context,
-        alias,
-        [ProviderKind::Ladybug, ProviderKind::Relate],
-    )
-    .map(|_| ())
-}
-
 struct BoundRead {
     static_predicate: std::sync::Mutex<Option<String>>,
     fragment: Option<GraphFragment>,
     provider: GraphProvider,
     watch: Option<RuntimeWatch>,
     params: Vec<(String, GraphParameter)>,
-    config: ConfigSnapshot,
+    config: Arc<ConfigSnapshot>,
     cypher: String,
     schema: Vec<ColumnSpec>,
 }
@@ -456,10 +531,11 @@ impl BoundRead {
     fn allows_pgq_rewrite(&self) -> bool {
         self.fragment.is_some()
             && !self.config.config.has_resource_limit()
-            && (self.provider.kind == ProviderKind::Ladybug
-                || self.config.catalog.as_ref().is_some_and(|catalog| {
-                    catalog.keys().next().is_some_and(|key| key.contains(':'))
-                }))
+            && match self.provider.descriptor.rewrite {
+                ProviderRewrite::Disabled => false,
+                ProviderRewrite::LabelCatalog => true,
+                ProviderRewrite::ObservedCatalog => self.config.observed_catalog,
+            }
     }
 }
 
@@ -527,7 +603,7 @@ impl GraphLanguage {
         }
     }
 
-    fn compile(self, query: String, parser: Option<GqlParser>) -> Result<String> {
+    fn compile(self, query: String, parser: GqlParser) -> Result<String> {
         match self {
             Self::Cypher => Ok(query),
             Self::Gql => compile_gql_query(&query, parser),
@@ -545,9 +621,9 @@ enum GraphQueryKind {
 }
 
 struct GraphQuery {
-    providers: Arc<[GraphProvider]>,
+    providers: ProviderRegistry,
     kind: GraphQueryKind,
-    gql_parser: Option<GqlParser>,
+    gql_parser: GqlParser,
 }
 
 impl TableFunctionCallbacks for GraphQuery {
@@ -610,15 +686,19 @@ impl TableFunctionCallbacks for GraphQuery {
             ));
         }
         let language = GraphLanguage::parse(&dialect)?;
-        let (index, config) = resolve_alias(
-            context,
-            &alias,
-            self.providers.iter().map(|provider| provider.kind),
-        )?;
-        let provider = &self.providers[index];
+        let (provider, config) = self.providers.resolve_alias(&alias)?;
+        let remote = provider.descriptor.source == ProviderSource::RemoteEndpoint;
+        if remote
+            && (!matches!(language, GraphLanguage::Cypher)
+                || self.kind != GraphQueryKind::DeclaredSchema && fragment.is_none())
+        {
+            return Err(Error::invalid_input(
+                "QW_ARGUMENT: Remote graph reads require GRAPH_TABLE or qw_query with an explicit Cypher schema",
+            ));
+        }
         let backend = &provider.backend;
         let mut watch = None;
-        if provider.kind == ProviderKind::Ladybug
+        if provider.descriptor.rewrite == ProviderRewrite::LabelCatalog
             && matches!(
                 self.kind,
                 GraphQueryKind::Filtered | GraphQueryKind::RuntimeWatch
@@ -667,29 +747,32 @@ impl TableFunctionCallbacks for GraphQuery {
                     "QW_SCHEMA: Catalog metadata unavailable for this graph generation",
                 )
             })?;
-            backend
-                .projection(catalog, &cypher)
-                .map_err(|err| match err {
-                    BackendError::Schema => {
-                        Error::invalid_input("QW_SCHEMA: Unknown or unsupported graph projection")
-                    }
-                    other => backend_error(other),
-                })?
+            let projection = if remote {
+                fragment
+                    .as_ref()
+                    .ok_or(BackendError::Schema)
+                    .and_then(|fragment| fragment.declared_projection(catalog))
+            } else {
+                backend.projection(catalog, &cypher)
+            };
+            projection.map_err(|err| match err {
+                BackendError::Schema => {
+                    Error::invalid_input("QW_SCHEMA: Unknown or unsupported graph projection")
+                }
+                other => backend_error(other),
+            })?
         };
         // A Relate declaration can claim BIGINT for a stored string. Pushing the
         // filter could hide a conversion error. Only its observed, kind-qualified
         // catalog certifies the actual graph values. Keep explicit budgets on the
         // original scan so changing the row count cannot suppress a budget error.
-        if provider.kind == ProviderKind::Relate
+        if provider.descriptor.rewrite == ProviderRewrite::ObservedCatalog
             && matches!(
                 self.kind,
                 GraphQueryKind::Filtered | GraphQueryKind::RuntimeWatch
             )
             && !config.config.has_resource_limit()
-            && config
-                .catalog
-                .as_ref()
-                .is_some_and(|c| c.keys().next().is_some_and(|k| k.contains(':')))
+            && config.observed_catalog
         {
             let label = required(3)?;
             let property = required(4)?;
@@ -732,6 +815,15 @@ impl TableFunctionCallbacks for GraphQuery {
                     Error::invalid_input("QW_ARGUMENT: Expected bound graph parameter values")
                 })?,
             )?
+        } else if let Some(arg) = args.arg_by_name("bindings")? {
+            let bindings = arg.value()?.ok_or_else(|| {
+                Error::invalid_input("QW_ARGUMENT: Expected bound graph parameter values")
+            })?;
+            if bindings.is_null()? {
+                Vec::new()
+            } else {
+                parameters::from_struct(context, &bindings)?
+            }
         } else {
             Vec::new()
         };
@@ -782,40 +874,51 @@ impl TableFunctionCallbacks for GraphQuery {
         let Some(batch) = scan.next(
             projection.schema(bound),
             capacity,
-            bound.config.config.max_batch_bytes,
+            bound.config.config.max_batch_bytes(),
             || {
-                let current = bound.provider.kind.config(context)?;
-                if current.is_none_or(|c| c.generation.id != bound.config.generation.id) {
-                    return Err(Error::invalid_input(format!(
-                        "QW_CONFIG: {} configuration changed after binding",
-                        bound.provider.kind.name()
-                    )));
-                }
-                if self.providers.len() > 1 {
-                    bound
-                        .provider
-                        .kind
-                        .check_sibling(context, &bound.config.config.alias)?;
-                }
-                let path = admit_local_path(context, &bound.config.config.path)?;
-                if path != bound.config.config.path {
-                    return Err(Error::invalid_input(format!(
-                        "QW_ACCESS: Configured {} path changed after binding",
-                        bound.provider.kind.name()
-                    )));
-                }
-                bound.config.generation.validate(Path::new(&path))?;
-                let session = bound
-                    .provider
-                    .backend
-                    .open_for_generation(
-                        Path::new(&path),
-                        bound.config.config.timeout_ms,
-                        projection.schema(bound),
-                        &bound.config.generation,
-                    )
-                    .map_err(backend_error)?;
-                bound.config.generation.validate(Path::new(&path))?;
+                self.check_scan_registration(bound)?;
+                let session = match &bound.config.config {
+                    RegisteredConfig::Local(config) => {
+                        let generation = &bound.config.generation;
+                        let path = admit_local_path(context, &config.path)?;
+                        if path != config.path {
+                            return Err(Error::invalid_input(format!(
+                                "QW_ACCESS: Configured {} path changed after binding",
+                                bound.provider.descriptor.name
+                            )));
+                        }
+                        let path = Path::new(&path);
+                        generation.validate(path)?;
+                        let session = bound
+                            .provider
+                            .backend
+                            .open_for_generation(
+                                path,
+                                config.timeout_ms,
+                                projection.schema(bound),
+                                generation,
+                            )
+                            .map_err(backend_error)?;
+                        generation.validate(path)?;
+                        session
+                    }
+                    RegisteredConfig::Remote(config) => {
+                        remote::admit_remote(context)?;
+                        let session = bound
+                            .provider
+                            .backend
+                            .open_remote(
+                                context,
+                                &config.source(),
+                                &config.limits(),
+                                projection.schema(bound),
+                            )
+                            .map_err(backend_error)?;
+                        self.check_scan_registration(bound)?;
+                        remote::admit_remote(context)?;
+                        session
+                    }
+                };
                 session
                     .execute_with_params(projection.query(bound), &bound.params)
                     .map_err(backend_error)
@@ -834,61 +937,41 @@ impl TableFunctionCallbacks for GraphQuery {
     }
 }
 
-/// Register the native graph query and its instance configuration for Cypher.
-pub fn register(extension: &Extension, backend: impl ReadBackend + 'static) -> Result<()> {
-    register_query(
-        extension,
-        vec![GraphProvider::new(ProviderKind::Ladybug, backend)],
-        None,
-    )
+impl GraphQuery {
+    fn check_scan_registration(&self, bound: &BoundRead) -> Result<()> {
+        if !self
+            .providers
+            .check_generation(bound.provider.descriptor.id, bound.config.generation.id())?
+        {
+            return Err(Error::invalid_input(format!(
+                "QW_CONFIG: {} configuration changed after binding",
+                bound.provider.descriptor.name
+            )));
+        }
+        Ok(())
+    }
 }
 
-/// Register the native graph query with a GQL parser in addition to Cypher.
-pub fn register_with_gql(
-    extension: &Extension,
-    backend: impl ReadBackend + 'static,
-    parser: GqlParser,
-) -> Result<()> {
-    register_query(
-        extension,
-        vec![GraphProvider::new(ProviderKind::Ladybug, backend)],
-        Some(parser),
-    )
-}
-
-/// Install both real providers behind the same public Cypher, GQL and SQL/PGQ entry points.
-pub fn register_with_relate(
-    extension: &Extension,
-    ladybug: impl ReadBackend + 'static,
-    relate: impl ReadBackend + 'static,
-    parser: GqlParser,
-) -> Result<()> {
-    register_query(
-        extension,
-        vec![
-            GraphProvider::new(ProviderKind::Ladybug, ladybug),
-            GraphProvider::new(ProviderKind::Relate, relate),
-        ],
-        Some(parser),
-    )
-}
-
-fn register_query(
+/// Install the graph queries and settings for the providers enabled by the native extension.
+pub fn register_query(
     extension: &Extension,
     providers: Vec<GraphProvider>,
-    gql_parser: Option<GqlParser>,
-) -> Result<()> {
-    let providers: Arc<[GraphProvider]> = providers.into();
-    let aliases = (providers.len() > 1).then(|| Arc::new(AliasReservations::default()));
-    for provider in providers.iter() {
-        provider.register_option(extension, aliases.clone())?;
-    }
+    gql_parser: GqlParser,
+) -> Result<ProviderRegistry> {
+    let providers = ProviderRegistry::new(providers)?;
+    remote::register(extension)?;
+    providers.register_options(extension)?;
+    TableFunctionBuilder::new(
+        "qw_graph_providers",
+        SignatureBuilder::new().documentation(
+            FunctionDocumentationBuilder::new()
+                .description("List enabled graph providers and their configuration settings.")
+                .add_category("quack_weave"),
+        ),
+        providers.clone(),
+    )
+    .register(extension)?;
 
-    let description = if gql_parser.is_some() {
-        "Read typed rows from a configured graph using read-only Cypher or a supported GQL subset."
-    } else {
-        "Read typed rows from one read-only Cypher query against an embedded Ladybug graph."
-    };
     TableFunctionBuilder::new(
         "qw_query",
         SignatureBuilder::new()
@@ -896,13 +979,18 @@ fn register_query(
             .param(FunctionParameter::new::<String>("dialect"))
             .param(FunctionParameter::new::<String>("query"))
             .param(FunctionParameter::new::<String>("schema").kind(FunctionParameterKind::Named))
+            .param(
+                FunctionParameter::new::<duckdb_neo::types::Any>("bindings")
+                    .default_value(Option::<String>::None)
+                    .kind(FunctionParameterKind::Named),
+            )
             .documentation(
                 FunctionDocumentationBuilder::new()
-                    .description(description)
+                    .description("Read typed rows from a configured graph using read-only Cypher or a supported GQL subset.")
                     .add_category("quack_weave"),
             ),
         GraphQuery {
-            providers: Arc::clone(&providers),
+            providers: providers.clone(),
             kind: GraphQueryKind::DeclaredSchema,
             gql_parser,
         },
@@ -943,7 +1031,7 @@ fn register_query(
             name,
             signature,
             GraphQuery {
-                providers: Arc::clone(&providers),
+                providers: providers.clone(),
                 kind,
                 gql_parser,
             },
@@ -953,7 +1041,62 @@ fn register_query(
         .with_projection_pushdown(true)
         .register(extension)?;
     }
-    Ok(())
+    Ok(providers)
+}
+
+impl TableFunctionCallbacks for ProviderRegistry {
+    type BindData = ();
+    type GlobalState = ();
+    type LocalState = (Vec<Option<String>>, usize);
+
+    fn bind(
+        &self,
+        context: &Context,
+        _: BindArguments,
+        handle: BindFunctionHandle<'_>,
+    ) -> Result<()> {
+        let text = String::logical_type(context)?;
+        handle.add_result_column("provider_id", &text)?;
+        handle.add_result_column("setting_name", &text)?;
+        handle.add_result_column("active_alias", &text)?;
+        handle.set_cardinality(self.descriptors().len(), true)
+    }
+
+    fn init_local_state(
+        &self,
+        _: &Context,
+        _: &(),
+        _: Option<&()>,
+        _: InitColumnData<'_>,
+    ) -> Result<Option<Self::LocalState>> {
+        Ok(Some((self.active_aliases()?, 0)))
+    }
+
+    fn exec(
+        &self,
+        _: &Context,
+        _: &(),
+        state: Option<&mut Self::LocalState>,
+        _: Option<&()>,
+        output: &mut DataChunk<'_>,
+        _: ExecColumnInfo<'_>,
+    ) -> Result<()> {
+        let (active_aliases, offset) =
+            state.ok_or_else(|| Error::internal("qw_graph_providers: missing scan state"))?;
+        let descriptors = self.descriptors().skip(*offset).take(output.capacity()?);
+        let len = descriptors.len();
+        if len == 0 {
+            return Ok(());
+        }
+        write_column::<String>(output, 0, descriptors.clone().map(|item| Some(item.id)))?;
+        write_column::<String>(output, 1, descriptors.map(|item| Some(item.option)))?;
+        let aliases = active_aliases[*offset..*offset + len]
+            .iter()
+            .map(Option::as_deref);
+        write_column::<String>(output, 2, aliases)?;
+        *offset += len;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

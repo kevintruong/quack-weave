@@ -92,7 +92,7 @@ Each implementation commit has a fixture-backed SQLLogic regression. The plan ch
 From the repository root, use the benchmark Python environment with Python 3.12 and the [pinned benchmark wheels](tracker/requirements.txt). Place the pinned `sf1.lbdb` under `build/perf/lsqb-sf1/`. The fixture builder checks the source hash before importing. These commands target the combined release and the pinned DuckDB library used in the measurements.
 
 ```sh
-make mvp2-deps mvp2-relate-release
+make native-deps && make native-release
 build/usage-client-venv/bin/python -m pip install --only-binary=:all: --require-hashes -r benchmarks/provider_comparison/tracker/requirements.txt
 
 for m in 256 32 1; do

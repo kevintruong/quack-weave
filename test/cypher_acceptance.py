@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the QuackWeave MVP1 SQL surface against pinned native binaries."""
+"""Exercise the QuackWeave typed Cypher SQL surface against pinned native binaries."""
 
 import argparse
 import csv
@@ -317,7 +317,7 @@ def main():
     version_pattern = rf"(?<![\d.]){re.escape(LADYBUG_VERSION)}(?![\d.])"
     if not re.search(version_pattern, lbug_version.stdout + lbug_version.stderr):
         parser.error(f"Ladybug {LADYBUG_VERSION} is required")
-    with tempfile.TemporaryDirectory(prefix="quack-weave-mvp1-") as root:
+    with tempfile.TemporaryDirectory(prefix="quack-weave-cypher-") as root:
         graph = Path(root).resolve() / "documents.lbdb"
         ladybug(options.lbug, graph, FIXTURE)
         if not graph.is_file():

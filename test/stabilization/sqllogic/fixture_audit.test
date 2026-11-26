@@ -53,8 +53,8 @@ SELECT CAST(count(*) > 0 AS INTEGER) FROM package WHERE kind = 'import';
 ----
 1
 
-# case: fixture.notices Each bundled parser and DuckDB notice has the pinned file digest
+# case: fixture.notices Each bundled notice has the pinned file digest
 query I
 SELECT count(*) FROM package WHERE kind = 'notice' AND observed = expected;
 ----
-4
+6

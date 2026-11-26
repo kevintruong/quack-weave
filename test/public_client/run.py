@@ -11,8 +11,8 @@ from adbc_driver_manager import dbapi
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "stabilization"))
-from run_sqllogictest import DUCKDB_PIN_SOURCE, DUCKDB_PIN_VERSION, PIN_PROBE_SQL, run_cases
-from mvp1_acceptance import ladybug, provision, sql_literal
+from run_sqllogictest import DUCKDB_PIN_SOURCE, DUCKDB_PIN_VERSION, PIN_PROBE_SQL, report_artifact, run_cases
+from cypher_acceptance import ladybug, provision, sql_literal
 
 
 ROUTES = """MATCH (origin:airport)-[route:route]->(destination:airport)
@@ -27,6 +27,7 @@ def run(args, scratch):
     ladybug(args.lbug, graph, fixture.read_text(encoding="utf-8"))
     destination = scratch / "client_results.duckdb"
     run_cases(args.duckdb_unittest, scratch, {}, stdin=PIN_PROBE_SQL)
+    report_artifact(args.extension)
     options = dict(driver=str(args.duckdb_library), entrypoint="duckdb_adbc_init", autocommit=True)
     with (
         dbapi.connect(**options, db_kwargs={"allow_unsigned_extensions": "true"}) as reader,

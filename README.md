@@ -1,92 +1,72 @@
 # QuackWeave
 
-QuackWeave is a native DuckDB extension for reading an existing local Ladybug graph. The MVP2 package supports standalone graph reads and SQL/PGQ graph table expressions. DuckDB can join their typed columns to its own tables and Parquet files. The explicit-schema `qw_query` interface is also available.
+QuackWeave is a read-only graph extension for DuckDB. Its SQL/PGQ interface embeds `MATCH` inside a standard SQL `FROM` clause using `GRAPH_TABLE`. Project graph properties with `COLUMNS`, then join the result to a DuckDB table, a Parquet file, or another SQL relation.
 
-[Read the documentation](https://kevintruong.github.io/quack-weave/docs/) for provider setup, query examples, and SQLLogic evidence. [Open the browser playground](https://kevintruong.github.io/quack-weave/) to try SQL, Cypher, and hybrid queries on the PaperTrail sample. See the [playground source and local setup](playground/README.md).
+[Read the documentation](https://kevintruong.github.io/quack-weave/docs/) for provider setup, query examples, and SQLLogic evidence. [Try GRAPH_TABLE in the browser Playground](https://kevintruong.github.io/quack-weave/) on the bundled PaperTrail sample. [Playground source and local setup](playground/README.md)
 
-## Build and use MVP1
+## Build and query a graph
 
-The native package targets Linux arm64 and macOS arm64, DuckDB `v2.0.1` and Ladybug `v0.22.3`. The build uses the Rust toolchain, a C++20 compiler, Python 3.12 or later, and OpenSSL 3 static libraries. It locates those libraries through Homebrew or `OPENSSL_LIB_DIR`. On Ubuntu 24.04 arm64 use `CXX=g++-13` and `OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu`.
+Build one QuackWeave extension for DuckDB `v2.0.1` on Linux ARM64 or macOS ARM64. It includes Ladybug `v0.22.3`, RelateDB `v1.2.0`, and Neo4j AuraDB. Load it once, then register the graphs you want to query.
+
+Install Rust, a C++20 compiler, CMake, Python 3.12 or later, and OpenSSL 3 static libraries. The build locates OpenSSL through Homebrew or `OPENSSL_LIB_DIR`. On Ubuntu 24.04 ARM64 set `CXX=g++-13` and `OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu`.
 
 ```sh
-make mvp1-deps
-make mvp1
+make native-deps && make native-release
 /path/to/duckdb-v2.0.1 -unsigned
 ```
 
-Using an existing Ladybug graph with `Document` nodes and `LINKS_TO` relationships, run:
+The commands build `build/native/release/extension/quack_weave/quack_weave.duckdb_extension`. Plain `make` produces the corresponding debug package in `build/native/debug/`. The adjacent `licenses/` directory contains the notices for the pinned DuckDB, DuckGQL, openGQL, ANTLR, and RelateDB sources.
+
+Open an existing Ladybug graph with `Document` nodes and `LINKS_TO` relationships. `GRAPH_TABLE` makes the matches available to standard SQL.
 
 ```sql
-LOAD '/absolute/path/to/quack-weave/build/debug/extension/quack_weave/quack_weave.duckdb_extension';
+LOAD '/absolute/path/to/quack-weave/build/native/release/extension/quack_weave/quack_weave.duckdb_extension';
 SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"/absolute/path/to/documents.lbdb"}';
 
-SELECT document_id
-FROM qw_query(
-    'kg', 'cypher',
-    $$MATCH (:Document {id: 100})-[:LINKS_TO]->(doc:Document)
-      RETURN doc.id AS document_id$$,
-    schema := 'document_id BIGINT'
-);
+WITH watch(id) AS (VALUES (101::BIGINT), (102::BIGINT))
+SELECT g.id, g.title
+FROM GRAPH_TABLE (
+    kg MATCH (src:Document)-[edge:LINKS_TO]->(doc:Document)
+    WHERE src.id = 100
+    COLUMNS (doc.id AS id, doc.title AS title)
+) AS g
+JOIN watch USING (id)
+ORDER BY g.id;
 ```
 
-The `schema` argument accepts ordered `name TYPE` pairs using `BOOLEAN`, `BIGINT`, `DOUBLE`, or `VARCHAR`. The declared names and types must match the Cypher output. Configure the graph from a trusted DuckDB session with external access enabled. The optional `timeout_ms` setting applies a positive Ladybug query timeout.
+Use standalone `MATCH` for a graph-only result on a connection with a selected graph. Use `qw_query` for provider query text with a declared scalar schema and, in Cypher, named bindings. [SQL/PGQ queries](#hybrid-sql-queries) · [Standalone queries](#standalone-graph-queries) · [Explicit-schema queries](#explicit-schema-bridge)
 
-Set `max_batch_bytes` to a positive integer to bound the size of each bridge-owned batch. An oversized batch raises `QW_BATCH_BUDGET` before its rows are published. Ladybug may still materialize the native result.
+## Inspect registered graphs
 
-Interactive reads in one DuckDB instance reuse the registered graph's read-only Ladybug database handle. Each scan opens its own connection and applies the configured timeout. Use `RESET GLOBAL qw_ladybug_config` to release the registration before replacing the file, then register the new file with `SET GLOBAL`. Readers already holding a handle can finish their scans.
-
-Run the native acceptance suite with version-matched DuckDB and Ladybug CLI binaries:
-
-```sh
-make mvp1-test DUCKDB=/path/to/duckdb-v2.0.1 LBUG=/path/to/lbug-v0.22.3
-```
-
-## Build and use MVP2
-
-MVP2 adds a pinned DuckGQL parser and ANTLR C++ runtime to the native ARM64 build for DuckDB `v2.0.1` and Ladybug `v0.22.3`. Install CMake in addition to the MVP1 build prerequisites.
-
-```sh
-make mvp2-deps
-make mvp2
-make mvp2-release
-```
-
-The artifacts are `build/mvp2/debug/extension/quack_weave/quack_weave.duckdb_extension` and `build/mvp2/release/extension/quack_weave/quack_weave.duckdb_extension`. The accompanying `licenses/` directory contains the GQL frontend notices for DuckGQL at revision `b4421c5cb5e3a389f9658de591a0aa6d397da991`, the openGQL grammar vendored at that revision, and ANTLR `4.13.2`. [DuckGQL](https://github.com/rahul-iyer/duckdb-gql/tree/b4421c5cb5e3a389f9658de591a0aa6d397da991) · [openGQL grammar](https://github.com/rahul-iyer/duckdb-gql/tree/b4421c5cb5e3a389f9658de591a0aa6d397da991/third_party/opengql) · [ANTLR](https://github.com/antlr/antlr4/tree/4.13.2)
-
-Load the MVP2 artifact in DuckDB `v2.0.1` started with `-unsigned`, then configure the existing Ladybug graph as in MVP1.
+After loading a native package, list its installed providers and active aliases.
 
 ```sql
-LOAD '/absolute/path/to/quack-weave/build/mvp2/release/extension/quack_weave/quack_weave.duckdb_extension';
-SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"/absolute/path/to/documents.lbdb"}';
-
-SELECT document_id
-FROM qw_query(
-    'kg', 'gql',
-    $$MATCH (src:Document)-[:LINKS_TO]->(doc:Document)
-      FILTER src.id = 100
-      RETURN doc.id AS document_id$$,
-    schema := 'document_id BIGINT'
-);
+SELECT provider_id, setting_name, active_alias
+FROM qw_graph_providers()
+ORDER BY provider_id;
 ```
 
-The explicit-schema GQL function supports one fixed, directed `MATCH` with named, labeled nodes and a relationship type. Use unquoted ASCII identifiers and omit the trailing semicolon inside the GQL payload. Return aliased scalar properties and optionally filter with one property-to-literal comparison using `WHERE`, `FILTER`, or `FILTER WHERE`. The literals are Boolean, signed integers, or strings.
+Each provider has one registration slot per DuckDB instance. `active_alias` is `NULL` until a graph is registered. Aliases are case-insensitive and unique across providers. When concurrent `SET GLOBAL` or `RESET GLOBAL` operations target the same slot, a stale registration fails with `QW_CONFIG` and the winning registration stays active. DuckDB publishes `current_setting()` after the extension callback, so use `active_alias` to inspect effective routing after concurrent updates.
 
-The `schema` option and Ladybug timeout and batch limit settings apply to both dialects. Syntax errors use `QW_GQL_PARSE`, and valid syntax outside this subset uses `QW_GQL_SUBSET`. A Cypher-only MVP1 build reports `QW_GQL_UNAVAILABLE` for a GQL call.
+## Graph providers
 
-Run package and runtime checks for both MVP2 artifacts with the pinned CLIs.
+### Ladybug
+
+Configure a trusted DuckDB session with external access enabled and register an existing `.lbdb` file using `qw_ladybug_config`. Use a positive `timeout_ms` to bound the Ladybug query, and a positive `max_batch_bytes` to bound each bridge-owned output batch. Ladybug may still materialize the native result.
+
+Scans reuse the registered read-only database handle and open independent connections. Run `RESET GLOBAL qw_ladybug_config` before replacing the file, then register the replacement. Readers already holding a handle can finish their scans.
+
+Run the package and runtime acceptance checks with the pinned CLIs.
 
 ```sh
-make mvp2-test DUCKDB=/path/to/duckdb-v2.0.1 LBUG=/path/to/lbug-v0.22.3
+make native-test DUCKDB=/path/to/duckdb-v2.0.1 LBUG=/path/to/lbug-v0.22.3
 ```
-
-The default build remains MVP1 and its Cypher-only artifact stays under `build/debug` or `build/release`.
 
 ### Query a RelateDB graph alongside Ladybug
 
-The optional `relate-provider` build embeds RelateDB 1.2.0. On Linux or macOS arm64, build it with `make mvp2-deps` and `make mvp2-relate-release`. Start DuckDB 2.0.1 with `-unsigned` and point the extension at an existing, checkpointed, single-file `.rl` bundle. [Pinned RelateDB source](https://github.com/relatedb/relate/tree/v1.2.0)
+Register an existing, checkpointed, single-file `.rl` bundle after you load QuackWeave. [Pinned RelateDB source](https://github.com/relatedb/relate/tree/v1.2.0)
 
 ```sql
-LOAD '/absolute/path/to/quack-weave/build/mvp2-relate/release/extension/quack_weave/quack_weave.duckdb_extension';
 SET GLOBAL qw_relate_config = '{"alias":"relate_routes","path":"/absolute/path/to/routes.rl"}';
 SESSION SET GRAPH relate_routes;
 
@@ -114,13 +94,52 @@ Registration opens the bundle read-only and ordinarily discovers property types 
 
 Registration opens the frozen RelateDB bundle once. Subsequent scans on that DuckDB instance open independent connections to the registered handle. Use `RESET GLOBAL qw_relate_config` to release the registration before replacing the file. Active reads retain their snapshot until they finish. RelateDB 1.2.0 materializes its query result before QuackWeave converts it to DuckDB batches. The optional `max_batch_bytes` limits that conversion. Configuring `timeout_ms` for this provider raises `QW_CONFIG`. [RelateDB execution and buffering](https://github.com/relatedb/relate/blob/v1.2.0/docs/adr/0319-bolt-execution-failures-at-pull.md)
 
-Run the integration suite with the pinned DuckDB SQLLogic runner and Ladybug CLI. It creates both real graph fixtures, checks the Relate rows through the native API, runs the DuckDB queries and verifies the fixture files after the reads. [SQLLogic cases](test/relate/provider.test) · [Fixture builder](crates/native/examples/relate_fixture.rs)
+The provider benchmark compares Ladybug and RelateDB through this same extension on matched LSQB message–creator graphs. [Results notebook](benchmarks/provider_comparison/provider_benchmark.ipynb) · [Reproduction instructions](benchmarks/provider_comparison/README.md) [Latest main benchmark table](https://github.com/kevintruong/quack-weave/tree/benchmark-history) · [CI benchmark reports](benchmarks/provider_comparison/tracker/README.md#view-ci-benchmark-tables)
 
-```sh
-make mvp2-relate-test DUCKDB_UNITTEST=/path/to/duckdb-v2.0.1/unittest LBUG=/path/to/lbug-v0.22.3
+### Read from a Neo4j AuraDB graph
+
+After loading the extension, configure AuraDB from a trusted DuckDB session with external access enabled. Use a database login with effective read-only privileges. Replace the sample origin, credentials, database, and graph pattern with values for your instance. Provision the secret on the DuckDB connection that will issue the reads.
+
+```sql
+CREATE SECRET routes IN connection (
+    TYPE quack_weave_neo4j,
+    ORIGIN 'https://example.databases.neo4j.io',
+    USERNAME 'graph_reader',
+    PASSWORD '<password>'
+);
+SET GLOBAL qw_enable_remote_graphs = true;
+SET GLOBAL qw_neo4j_config = '{
+  "alias":"routes_remote",
+  "endpoint":"https://example.databases.neo4j.io",
+  "database":"neo4j",
+  "secret":"routes",
+  "timeout_ms":5000,
+  "max_response_bytes":1048576,
+  "catalog":{"node:airport":{"code":"VARCHAR"}}
+}';
+
+SELECT destination
+FROM qw_query(
+    'routes_remote', 'cypher',
+    $$MATCH (o:airport)-[:route]->(d:airport) WHERE o.code = $origin
+      RETURN d.code AS destination$$,
+    schema := 'destination VARCHAR', bindings := {'origin': 'OSL'}
+);
+
+SELECT destination
+FROM GRAPH_TABLE (
+    routes_remote MATCH (o:airport)-[e:route]->(d:airport)
+    WHERE o.code = 'OSL' COLUMNS (d.code AS destination)
+);
 ```
 
-The provider benchmark compares Ladybug and RelateDB through this same extension on matched LSQB message–creator graphs. [Results notebook](benchmarks/provider_comparison/provider_benchmark.ipynb) · [Reproduction instructions](benchmarks/provider_comparison/README.md) [Latest main benchmark table](https://github.com/kevintruong/quack-weave/tree/benchmark-history) · [CI benchmark reports](benchmarks/provider_comparison/tracker/README.md#view-ci-benchmark-tables)
+The adapter sends a single admitted Cypher read through AuraDB’s Query API v2 and decodes its Typed JSON scalar results. Set positive `timeout_ms` and `max_response_bytes` values to bound each read. `GRAPH_TABLE` requires a declared `catalog` with `node:Label` and `relationship:TYPE` keys for the properties referenced by the query. The example declares `node:airport` for `airport.code`. DuckDB evaluates the SQL projections, filters, joins, and aggregations for remote graph tables.
+
+The secret's HTTPS origin must match the registered origin. An explicit `:443` is equivalent to the default port. Provision the same secret name on each pooled connection that uses the graph. Quack Weave looks up the credential when the scan starts, so `CREATE OR REPLACE SECRET routes IN connection (...)` takes effect for subsequent scans, including prepared statement execution. Revoke access on that connection with `DROP SECRET routes FROM connection` or close the connection. DuckDB's CLI can store literal `CREATE SECRET` SQL in its history. Supply actual credentials through your trusted application or through the environment option. [DuckDB `CREATE SECRET`](https://duckdb.org/docs/2.0/sql/statements/create_secret)
+
+For process-wide provisioning, set `QW_NEO4J_ROUTES_ENDPOINT`, `QW_NEO4J_ROUTES_USERNAME`, and `QW_NEO4J_ROUTES_PASSWORD` before starting DuckDB, then use `"credential_ref":"routes"` in the graph configuration. The environment endpoint must match the registered endpoint exactly. The graph configuration accepts exactly one of `secret` and `credential_ref`.
+
+`RESET GLOBAL qw_enable_remote_graphs` disables new remote scans. Run `make native-provider-test` with the pinned SQLLogic runner and Ladybug CLI to exercise RelateDB and the Neo4j local TLS fixture. The Neo4j fixture uses the `openssl` CLI to generate test certificates. [Neo4j SQLLogic tests](test/neo4j/sqllogic)
 
 ### Standalone graph queries
 
@@ -155,7 +174,7 @@ Individual nodes and relationships retain Ladybug's identity and property fields
 
 ### Hybrid SQL queries
 
-Name the registered graph in `GRAPH_TABLE` and project the properties used by SQL. The following query ranks routes after matching destinations to a Parquet directory. The airport with the longest flight might have no directory row.
+Embed `MATCH` inside SQL's `FROM` clause with `GRAPH_TABLE`. Name the registered graph and project the properties used by SQL. The following query ranks routes after matching destinations to a Parquet directory. The airport with the longest flight might have no directory row.
 
 ```sql
 SELECT r.origin, r.destination, a.city, r.miles
@@ -214,15 +233,17 @@ The client acceptance target uses `adbc-driver-manager==1.9.0` and `pyarrow==23.
 
 ### Explicit-schema bridge
 
-Use `qw_query` in a DuckDB `FROM` clause. Its declared `schema` supplies column names and types. Use `AS related(document_id)` to rename a column in SQL.
+Use `qw_query` in a DuckDB `FROM` clause. The required `schema` declares ordered column names and types using `BOOLEAN`, `BIGINT`, `DOUBLE`, or `VARCHAR`. The optional `bindings` DuckDB `STRUCT` supplies Boolean, integer, floating-point, string, or null values by name to a Cypher query. Use `AS related(document_id)` to rename a column in SQL. [Named binding SQLLogic tests](test/stabilization/sqllogic/declared_bindings.test)
 
-For a graph read that repeats with fixed graph text and output types, prepare the explicit-schema statement on the DuckDB connection and reuse it. The client supplies the graph alias, dialect, query text and schema. DuckDB owns the prepared plan. QuackWeave checks host file access and the registered graph generation each time the scan opens. A replaced or reset registration requires a fresh prepare. [ADBC example and checks](test/public_client/run.py)
+The explicit-schema GQL bridge accepts a fixed directed `MATCH` with named, labeled nodes, a typed relationship, and aliased scalar properties. Use ASCII identifiers and omit the trailing semicolon inside the GQL payload. An optional property-to-literal comparison can use `WHERE`, `FILTER`, or `FILTER WHERE`. Syntax errors use `QW_GQL_PARSE`. Valid syntax outside this subset uses `QW_GQL_SUBSET`.
+
+For a repeat graph read with fixed graph text and output types, prepare the explicit-schema statement on the DuckDB connection and reuse it. QuackWeave checks host access and the registration generation when the scan opens. Reprepare an already-bound call after its registration is replaced or reset. [ADBC example and checks](test/public_client/run.py)
 
 ```python
 statement = """
 SELECT * FROM qw_query('air_routes', 'cypher',
-    $$MATCH (a:airport) WHERE a.code = 'ATL' RETURN a.code AS code$$,
-    schema := 'code VARCHAR')
+    $$MATCH (a:airport) WHERE a.code = $origin RETURN a.code AS code$$,
+    schema := 'code VARCHAR', bindings := {'origin': 'ATL'})
 """
 with connection.cursor() as lookup:
     lookup.adbc_prepare(statement)
@@ -230,7 +251,7 @@ with connection.cursor() as lookup:
         rows = lookup.execute(statement).fetch_arrow_table()
 ```
 
-Bare `MATCH` reads the current session graph and dialect when DuckDB binds it. Use a named graph parameter when the value inside the graph predicate varies. [Prepared lookup benchmark](benchmarks/provider_comparison/tracker/README.md#prepared-lookups)
+For embedded providers, bare `MATCH` reads the current session graph and dialect when DuckDB binds it. It also accepts named parameters in supported graph predicates. [Prepared lookup benchmark](benchmarks/provider_comparison/tracker/README.md#prepared-lookups)
 
 Graph results follow DuckDB's relational semantics. Joins can multiply duplicate graph or SQL rows, and `UNION ALL` preserves duplicates. A scalar subquery returns `NULL` for zero rows and raises the default DuckDB error for multiple rows. `IN` follows SQL's three-valued logic, while `EXISTS` can correlate through a SQL predicate on graph-derived columns.
 
@@ -250,21 +271,21 @@ WHERE document_id = $1;
 EXECUTE count_linked(101);
 ```
 
-Host macros can apply an argument to a SQL filter in the same way. For an explicit-schema call, DuckDB can bind the complete graph payload and schema as table-function arguments during `EXECUTE`. Use a standalone statement to bind a value within a graph predicate.
+Host macros can apply an argument to a SQL filter in the same way. Use `bindings` on a Cypher `qw_query` call to pass values into the graph predicate itself. DuckDB can also bind the complete graph payload and schema as table-function arguments during `EXECUTE`.
 
 Views store the SQL definition and resolve the current alias when DuckDB binds them. Repointing an alias can change the graph read by a view, including a prepared query through it. The generation check rejects an already-bound graph scan with `QW_CONFIG` if its configuration changes before the scan opens. A prepared call that binds its graph payload at `EXECUTE` can resolve the replacement graph. [Binding SQLLogicTests](test/stabilization/sqllogic/usage_binding.test)
 
-One Ladybug alias is active per DuckDB instance. You can join Cypher and GQL results from that alias in one SQL query. Both dialects are read-only. Invoke DuckDB functions and macros on the rows returned to SQL, where the DuckDB catalog is available.
+Each provider can have one active alias per DuckDB instance. You can join results from different configured graphs or from different supported query interfaces in one SQL query. Invoke DuckDB functions and macros on the returned rows, where the DuckDB catalog is available.
 
 Plain `EXPLAIN` binds the query and can validate the GQL payload without opening Ladybug. `EXPLAIN ANALYZE` executes the plan and reports DuckDB operator timing and cardinalities. [Read boundary SQLLogicTests](test/stabilization/sqllogic/usage_boundary.test)
 
 ### Native stabilization
 
-The ARM64 CI gate runs DuckDB's official SQLLogicTest runner against the MVP2 debug and release packages and the Cypher-only MVP1 package. It also runs the native observer audit against MVP2 release. The runner and ADBC library come from DuckDB's release build for `v2.0.1` at commit `8d78114e90a53823803660bf821f6073ac87da8c`. [Pinned binary setup](benchmarks/provider_comparison/tracker/README.md#run)
+The ARM64 CI gate runs DuckDB's official SQLLogicTest runner against the native debug and release packages. It runs the observer audit against the release package. The runner and ADBC library come from DuckDB's release build for `v2.0.1` at commit `8d78114e90a53823803660bf821f6073ac87da8c`. [Pinned binary setup](benchmarks/provider_comparison/tracker/README.md#run)
 
 ```sh
-make mvp2-deps
-make mvp2-stabilization-test \
+make native-deps
+make native-stabilization-test \
   DUCKDB_UNITTEST="$PWD/build/benchmark-host/unittest" \
   DUCKDB_LIB="$(find "$PWD/build/benchmark-host/release/src" -name 'libduckdb.*')" \
   LBUG=/path/to/lbug-v0.22.3
@@ -272,18 +293,11 @@ make mvp2-stabilization-test \
 
 The gate writes profile logs, raw observer evidence, and `stabilization-coverage.json` under `build/stabilization-reports/`. The coverage check requires every manifest case across its assigned profiles and verifies the SQL source hashes against the checked-out files. Set `STABILIZATION_REPORT_DIR` to choose a different destination.
 
-The [Ladybug GQL compatibility bench](test/stabilization/sqllogic/gql_compatibility.test) checks scalar results, row-bag equality with native Cypher, and the read-only GQL boundary. Both MVP2 profiles also run the [DuckGQL SQLLogicTest ports](test/stabilization/duckgql-porting.md) against a separate native Ladybug fixture. The runner compares the Ladybug fixtures before and after the suite.
+The Ladybug GQL compatibility tests check scalar results, row-bag equality with native Cypher, and read-only GQL admission. [Ladybug compatibility SQLLogic tests](test/stabilization/sqllogic/gql_compatibility.test) Both packages also run the [DuckGQL SQLLogicTest ports](test/stabilization/duckgql-porting.md) against a separate native Ladybug fixture. The runner compares the Ladybug fixtures before and after the suite.
 
 ## Rust extension template reference
-This is an template for Rust based extensions based on the V2 C API of DuckDB. This repository will become a stable basis for pure-Rust DuckDB extensions that can be submitted to the Community extensions repository. 
 
-It contains build pipelines for dynamic and wasm-based extensions. It is prefilled with example functions, so you can have an quick start with duckdb-neo!
-
-Features:
-- No DuckDB build required
-- No C++ or C code required
-- CI/CD chain preconfigured
-- (Coming soon) Works with community extensions
+The repository also includes the `rusty_quack` template targets for experimenting with DuckDB’s C API v2. `make debug`, `make release`, and the Wasm targets build the template entry points. Use the native targets above for QuackWeave’s graph providers.
 
 ## Cloning
 
@@ -309,15 +323,13 @@ Installing these dependencies will vary per platform:
 
 ## Project layout
 
-The Cargo workspace contains three crates:
+The Cargo workspace contains three crates.
 
-- `crates/core` (`rusty_quack_core`): the shared function implementations and registration.
-- `crates/native` (`rusty_quack`): a native `cdylib` with the DuckDB extension entrypoint.
-- `crates/wasm` (`rusty_quack_wasm`): a Wasm `staticlib` with the same entrypoint.
+- `crates/core` owns provider registration, DuckDB table-function binding, and conversion of provider batches into DuckDB chunks. [Core source](crates/core)
+- `crates/native` builds the `quack_weave` native extension. It wires the Ladybug, RelateDB, and Neo4j adapters and installs the C++ PEG grammar and optimizer hooks in GQL-enabled builds. [Native source](crates/native)
+- `crates/wasm` builds the `rusty_quack` template functions for WebAssembly. [Wasm source](crates/wasm)
 
-Both entrypoint crates depend on `rusty_quack_core`. Each feature lives in its own module under `crates/core/src/`,
-and `crates/core/src/lib.rs` registers them; see [What the extension registers](#what-the-extension-registers).
-Dependency versions and release settings are shared in the root `Cargo.toml`.
+Both entry-point crates depend on `rusty_quack_core`. The root `Cargo.toml` sets workspace dependencies and release options. [Template functions](#what-the-extension-registers)
 
 ## Building
 After installing the dependencies, building is a two-step process. Firstly run:
@@ -444,8 +456,8 @@ EXPLAIN SELECT i FROM rusty_sequence(10000) WHERE i > 9995;
 ╰──────────────────────────╯
 ```
 
-## Testing
-This extension uses the DuckDB Python client for testing. This should be automatically installed in the `make configure` step.
+## Template testing
+The template tests use the DuckDB Python client. This should be automatically installed in the `make configure` step.
 The tests themselves are written in the SQLLogicTest format, just like most of DuckDB's tests. A sample test can be found in
 `test/sql/<extension_name>.test`. To run the tests using the *debug* build:
 
@@ -458,26 +470,9 @@ or for the *release* build:
 make test_release
 ```
 
-### Version switching
-Testing with different DuckDB versions is really simple:
+### DuckDB version alignment
 
-First, run
-```
-make clean_all
-```
-to ensure the previous `make configure` step is deleted.
-
-Then, run
-```
-DUCKDB_TEST_VERSION=v1.3.2 make configure
-```
-to select a different duckdb version to test with
-
-Finally, build and test with
-```
-make debug
-make test_debug
-```
+Build and load the extension against the DuckDB version pinned in the `Makefile`. A native version upgrade also needs matching C API v2 bindings, C++ grammar headers, and test binaries. [Native build configuration](crates/native/build.rs)
 
 ### Known issues
 This is a bit of a footgun, but the extensions produced by this template may (or may not) be broken on windows on python3.11

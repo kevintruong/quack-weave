@@ -7,7 +7,6 @@ import sys
 import tempfile
 import unittest
 
-
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
@@ -28,28 +27,28 @@ def native_dependencies(package):
 class NativePackageTest(unittest.TestCase):
     def test_native_target_builds_the_product_artifact(self):
         result = subprocess.run(
-            ["make", "--dry-run", "mvp1"], cwd=ROOT, capture_output=True, text=True
+            ["make", "--dry-run"], cwd=ROOT, capture_output=True, text=True
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("quack_weave.duckdb_extension", result.stdout)
+        self.assertIn("scripts/package_native.py", result.stdout)
+        self.assertIn("build/native/debug/extension/quack_weave/quack_weave.duckdb_extension", result.stdout)
 
     def test_footer_identifies_exact_unstable_duckdb_abi(self):
+        sys.path.insert(0, str(ROOT / "scripts"))
+        try:
+            from package_native import package
+        finally:
+            sys.path.pop(0)
         with tempfile.TemporaryDirectory() as directory:
             raw_library = pathlib.Path(directory) / "libsample.dylib"
             extension = pathlib.Path(directory) / "quack_weave.duckdb_extension"
             raw_library.write_bytes(b"fake library")
-            result = subprocess.run(
-                [sys.executable, "scripts/package_mvp1.py", str(raw_library), str(extension), "v2.0.1", "osx_arm64", "v0.1.0"],
-                cwd=ROOT,
-                capture_output=True,
-                text=True,
-            )
-            self.assertTrue(extension.is_file(), result.stderr)
+            package(raw_library, extension, "v2.0.1", "osx_arm64", "v0.2.0")
             payload = extension.read_bytes()
             self.assertTrue(payload.startswith(raw_library.read_bytes()))
             metadata = payload[-512:-256]
             words = [metadata[index : index + 32].rstrip(b"\0") for index in range(0, 256, 32)]
-            self.assertEqual(words[3:], [b"C_STRUCT_UNSTABLE", b"v0.1.0", b"v2.0.1", b"osx_arm64", b"4"])
+            self.assertEqual(words[3:], [b"C_STRUCT_UNSTABLE", b"v0.2.0", b"v2.0.1", b"osx_arm64", b"4"])
             self.assertEqual(payload[-256:], bytes(256))
 
     def test_template_build_has_separate_compatibility_feature(self):
@@ -60,6 +59,7 @@ class NativePackageTest(unittest.TestCase):
         )
         native = next(package for package in json.loads(metadata)["packages"] if package["name"] == "rusty_quack")
         self.assertIn("template-compat", native["features"])
+        self.assertNotIn("gql", native["features"])
 
     @unittest.skipUnless(os.environ.get("QUACK_WEAVE_TEST_ARTIFACT"), "requires a native package")
     def test_native_binary_uses_only_system_runtime_dependencies(self):

@@ -5,13 +5,25 @@
     "version": "v2.0.1",
     "source_id": "8d78114e90"
   },
-  "native_source_snapshot": "dfbc44985f6a4ff994c76781f72efdf60f4d83fc",
+  "native_source_snapshot": {
+    "provider_parent": "dfbc44985f6a4ff994c76781f72efdf60f4d83fc",
+    "site_parent": "01a9f5abdbf95f1facba6c311ff23c0d521da214",
+    "compiled_git_objects": {
+      "Cargo.lock": "ae6b524efe836f367fd2ff6c537e4d7b664d26e8",
+      "Cargo.toml": "7adfa84f316e608b666dda724687b66d649bb82e",
+      "Makefile": "8b351ff9126eb078dcf083177acca3357309358b",
+      "crates/core": "72892729ab926542b5e18d5f7cc6b6dffd584b9b",
+      "crates/native": "2270da3a7b328a219ed49f3aaa78346b4db23fac",
+      "scripts": "9939dd6f17b1a5795835c86a5be78e6a13b90d97"
+    },
+    "verification": "The standard package and local Neo4j TLS fixture were rebuilt from the staged publication source."
+  },
   "suites": [
     {
-      "id": "ladybug-mvp2",
-      "name": "Ladybug MVP2",
-      "blocks": 650,
-      "artifact_sha256": "c77ea99fa342d523b1bc153fffcda200c427e36c5e5d740b84b723e94a0cfeaf",
+      "id": "native-debug",
+      "name": "Native debug",
+      "blocks": 657,
+      "artifact_sha256": "72acac26edc09db806e25d6c31fa5a08a8197b6294f4226db029434ab7ae4294",
       "cases": [
         {
           "path": "test/stabilization/sqllogic/admission.test",
@@ -27,7 +39,7 @@
         },
         {
           "path": "test/stabilization/sqllogic/artifact.test",
-          "sha256": "a198f0e293c0e51e3546b18e4746b97a7bac1f8e5b7b472a72b2bdf17dc8e474",
+          "sha256": "8be34c0c9c5d7f3fa4383ac21b4217477fdeccbb7bfb7ef9ab2ce26943f66218",
           "blocks": 6,
           "status": "passed"
         },
@@ -81,7 +93,7 @@
         },
         {
           "path": "test/stabilization/sqllogic/fixture_audit.test",
-          "sha256": "439bc50b37116cff84ac21c79bece4be12d9597c9e3d21345aa70af854b71391",
+          "sha256": "39779bf36f6d6a601b4f54b61e9a2e5336138bab2200f7dbd47ef8dd541bbc8f",
           "blocks": 8,
           "status": "passed"
         },
@@ -146,6 +158,12 @@
           "status": "passed"
         },
         {
+          "path": "test/stabilization/sqllogic/native_surface.test",
+          "sha256": "56c05392605474404bacd902b906fff3c70fcab2b48091429f3823bc4f0f1999",
+          "blocks": 7,
+          "status": "passed"
+        },
+        {
           "path": "test/stabilization/sqllogic/reads.test",
           "sha256": "76cfeac1ece9687ac4609c6da41369657c21184c6d968ae5d18b537123ffa619",
           "blocks": 25,
@@ -196,11 +214,35 @@
       ]
     },
     {
-      "id": "ladybug-cypher",
-      "name": "Ladybug MVP1",
-      "blocks": 19,
-      "artifact_sha256": "a6921f7052d53904ccd84412d63d934295b3e2ca1ef93e792b5fcfc0f08a4398",
+      "id": "native-release",
+      "name": "Native release",
+      "blocks": 657,
+      "artifact_sha256": "d4643d65029deeca7574c50feddbc0d9f88498d60d0d218b768e2f3996ae9fb9",
       "cases": [
+        {
+          "path": "test/stabilization/sqllogic/admission.test",
+          "sha256": "9afb4c1e4f806185fc905dcc2ea21dc656ac50192b6e58754bb1eafdb5b143b8",
+          "blocks": 21,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/air_routes_fixture.test",
+          "sha256": "eb2ca5424c688878809d6a4e318946c942936fcc9edf25244c3b8ba2950934bc",
+          "blocks": 4,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/artifact.test",
+          "sha256": "8be34c0c9c5d7f3fa4383ac21b4217477fdeccbb7bfb7ef9ab2ce26943f66218",
+          "blocks": 6,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/bind.test",
+          "sha256": "1fce5e71249447ae44b7dc5c50b7ddfd617c331c8fb9ca6663dddbe1d0551117",
+          "blocks": 54,
+          "status": "passed"
+        },
         {
           "path": "test/stabilization/sqllogic/declared_bindings.test",
           "sha256": "62008e66d81a2cb24266edb499378168e5cf1a5cad5530c37ae924df4c5e1db3",
@@ -208,15 +250,173 @@
           "status": "passed"
         },
         {
-          "path": "test/stabilization/sqllogic/feature_off.test",
-          "sha256": "c073c7ae599d0eb5ebdc2e17c49593040c6b4517f92ab8f1742f0306c9877ebd",
-          "blocks": 5,
+          "path": "test/stabilization/sqllogic/duckgql_admission.test",
+          "sha256": "6d996edb01c8c01961372dda6b1dd3b65d20f5be17c9c6570d747dca7ecf9612",
+          "blocks": 20,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/duckgql_aggregates.test",
+          "sha256": "83ac44aecbcdbf87c5509c8643a7771cd8f37671fc751f78e309dcd77a9abeb0",
+          "blocks": 32,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/duckgql_basic.test",
+          "sha256": "462b0885d7ce65ad07e9f1937f19374aa95087a27b42f795fe3749493819af7c",
+          "blocks": 51,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/duckgql_paths.test",
+          "sha256": "dc4af49745cb4402812aa2d1f0f00d887ddac8e4e4abff35ce401fa3fb51a6eb",
+          "blocks": 24,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/duckgql_reachability.test",
+          "sha256": "056b5fa51a816ab8f2e55a023a8b354b11625c44eea0ade7f9535f7dfda1e3a2",
+          "blocks": 20,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/duckgql_scalars.test",
+          "sha256": "652f0f839db8023815304497d79a47dd3557965195703758d345cf55966ab996",
+          "blocks": 21,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/fixture_audit.test",
+          "sha256": "39779bf36f6d6a601b4f54b61e9a2e5336138bab2200f7dbd47ef8dd541bbc8f",
+          "blocks": 8,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/gql_compatibility.test",
+          "sha256": "483eea49062c86d0a42628ae038f04680916fc00c88f8ab0962924bd71e62ce2",
+          "blocks": 19,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/graph_aggregate_pushdown.test",
+          "sha256": "9340ef08cae3dce9a337cbc3c82efd57a34b299aa72e53c04a39746d229febfa",
+          "blocks": 23,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/graph_entry.test",
+          "sha256": "e10aadedb02dc9eba271ccc9f113ceb396c87eef4f00f2fa11773c026a6bf08d",
+          "blocks": 16,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/graph_metadata.test",
+          "sha256": "5d0105b98bde72768048c03c9636e03ec807061f664ea6fcdcf78a79405ba2f2",
+          "blocks": 32,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/graph_parameters.test",
+          "sha256": "c8842ed305bb9c7a9a6e2ac6fafa10fc819f379853f2fa9a38aa24a94b9cb8e9",
+          "blocks": 23,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/graph_table.test",
+          "sha256": "378c77f6984ff935e850993f8f452aa3187f6ef9b1dbfee41a7ff770285f31a2",
+          "blocks": 30,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/graph_values.test",
+          "sha256": "483dd3fa7c0de20ca4b3c23e92da856b59c8744587046f019b178f4ec7a01def",
+          "blocks": 27,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/host_access.test",
+          "sha256": "67dcbb943bfa1ca19a1c0b6bb6c582e9ed20fc21739405670911f26c1ca2e603",
+          "blocks": 4,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/hybrid_public.test",
+          "sha256": "d06739d13203fbf3c7da2c1f06932a75a45bf29a6b463ca05b1e606aeb431bba",
+          "blocks": 48,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/limits.test",
+          "sha256": "a9b320044d16b7bcb0ef575aa43e56cb6f194b5cc391c2af41bb27a8cf03ef42",
+          "blocks": 13,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/native_surface.test",
+          "sha256": "56c05392605474404bacd902b906fff3c70fcab2b48091429f3823bc4f0f1999",
+          "blocks": 7,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/reads.test",
+          "sha256": "76cfeac1ece9687ac4609c6da41369657c21184c6d968ae5d18b537123ffa619",
+          "blocks": 25,
           "status": "passed"
         },
         {
           "path": "test/stabilization/sqllogic/remote_policy.test",
           "sha256": "f6257ddfbb90c7d0a50e975e5c485cea5cfa388704099a79a23b5f82391aae83",
           "blocks": 10,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/scan.test",
+          "sha256": "5b9831b81ed175bfba46a4c5c39da26ccb2e7e1a5356096b4d296d3bd1f66e79",
+          "blocks": 14,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/table_watchlist.test",
+          "sha256": "de98e9bb4e6a3c5a91998d6e5ced0bfc683edab4db8517f2e189b23bdb0e04ab",
+          "blocks": 34,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/timeout.test_slow",
+          "sha256": "2ac83fa59953174a31af98d5e70b70f0021dc06c0568b852f665033cde9477cb",
+          "blocks": 5,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/usage_binding.test",
+          "sha256": "b64bb2c6fd1d07ea77581606cb41942cda7022f4f3bc7aab57abc67a7a957186",
+          "blocks": 30,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/usage_boundary.test",
+          "sha256": "757e5c1e0cbc58421dcb4b29417135d75c3dc1f55e3391646c9a2c53ca3a80c1",
+          "blocks": 18,
+          "status": "passed"
+        },
+        {
+          "path": "test/stabilization/sqllogic/usage_relations.test",
+          "sha256": "500a24d32fa65d0ef8e96a28e18ad5d20e536004379da838558537c556775349",
+          "blocks": 14,
+          "status": "passed"
+        }
+      ]
+    },
+    {
+      "id": "native-observer",
+      "name": "Native observer",
+      "blocks": 25,
+      "artifact_sha256": "d4643d65029deeca7574c50feddbc0d9f88498d60d0d218b768e2f3996ae9fb9",
+      "cases": [
+        {
+          "path": "test/stabilization/sqllogic/observer_audit.test",
+          "sha256": "bd8c971052eb41c8b363ed39f5170926a77879e292803783d46361d03d8cb810",
+          "blocks": 25,
           "status": "passed"
         }
       ]
@@ -225,7 +425,7 @@
       "id": "ladybug-relate",
       "name": "RelateDB and Ladybug",
       "blocks": 280,
-      "artifact_sha256": "7713b13a97f8190b9360fc901bce6ef49d06fda45b224b06863915785028948b",
+      "artifact_sha256": "d4643d65029deeca7574c50feddbc0d9f88498d60d0d218b768e2f3996ae9fb9",
       "cases": [
         {
           "path": "test/relate/aggregate.test",
@@ -285,7 +485,8 @@
           "path": "test/relate/handle_reuse.test",
           "sha256": "fa822d8f5607268260d6dbff2c9652fa34ffc57fbd5ea01170452d8c2ff26140",
           "blocks": 15,
-          "status": "passed"
+          "status": "passed",
+          "conditional_skips": 2
         },
         {
           "path": "test/relate/planning_acceptance.test",
@@ -303,17 +504,19 @@
           "path": "test/relate/provider.test",
           "sha256": "59802320828333ea115fb38d2874d1e25fc28ad5bda911b09895058100cd06c1",
           "blocks": 56,
-          "status": "passed"
+          "status": "passed",
+          "conditional_skips": 4
         },
         {
           "path": "test/relate/provider_alias_race.test",
           "sha256": "b0f39a55a12c7574dd5a4f47656c48a7c5af75c1e1040f24295f1c36511b97b6",
           "blocks": 9,
-          "status": "passed"
+          "status": "passed",
+          "conditional_skips": 6
         },
         {
           "path": "test/relate/provider_inventory.test",
-          "sha256": "b7762bb0e270096d00960be50ccd584b7a018deb2ecf34df7f0690e54d0d2ae1",
+          "sha256": "1735ce9f3354161ed7d3bc657a694e1629bc28d024f4f6747603dc5a20969d3c",
           "blocks": 2,
           "status": "passed"
         },
@@ -335,7 +538,7 @@
       "id": "neo4j-tls",
       "name": "Neo4j local TLS fixture",
       "blocks": 76,
-      "artifact_sha256": "a6e113a942710e882e774aa775b9d3b0a3dc368ccd4814d93012a0a8fc57f57d",
+      "artifact_sha256": "303b057ea42233f667844c78f883b4015b515aeec8d18001ac649378ddfcf527",
       "cases": [
         {
           "path": "test/neo4j/sqllogic/credential_registration.test",
@@ -367,7 +570,7 @@
       "id": "adbc",
       "name": "Public ADBC client",
       "blocks": 12,
-      "artifact_sha256": null,
+      "artifact_sha256": "d4643d65029deeca7574c50feddbc0d9f88498d60d0d218b768e2f3996ae9fb9",
       "cases": [
         {
           "path": "test/public_client/results.test",
@@ -379,8 +582,10 @@
     }
   ],
   "summary": {
-    "passed_test_files": 55,
-    "passed_blocks": 1037,
+    "distinct_test_files": 54,
+    "distinct_sql_blocks": 1050,
+    "passed_file_executions": 85,
+    "passed_block_executions": 1707,
     "runtime_version_probes_excluded": true
   },
   "capability_evidence": {
@@ -453,92 +658,97 @@
       {
         "case_id": 14,
         "path": "test/stabilization/sqllogic/admission.test",
-        "suite": "ladybug-mvp2"
+        "suite": "native-release"
       },
       {
         "case_id": 15,
         "path": "test/stabilization/sqllogic/declared_bindings.test",
-        "suite": "ladybug-mvp2"
+        "suite": "native-release"
       },
       {
         "case_id": 16,
         "path": "test/stabilization/sqllogic/duckgql_basic.test",
-        "suite": "ladybug-mvp2"
+        "suite": "native-release"
       },
       {
         "case_id": 17,
-        "path": "test/stabilization/sqllogic/feature_off.test",
-        "suite": "ladybug-cypher"
+        "path": "test/stabilization/sqllogic/native_surface.test",
+        "suite": "native-release"
       },
       {
         "case_id": 18,
         "path": "test/stabilization/sqllogic/gql_compatibility.test",
-        "suite": "ladybug-mvp2"
+        "suite": "native-release"
       },
       {
         "case_id": 19,
         "path": "test/stabilization/sqllogic/graph_aggregate_pushdown.test",
-        "suite": "ladybug-mvp2"
+        "suite": "native-release"
       },
       {
         "case_id": 20,
         "path": "test/stabilization/sqllogic/graph_entry.test",
-        "suite": "ladybug-mvp2"
+        "suite": "native-release"
       },
       {
         "case_id": 21,
         "path": "test/stabilization/sqllogic/graph_metadata.test",
-        "suite": "ladybug-mvp2"
+        "suite": "native-release"
       },
       {
         "case_id": 22,
         "path": "test/stabilization/sqllogic/graph_parameters.test",
-        "suite": "ladybug-mvp2"
+        "suite": "native-release"
       },
       {
         "case_id": 23,
         "path": "test/stabilization/sqllogic/graph_table.test",
-        "suite": "ladybug-mvp2"
+        "suite": "native-release"
       },
       {
         "case_id": 24,
         "path": "test/stabilization/sqllogic/graph_values.test",
-        "suite": "ladybug-mvp2"
+        "suite": "native-release"
       },
       {
         "case_id": 25,
         "path": "test/stabilization/sqllogic/host_access.test",
-        "suite": "ladybug-mvp2"
+        "suite": "native-release"
       },
       {
         "case_id": 26,
         "path": "test/stabilization/sqllogic/hybrid_public.test",
-        "suite": "ladybug-mvp2"
+        "suite": "native-release"
       },
       {
         "case_id": 27,
         "path": "test/stabilization/sqllogic/reads.test",
-        "suite": "ladybug-mvp2"
+        "suite": "native-release"
       },
       {
         "case_id": 28,
         "path": "test/stabilization/sqllogic/remote_policy.test",
-        "suite": "ladybug-mvp2"
+        "suite": "native-release"
       },
       {
         "case_id": 29,
         "path": "test/stabilization/sqllogic/scan.test",
-        "suite": "ladybug-mvp2"
+        "suite": "native-release"
       },
       {
         "case_id": 30,
         "path": "test/stabilization/sqllogic/table_watchlist.test",
-        "suite": "ladybug-mvp2"
+        "suite": "native-release"
       },
       {
         "case_id": 31,
         "path": "test/stabilization/sqllogic/usage_relations.test",
-        "suite": "ladybug-mvp2"
+        "suite": "native-release"
+      },
+      {
+        "case_id": 32,
+        "path": "test/stabilization/sqllogic/observer_audit.test",
+        "suite": "native-observer"
       }
     ],
     "claims": [
@@ -693,70 +903,755 @@
         "test_case_id": 2
       },
       {
-        "id": "feature-off-cypher.1",
-        "claim": "feature-off-cypher",
+        "id": "unified-sql-pgq-surface.1",
+        "claim": "unified-sql-pgq-surface",
         "test_case_id": 17
       },
       {
         "id": "adbc-arrow-client.1",
         "claim": "adbc-arrow-client",
         "test_case_id": 5
+      },
+      {
+        "id": "native-observer.1",
+        "claim": "native-observer",
+        "test_case_id": 32
       }
     ]
   },
   "verification": {
-    "scope": "Each published capability-to-test link in this manifest references a passed SQLLogic case. SQLLogic establishes the tested runtime behavior.",
+    "scope": "SQLLogic establishes tested runtime behavior. Jev interprets the report facts. Z3 verifies required capability coverage and that each listed capability claim references a passing test.",
     "rule_id": "data_integrity.foreign_key",
     "jev": {
-      "gate": "open",
-      "provenance": {
-        "served_model_version": "jev-1.14.0",
-        "answers": {
-          "data_complete": {
-            "type": "noul",
-            "noul": 0.98
-          },
-          "route_rule": {
-            "type": "choice",
-            "choice": "data_integrity.foreign_key",
-            "probabilities": {
-              "data_integrity.aggregate_balance": 0,
-              "data_integrity.cardinality": 0,
-              "data_integrity.conditional_required": 0,
-              "data_integrity.foreign_key": 1,
-              "data_integrity.mutually_consistent": 0,
-              "data_integrity.temporal_consistency": 0,
-              "data_integrity.unique": 0,
-              "data_integrity.value_range": 0
+      "planned_capabilities": {
+        "gate": "open",
+        "provenance": {
+          "served_model_version": "jev-1.14.0",
+          "answers": {
+            "data_complete": {
+              "type": "noul",
+              "noul": 0.98
             },
-            "confidence": 1
-          },
-          "solve_mode": {
-            "type": "choice",
-            "choice": "verify",
-            "probabilities": {
-              "synthesize": 0,
-              "verify": 1
+            "route_rule": {
+              "type": "choice",
+              "choice": "data_integrity.foreign_key",
+              "probabilities": {
+                "data_integrity.aggregate_balance": 0,
+                "data_integrity.cardinality": 0,
+                "data_integrity.conditional_required": 0,
+                "data_integrity.foreign_key": 1,
+                "data_integrity.mutually_consistent": 0,
+                "data_integrity.temporal_consistency": 0,
+                "data_integrity.unique": 0,
+                "data_integrity.value_range": 0
+              },
+              "confidence": 1
             },
-            "confidence": 1
+            "solve_mode": {
+              "type": "choice",
+              "choice": "verify",
+              "probabilities": {
+                "synthesize": 0,
+                "verify": 1
+              },
+              "confidence": 1
+            }
+          },
+          "confidences": {
+            "data_complete": 0.98,
+            "route_rule": 1,
+            "solve_mode": 1
+          },
+          "weakest": 0.98,
+          "gate": {
+            "status": "open"
           }
-        },
-        "confidences": {
-          "data_complete": 0.98,
-          "route_rule": 1,
-          "solve_mode": 1
-        },
-        "weakest": 0.98,
-        "gate": {
-          "status": "open"
+        }
+      },
+      "observed_capabilities": {
+        "gate": "open",
+        "provenance": {
+          "served_model_version": "jev-1.14.0",
+          "answers": {
+            "data_complete": {
+              "type": "noul",
+              "noul": 0.98
+            },
+            "route_rule": {
+              "type": "choice",
+              "choice": "data_integrity.foreign_key",
+              "probabilities": {
+                "data_integrity.aggregate_balance": 0,
+                "data_integrity.cardinality": 0,
+                "data_integrity.conditional_required": 0,
+                "data_integrity.foreign_key": 1,
+                "data_integrity.mutually_consistent": 0,
+                "data_integrity.temporal_consistency": 0,
+                "data_integrity.unique": 0,
+                "data_integrity.value_range": 0
+              },
+              "confidence": 1
+            },
+            "solve_mode": {
+              "type": "choice",
+              "choice": "verify",
+              "probabilities": {
+                "synthesize": 0,
+                "verify": 1
+              },
+              "confidence": 1
+            }
+          },
+          "confidences": {
+            "data_complete": 0.98,
+            "route_rule": 1,
+            "solve_mode": 1
+          },
+          "weakest": 0.98,
+          "gate": {
+            "status": "open"
+          }
+        }
+      },
+      "observed_claim_links": {
+        "gate": "open",
+        "provenance": {
+          "served_model_version": "jev-1.14.0",
+          "answers": {
+            "data_complete": {
+              "type": "noul",
+              "noul": 0.98
+            },
+            "route_rule": {
+              "type": "choice",
+              "choice": "data_integrity.foreign_key",
+              "probabilities": {
+                "data_integrity.aggregate_balance": 0,
+                "data_integrity.cardinality": 0,
+                "data_integrity.conditional_required": 0,
+                "data_integrity.foreign_key": 1,
+                "data_integrity.mutually_consistent": 0,
+                "data_integrity.temporal_consistency": 0,
+                "data_integrity.unique": 0,
+                "data_integrity.value_range": 0
+              },
+              "confidence": 1
+            },
+            "solve_mode": {
+              "type": "choice",
+              "choice": "verify",
+              "probabilities": {
+                "synthesize": 0,
+                "verify": 1
+              },
+              "confidence": 1
+            }
+          },
+          "confidences": {
+            "data_complete": 0.98,
+            "route_rule": 1,
+            "solve_mode": 1
+          },
+          "weakest": 0.98,
+          "gate": {
+            "status": "open"
+          }
         }
       }
     },
-    "execution_note": "The compiled relation was partitioned into four groups of eight claim links to fit the 64-variable solver request limit. Each partition retains all candidate parent rows matching its links. The negative control replaces one link with an absent key.",
+    "execution_note": "The pre-change executable requests supply the catalog's empty fields for unused constraints. The 33 observed claim links are checked in groups of up to eight, retaining every matching parent for each group, to fit the 64-variable solver limit. The negative control changes one complete link to a missing key.",
+    "pre_implementation": [
+      {
+        "id": "planned_unified_capabilities",
+        "request": {
+          "family": "data_integrity",
+          "mode": "verify",
+          "rules": [
+            {
+              "rule_id": "data_integrity.foreign_key",
+              "subjects": [
+                "required_capabilities_available"
+              ],
+              "parameters": {}
+            }
+          ],
+          "facts": {
+            "relations": {
+              "required": {
+                "fields": {
+                  "capability": {
+                    "kind": "integer",
+                    "minimum": 0,
+                    "maximum": 6
+                  }
+                },
+                "rows": {
+                  "native_default": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 0
+                      }
+                    }
+                  },
+                  "cypher_scalar_with_bindings": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 1
+                      }
+                    }
+                  },
+                  "standalone_graph_read": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 2
+                      }
+                    }
+                  },
+                  "explicit_gql": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 3
+                      }
+                    }
+                  },
+                  "graph_table_sql_join": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 4
+                      }
+                    }
+                  },
+                  "remote_provider": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 5
+                      }
+                    }
+                  },
+                  "embedded_provider": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 6
+                      }
+                    }
+                  }
+                }
+              },
+              "provided": {
+                "fields": {
+                  "capability": {
+                    "kind": "integer",
+                    "minimum": 0,
+                    "maximum": 6
+                  }
+                },
+                "rows": {
+                  "native_default": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 0
+                      }
+                    }
+                  },
+                  "cypher_scalar_with_bindings": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 1
+                      }
+                    }
+                  },
+                  "standalone_graph_read": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 2
+                      }
+                    }
+                  },
+                  "explicit_gql": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 3
+                      }
+                    }
+                  },
+                  "graph_table_sql_join": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 4
+                      }
+                    }
+                  },
+                  "remote_provider": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 5
+                      }
+                    }
+                  },
+                  "embedded_provider": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 6
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "unique_constraints": {},
+            "foreign_keys": {
+              "required_capabilities_available": {
+                "child_relation": "required",
+                "child_fields": [
+                  "capability"
+                ],
+                "parent_relation": "provided",
+                "parent_fields": [
+                  "capability"
+                ]
+              }
+            },
+            "cardinality_constraints": {},
+            "value_ranges": {},
+            "conditional_requirements": {},
+            "aggregate_balances": {},
+            "consistency_relations": {},
+            "temporal_constraints": {}
+          },
+          "unknowns": [],
+          "persist": true
+        },
+        "result": {
+          "family": "data_integrity",
+          "mode": "verify",
+          "outcome": "pass",
+          "rule_results": [
+            {
+              "rule_id": "data_integrity.foreign_key",
+              "binding_index": 0,
+              "status": "sat",
+              "outcome": "pass"
+            }
+          ],
+          "status": "sat",
+          "reason": null,
+          "solve_id": "sol_081585d97d6a424b",
+          "solver_version": "Z3 version 4.16.0 - 64 bit"
+        }
+      },
+      {
+        "id": "missing_capabilities",
+        "request": {
+          "family": "data_integrity",
+          "mode": "verify",
+          "rules": [
+            {
+              "rule_id": "data_integrity.foreign_key",
+              "subjects": [
+                "required_capabilities_available"
+              ],
+              "parameters": {}
+            }
+          ],
+          "facts": {
+            "relations": {
+              "required": {
+                "fields": {
+                  "capability": {
+                    "kind": "integer",
+                    "minimum": 0,
+                    "maximum": 6
+                  }
+                },
+                "rows": {
+                  "native_default": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 0
+                      }
+                    }
+                  },
+                  "cypher_scalar_with_bindings": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 1
+                      }
+                    }
+                  },
+                  "standalone_graph_read": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 2
+                      }
+                    }
+                  },
+                  "explicit_gql": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 3
+                      }
+                    }
+                  },
+                  "graph_table_sql_join": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 4
+                      }
+                    }
+                  },
+                  "remote_provider": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 5
+                      }
+                    }
+                  },
+                  "embedded_provider": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 6
+                      }
+                    }
+                  }
+                }
+              },
+              "provided": {
+                "fields": {
+                  "capability": {
+                    "kind": "integer",
+                    "minimum": 0,
+                    "maximum": 6
+                  }
+                },
+                "rows": {
+                  "cypher_scalar_with_bindings": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 1
+                      }
+                    }
+                  },
+                  "remote_provider": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 5
+                      }
+                    }
+                  },
+                  "embedded_provider": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 6
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "unique_constraints": {},
+            "foreign_keys": {
+              "required_capabilities_available": {
+                "child_relation": "required",
+                "child_fields": [
+                  "capability"
+                ],
+                "parent_relation": "provided",
+                "parent_fields": [
+                  "capability"
+                ]
+              }
+            },
+            "cardinality_constraints": {},
+            "value_ranges": {},
+            "conditional_requirements": {},
+            "aggregate_balances": {},
+            "consistency_relations": {},
+            "temporal_constraints": {}
+          },
+          "unknowns": [],
+          "persist": true
+        },
+        "result": {
+          "family": "data_integrity",
+          "mode": "verify",
+          "outcome": "fail",
+          "rule_results": [
+            {
+              "rule_id": "data_integrity.foreign_key",
+              "binding_index": 0,
+              "status": "unsat",
+              "outcome": "fail",
+              "diagnostic": "data_integrity.foreign_key.violation"
+            }
+          ],
+          "status": "unsat",
+          "reason": null,
+          "solve_id": "sol_6d9e372ef82746a6",
+          "solver_version": "Z3 version 4.16.0 - 64 bit",
+          "unsat_core": [
+            "data_integrity_rule_0_data_integrity_foreign_key__subject_required_capabilities_available"
+          ]
+        }
+      }
+    ],
     "checks": [
       {
-        "id": "partition_1",
-        "expected": "accept_claim_links",
+        "id": "unified_native_capabilities",
+        "request": {
+          "family": "data_integrity",
+          "mode": "verify",
+          "rules": [
+            {
+              "rule_id": "data_integrity.foreign_key",
+              "subjects": [
+                "required_capabilities_available"
+              ],
+              "parameters": {}
+            }
+          ],
+          "facts": {
+            "relations": {
+              "required": {
+                "fields": {
+                  "capability": {
+                    "kind": "integer",
+                    "minimum": 0,
+                    "maximum": 6
+                  }
+                },
+                "rows": {
+                  "native_default": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 0
+                      }
+                    }
+                  },
+                  "cypher_scalar_with_bindings": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 1
+                      }
+                    }
+                  },
+                  "standalone_graph_read": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 2
+                      }
+                    }
+                  },
+                  "explicit_gql": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 3
+                      }
+                    }
+                  },
+                  "graph_table_sql_join": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 4
+                      }
+                    }
+                  },
+                  "remote_provider": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 5
+                      }
+                    }
+                  },
+                  "embedded_provider": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 6
+                      }
+                    }
+                  }
+                }
+              },
+              "provided": {
+                "fields": {
+                  "capability": {
+                    "kind": "integer",
+                    "minimum": 0,
+                    "maximum": 6
+                  }
+                },
+                "rows": {
+                  "native_default": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 0
+                      }
+                    }
+                  },
+                  "cypher_scalar_with_bindings": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 1
+                      }
+                    }
+                  },
+                  "standalone_graph_read": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 2
+                      }
+                    }
+                  },
+                  "explicit_gql": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 3
+                      }
+                    }
+                  },
+                  "graph_table_sql_join": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 4
+                      }
+                    }
+                  },
+                  "remote_provider": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 5
+                      }
+                    }
+                  },
+                  "embedded_provider": {
+                    "active": true,
+                    "cells": {
+                      "capability": {
+                        "present": true,
+                        "value": 6
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "unique_constraints": {},
+            "foreign_keys": {
+              "required_capabilities_available": {
+                "child_relation": "required",
+                "child_fields": [
+                  "capability"
+                ],
+                "parent_relation": "provided",
+                "parent_fields": [
+                  "capability"
+                ]
+              }
+            },
+            "cardinality_constraints": {},
+            "value_ranges": {},
+            "conditional_requirements": {},
+            "aggregate_balances": {},
+            "consistency_relations": {},
+            "temporal_constraints": {}
+          },
+          "unknowns": [],
+          "persist": true
+        },
+        "expected": "accept_observed_capabilities",
+        "result": {
+          "family": "data_integrity",
+          "mode": "verify",
+          "outcome": "pass",
+          "rule_results": [
+            {
+              "rule_id": "data_integrity.foreign_key",
+              "binding_index": 0,
+              "status": "sat",
+              "outcome": "pass"
+            }
+          ],
+          "status": "sat",
+          "reason": null,
+          "solve_id": "sol_c26911bd490a42a1",
+          "solver_version": "Z3 version 4.16.0 - 64 bit"
+        }
+      },
+      {
+        "id": "claims_1",
         "request": {
           "family": "data_integrity",
           "mode": "verify",
@@ -771,12 +1666,12 @@
           ],
           "facts": {
             "relations": {
-              "passed_cases": {
+              "passed_tests": {
                 "fields": {
                   "case_id": {
                     "kind": "integer",
                     "minimum": 1,
-                    "maximum": 32
+                    "maximum": 33
                   }
                 },
                 "rows": {
@@ -854,19 +1749,19 @@
                   }
                 }
               },
-              "published_claim_links": {
+              "claim_links": {
                 "fields": {
-                  "test_case_id": {
+                  "case_id": {
                     "kind": "integer",
                     "minimum": 1,
-                    "maximum": 32
+                    "maximum": 33
                   }
                 },
                 "rows": {
                   "typed-embedded-reads.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 27
                       }
@@ -875,7 +1770,7 @@
                   "read-only-admission.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 14
                       }
@@ -884,7 +1779,7 @@
                   "explicit-cypher-bindings.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 15
                       }
@@ -893,7 +1788,7 @@
                   "standalone-scope.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 20
                       }
@@ -902,7 +1797,7 @@
                   "prepared-graph-parameters.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 22
                       }
@@ -911,7 +1806,7 @@
                   "gql-subset.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 18
                       }
@@ -920,7 +1815,7 @@
                   "gql-subset.2": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 16
                       }
@@ -929,7 +1824,7 @@
                   "structured-graph-values.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 24
                       }
@@ -941,11 +1836,11 @@
             "unique_constraints": {},
             "foreign_keys": {
               "claim_passed_test": {
-                "child_relation": "published_claim_links",
+                "child_relation": "claim_links",
                 "child_fields": [
-                  "test_case_id"
+                  "case_id"
                 ],
-                "parent_relation": "passed_cases",
+                "parent_relation": "passed_tests",
                 "parent_fields": [
                   "case_id"
                 ]
@@ -961,6 +1856,7 @@
           "unknowns": [],
           "persist": true
         },
+        "expected": "accept_claim_links",
         "result": {
           "family": "data_integrity",
           "mode": "verify",
@@ -973,67 +1869,14 @@
               "outcome": "pass"
             }
           ],
-          "total_duration_ms": 55,
           "status": "sat",
-          "model": {
-            "di_r0_row0_active": 1,
-            "di_r0_row0_f0_present": 1,
-            "di_r0_row0_f0_value": 14,
-            "di_r0_row1_active": 1,
-            "di_r0_row1_f0_present": 1,
-            "di_r0_row1_f0_value": 15,
-            "di_r0_row2_active": 1,
-            "di_r0_row2_f0_present": 1,
-            "di_r0_row2_f0_value": 16,
-            "di_r0_row3_active": 1,
-            "di_r0_row3_f0_present": 1,
-            "di_r0_row3_f0_value": 18,
-            "di_r0_row4_active": 1,
-            "di_r0_row4_f0_present": 1,
-            "di_r0_row4_f0_value": 20,
-            "di_r0_row5_active": 1,
-            "di_r0_row5_f0_present": 1,
-            "di_r0_row5_f0_value": 22,
-            "di_r0_row6_active": 1,
-            "di_r0_row6_f0_present": 1,
-            "di_r0_row6_f0_value": 24,
-            "di_r0_row7_active": 1,
-            "di_r0_row7_f0_present": 1,
-            "di_r0_row7_f0_value": 27,
-            "di_r1_row0_active": 1,
-            "di_r1_row0_f0_present": 1,
-            "di_r1_row0_f0_value": 15,
-            "di_r1_row1_active": 1,
-            "di_r1_row1_f0_present": 1,
-            "di_r1_row1_f0_value": 18,
-            "di_r1_row2_active": 1,
-            "di_r1_row2_f0_present": 1,
-            "di_r1_row2_f0_value": 16,
-            "di_r1_row3_active": 1,
-            "di_r1_row3_f0_present": 1,
-            "di_r1_row3_f0_value": 22,
-            "di_r1_row4_active": 1,
-            "di_r1_row4_f0_present": 1,
-            "di_r1_row4_f0_value": 14,
-            "di_r1_row5_active": 1,
-            "di_r1_row5_f0_present": 1,
-            "di_r1_row5_f0_value": 20,
-            "di_r1_row6_active": 1,
-            "di_r1_row6_f0_present": 1,
-            "di_r1_row6_f0_value": 24,
-            "di_r1_row7_active": 1,
-            "di_r1_row7_f0_present": 1,
-            "di_r1_row7_f0_value": 27
-          },
-          "duration_ms": 28,
-          "solve_id": "sol_3b6488390bb04e2d",
           "reason": null,
+          "solve_id": "sol_d489304d151f4281",
           "solver_version": "Z3 version 4.16.0 - 64 bit"
         }
       },
       {
-        "id": "partition_2",
-        "expected": "accept_claim_links",
+        "id": "claims_2",
         "request": {
           "family": "data_integrity",
           "mode": "verify",
@@ -1048,12 +1891,12 @@
           ],
           "facts": {
             "relations": {
-              "passed_cases": {
+              "passed_tests": {
                 "fields": {
                   "case_id": {
                     "kind": "integer",
                     "minimum": 1,
-                    "maximum": 32
+                    "maximum": 33
                   }
                 },
                 "rows": {
@@ -1131,19 +1974,19 @@
                   }
                 }
               },
-              "published_claim_links": {
+              "claim_links": {
                 "fields": {
-                  "test_case_id": {
+                  "case_id": {
                     "kind": "integer",
                     "minimum": 1,
-                    "maximum": 32
+                    "maximum": 33
                   }
                 },
                 "rows": {
                   "graph-table-and-relational-parity.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 23
                       }
@@ -1152,7 +1995,7 @@
                   "graph-table-and-relational-parity.2": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 26
                       }
@@ -1161,7 +2004,7 @@
                   "sql-bag-semantics.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 31
                       }
@@ -1170,7 +2013,7 @@
                   "provider-generation.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 21
                       }
@@ -1179,7 +2022,7 @@
                   "provider-generation.2": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 12
                       }
@@ -1188,7 +2031,7 @@
                   "provider-inventory.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 13
                       }
@@ -1197,7 +2040,7 @@
                   "relate-and-ladybug.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 11
                       }
@@ -1206,7 +2049,7 @@
                   "embedded-projection-and-filter-pushdown.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 8
                       }
@@ -1218,11 +2061,11 @@
             "unique_constraints": {},
             "foreign_keys": {
               "claim_passed_test": {
-                "child_relation": "published_claim_links",
+                "child_relation": "claim_links",
                 "child_fields": [
-                  "test_case_id"
+                  "case_id"
                 ],
-                "parent_relation": "passed_cases",
+                "parent_relation": "passed_tests",
                 "parent_fields": [
                   "case_id"
                 ]
@@ -1238,6 +2081,7 @@
           "unknowns": [],
           "persist": true
         },
+        "expected": "accept_claim_links",
         "result": {
           "family": "data_integrity",
           "mode": "verify",
@@ -1250,67 +2094,14 @@
               "outcome": "pass"
             }
           ],
-          "total_duration_ms": 36,
           "status": "sat",
-          "model": {
-            "di_r0_row0_active": 1,
-            "di_r0_row0_f0_present": 1,
-            "di_r0_row0_f0_value": 11,
-            "di_r0_row1_active": 1,
-            "di_r0_row1_f0_present": 1,
-            "di_r0_row1_f0_value": 12,
-            "di_r0_row2_active": 1,
-            "di_r0_row2_f0_present": 1,
-            "di_r0_row2_f0_value": 13,
-            "di_r0_row3_active": 1,
-            "di_r0_row3_f0_present": 1,
-            "di_r0_row3_f0_value": 21,
-            "di_r0_row4_active": 1,
-            "di_r0_row4_f0_present": 1,
-            "di_r0_row4_f0_value": 23,
-            "di_r0_row5_active": 1,
-            "di_r0_row5_f0_present": 1,
-            "di_r0_row5_f0_value": 26,
-            "di_r0_row6_active": 1,
-            "di_r0_row6_f0_present": 1,
-            "di_r0_row6_f0_value": 31,
-            "di_r0_row7_active": 1,
-            "di_r0_row7_f0_present": 1,
-            "di_r0_row7_f0_value": 8,
-            "di_r1_row0_active": 1,
-            "di_r1_row0_f0_present": 1,
-            "di_r1_row0_f0_value": 8,
-            "di_r1_row1_active": 1,
-            "di_r1_row1_f0_present": 1,
-            "di_r1_row1_f0_value": 23,
-            "di_r1_row2_active": 1,
-            "di_r1_row2_f0_present": 1,
-            "di_r1_row2_f0_value": 26,
-            "di_r1_row3_active": 1,
-            "di_r1_row3_f0_present": 1,
-            "di_r1_row3_f0_value": 21,
-            "di_r1_row4_active": 1,
-            "di_r1_row4_f0_present": 1,
-            "di_r1_row4_f0_value": 12,
-            "di_r1_row5_active": 1,
-            "di_r1_row5_f0_present": 1,
-            "di_r1_row5_f0_value": 13,
-            "di_r1_row6_active": 1,
-            "di_r1_row6_f0_present": 1,
-            "di_r1_row6_f0_value": 11,
-            "di_r1_row7_active": 1,
-            "di_r1_row7_f0_present": 1,
-            "di_r1_row7_f0_value": 31
-          },
-          "duration_ms": 8,
-          "solve_id": "sol_03f14fbc6c8048f0",
           "reason": null,
+          "solve_id": "sol_130fcf7e741c40b8",
           "solver_version": "Z3 version 4.16.0 - 64 bit"
         }
       },
       {
-        "id": "partition_3",
-        "expected": "accept_claim_links",
+        "id": "claims_3",
         "request": {
           "family": "data_integrity",
           "mode": "verify",
@@ -1325,12 +2116,12 @@
           ],
           "facts": {
             "relations": {
-              "passed_cases": {
+              "passed_tests": {
                 "fields": {
                   "case_id": {
                     "kind": "integer",
                     "minimum": 1,
-                    "maximum": 32
+                    "maximum": 33
                   }
                 },
                 "rows": {
@@ -1408,19 +2199,19 @@
                   }
                 }
               },
-              "published_claim_links": {
+              "claim_links": {
                 "fields": {
-                  "test_case_id": {
+                  "case_id": {
                     "kind": "integer",
                     "minimum": 1,
-                    "maximum": 32
+                    "maximum": 33
                   }
                 },
                 "rows": {
                   "embedded-projection-and-filter-pushdown.2": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 7
                       }
@@ -1429,7 +2220,7 @@
                   "runtime-watchlists.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 30
                       }
@@ -1438,7 +2229,7 @@
                   "runtime-watchlists.2": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 9
                       }
@@ -1447,7 +2238,7 @@
                   "embedded-aggregate-pushdown.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 19
                       }
@@ -1456,7 +2247,7 @@
                   "embedded-aggregate-pushdown.2": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 6
                       }
@@ -1465,7 +2256,7 @@
                   "plan-inspection.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 10
                       }
@@ -1474,7 +2265,7 @@
                   "host-access-policy.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 25
                       }
@@ -1483,7 +2274,7 @@
                   "host-access-policy.2": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 28
                       }
@@ -1495,11 +2286,11 @@
             "unique_constraints": {},
             "foreign_keys": {
               "claim_passed_test": {
-                "child_relation": "published_claim_links",
+                "child_relation": "claim_links",
                 "child_fields": [
-                  "test_case_id"
+                  "case_id"
                 ],
-                "parent_relation": "passed_cases",
+                "parent_relation": "passed_tests",
                 "parent_fields": [
                   "case_id"
                 ]
@@ -1515,6 +2306,7 @@
           "unknowns": [],
           "persist": true
         },
+        "expected": "accept_claim_links",
         "result": {
           "family": "data_integrity",
           "mode": "verify",
@@ -1527,67 +2319,14 @@
               "outcome": "pass"
             }
           ],
-          "total_duration_ms": 35,
           "status": "sat",
-          "model": {
-            "di_r0_row0_active": 1,
-            "di_r0_row0_f0_present": 1,
-            "di_r0_row0_f0_value": 10,
-            "di_r0_row1_active": 1,
-            "di_r0_row1_f0_present": 1,
-            "di_r0_row1_f0_value": 19,
-            "di_r0_row2_active": 1,
-            "di_r0_row2_f0_present": 1,
-            "di_r0_row2_f0_value": 25,
-            "di_r0_row3_active": 1,
-            "di_r0_row3_f0_present": 1,
-            "di_r0_row3_f0_value": 28,
-            "di_r0_row4_active": 1,
-            "di_r0_row4_f0_present": 1,
-            "di_r0_row4_f0_value": 30,
-            "di_r0_row5_active": 1,
-            "di_r0_row5_f0_present": 1,
-            "di_r0_row5_f0_value": 6,
-            "di_r0_row6_active": 1,
-            "di_r0_row6_f0_present": 1,
-            "di_r0_row6_f0_value": 7,
-            "di_r0_row7_active": 1,
-            "di_r0_row7_f0_present": 1,
-            "di_r0_row7_f0_value": 9,
-            "di_r1_row0_active": 1,
-            "di_r1_row0_f0_present": 1,
-            "di_r1_row0_f0_value": 19,
-            "di_r1_row1_active": 1,
-            "di_r1_row1_f0_present": 1,
-            "di_r1_row1_f0_value": 6,
-            "di_r1_row2_active": 1,
-            "di_r1_row2_f0_present": 1,
-            "di_r1_row2_f0_value": 7,
-            "di_r1_row3_active": 1,
-            "di_r1_row3_f0_present": 1,
-            "di_r1_row3_f0_value": 25,
-            "di_r1_row4_active": 1,
-            "di_r1_row4_f0_present": 1,
-            "di_r1_row4_f0_value": 28,
-            "di_r1_row5_active": 1,
-            "di_r1_row5_f0_present": 1,
-            "di_r1_row5_f0_value": 10,
-            "di_r1_row6_active": 1,
-            "di_r1_row6_f0_present": 1,
-            "di_r1_row6_f0_value": 30,
-            "di_r1_row7_active": 1,
-            "di_r1_row7_f0_present": 1,
-            "di_r1_row7_f0_value": 9
-          },
-          "duration_ms": 9,
-          "solve_id": "sol_2555cc36afb04cbe",
           "reason": null,
+          "solve_id": "sol_328200720cf64d79",
           "solver_version": "Z3 version 4.16.0 - 64 bit"
         }
       },
       {
-        "id": "partition_4",
-        "expected": "accept_claim_links",
+        "id": "claims_4",
         "request": {
           "family": "data_integrity",
           "mode": "verify",
@@ -1602,12 +2341,12 @@
           ],
           "facts": {
             "relations": {
-              "passed_cases": {
+              "passed_tests": {
                 "fields": {
                   "case_id": {
                     "kind": "integer",
                     "minimum": 1,
-                    "maximum": 32
+                    "maximum": 33
                   }
                 },
                 "rows": {
@@ -1676,19 +2415,19 @@
                   }
                 }
               },
-              "published_claim_links": {
+              "claim_links": {
                 "fields": {
-                  "test_case_id": {
+                  "case_id": {
                     "kind": "integer",
                     "minimum": 1,
-                    "maximum": 32
+                    "maximum": 33
                   }
                 },
                 "rows": {
                   "read-budgets.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 29
                       }
@@ -1697,7 +2436,7 @@
                   "read-budgets.2": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 4
                       }
@@ -1706,7 +2445,7 @@
                   "neo4j-typed-reads-and-graph-tables.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 3
                       }
@@ -1715,7 +2454,7 @@
                   "neo4j-typed-reads-and-graph-tables.2": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 4
                       }
@@ -1724,7 +2463,7 @@
                   "neo4j-managed-credentials.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 1
                       }
@@ -1733,16 +2472,16 @@
                   "neo4j-managed-credentials.2": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 2
                       }
                     }
                   },
-                  "feature-off-cypher.1": {
+                  "unified-sql-pgq-surface.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 17
                       }
@@ -1751,7 +2490,7 @@
                   "adbc-arrow-client.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 5
                       }
@@ -1763,11 +2502,11 @@
             "unique_constraints": {},
             "foreign_keys": {
               "claim_passed_test": {
-                "child_relation": "published_claim_links",
+                "child_relation": "claim_links",
                 "child_fields": [
-                  "test_case_id"
+                  "case_id"
                 ],
-                "parent_relation": "passed_cases",
+                "parent_relation": "passed_tests",
                 "parent_fields": [
                   "case_id"
                 ]
@@ -1783,6 +2522,7 @@
           "unknowns": [],
           "persist": true
         },
+        "expected": "accept_claim_links",
         "result": {
           "family": "data_integrity",
           "mode": "verify",
@@ -1795,64 +2535,14 @@
               "outcome": "pass"
             }
           ],
-          "total_duration_ms": 36,
           "status": "sat",
-          "model": {
-            "di_r0_row0_active": 1,
-            "di_r0_row0_f0_present": 1,
-            "di_r0_row0_f0_value": 1,
-            "di_r0_row1_active": 1,
-            "di_r0_row1_f0_present": 1,
-            "di_r0_row1_f0_value": 17,
-            "di_r0_row2_active": 1,
-            "di_r0_row2_f0_present": 1,
-            "di_r0_row2_f0_value": 2,
-            "di_r0_row3_active": 1,
-            "di_r0_row3_f0_present": 1,
-            "di_r0_row3_f0_value": 29,
-            "di_r0_row4_active": 1,
-            "di_r0_row4_f0_present": 1,
-            "di_r0_row4_f0_value": 3,
-            "di_r0_row5_active": 1,
-            "di_r0_row5_f0_present": 1,
-            "di_r0_row5_f0_value": 4,
-            "di_r0_row6_active": 1,
-            "di_r0_row6_f0_present": 1,
-            "di_r0_row6_f0_value": 5,
-            "di_r1_row0_active": 1,
-            "di_r1_row0_f0_present": 1,
-            "di_r1_row0_f0_value": 5,
-            "di_r1_row1_active": 1,
-            "di_r1_row1_f0_present": 1,
-            "di_r1_row1_f0_value": 17,
-            "di_r1_row2_active": 1,
-            "di_r1_row2_f0_present": 1,
-            "di_r1_row2_f0_value": 1,
-            "di_r1_row3_active": 1,
-            "di_r1_row3_f0_present": 1,
-            "di_r1_row3_f0_value": 2,
-            "di_r1_row4_active": 1,
-            "di_r1_row4_f0_present": 1,
-            "di_r1_row4_f0_value": 3,
-            "di_r1_row5_active": 1,
-            "di_r1_row5_f0_present": 1,
-            "di_r1_row5_f0_value": 4,
-            "di_r1_row6_active": 1,
-            "di_r1_row6_f0_present": 1,
-            "di_r1_row6_f0_value": 29,
-            "di_r1_row7_active": 1,
-            "di_r1_row7_f0_present": 1,
-            "di_r1_row7_f0_value": 4
-          },
-          "duration_ms": 8,
-          "solve_id": "sol_b146245b50b84b8b",
           "reason": null,
+          "solve_id": "sol_0796a33ba4f54c7b",
           "solver_version": "Z3 version 4.16.0 - 64 bit"
         }
       },
       {
-        "id": "dangling",
-        "expected": "reject_missing_test_reference",
+        "id": "claims_5",
         "request": {
           "family": "data_integrity",
           "mode": "verify",
@@ -1867,12 +2557,111 @@
           ],
           "facts": {
             "relations": {
-              "passed_cases": {
+              "passed_tests": {
                 "fields": {
                   "case_id": {
                     "kind": "integer",
                     "minimum": 1,
-                    "maximum": 32
+                    "maximum": 33
+                  }
+                },
+                "rows": {
+                  "case_32": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 32
+                      }
+                    }
+                  }
+                }
+              },
+              "claim_links": {
+                "fields": {
+                  "case_id": {
+                    "kind": "integer",
+                    "minimum": 1,
+                    "maximum": 33
+                  }
+                },
+                "rows": {
+                  "native-observer.1": {
+                    "active": true,
+                    "cells": {
+                      "case_id": {
+                        "present": true,
+                        "value": 32
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "unique_constraints": {},
+            "foreign_keys": {
+              "claim_passed_test": {
+                "child_relation": "claim_links",
+                "child_fields": [
+                  "case_id"
+                ],
+                "parent_relation": "passed_tests",
+                "parent_fields": [
+                  "case_id"
+                ]
+              }
+            },
+            "cardinality_constraints": {},
+            "value_ranges": {},
+            "conditional_requirements": {},
+            "aggregate_balances": {},
+            "consistency_relations": {},
+            "temporal_constraints": {}
+          },
+          "unknowns": [],
+          "persist": true
+        },
+        "expected": "accept_claim_links",
+        "result": {
+          "family": "data_integrity",
+          "mode": "verify",
+          "outcome": "pass",
+          "rule_results": [
+            {
+              "rule_id": "data_integrity.foreign_key",
+              "binding_index": 0,
+              "status": "sat",
+              "outcome": "pass"
+            }
+          ],
+          "status": "sat",
+          "reason": null,
+          "solve_id": "sol_4341cf645c60405c",
+          "solver_version": "Z3 version 4.16.0 - 64 bit"
+        }
+      },
+      {
+        "id": "absent_reference",
+        "request": {
+          "family": "data_integrity",
+          "mode": "verify",
+          "rules": [
+            {
+              "rule_id": "data_integrity.foreign_key",
+              "subjects": [
+                "claim_passed_test"
+              ],
+              "parameters": {}
+            }
+          ],
+          "facts": {
+            "relations": {
+              "passed_tests": {
+                "fields": {
+                  "case_id": {
+                    "kind": "integer",
+                    "minimum": 1,
+                    "maximum": 33
                   }
                 },
                 "rows": {
@@ -1950,28 +2739,28 @@
                   }
                 }
               },
-              "published_claim_links": {
+              "claim_links": {
                 "fields": {
-                  "test_case_id": {
+                  "case_id": {
                     "kind": "integer",
                     "minimum": 1,
-                    "maximum": 32
+                    "maximum": 33
                   }
                 },
                 "rows": {
                   "typed-embedded-reads.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
-                        "value": 32
+                        "value": 33
                       }
                     }
                   },
                   "read-only-admission.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 14
                       }
@@ -1980,7 +2769,7 @@
                   "explicit-cypher-bindings.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 15
                       }
@@ -1989,7 +2778,7 @@
                   "standalone-scope.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 20
                       }
@@ -1998,7 +2787,7 @@
                   "prepared-graph-parameters.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 22
                       }
@@ -2007,7 +2796,7 @@
                   "gql-subset.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 18
                       }
@@ -2016,7 +2805,7 @@
                   "gql-subset.2": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 16
                       }
@@ -2025,7 +2814,7 @@
                   "structured-graph-values.1": {
                     "active": true,
                     "cells": {
-                      "test_case_id": {
+                      "case_id": {
                         "present": true,
                         "value": 24
                       }
@@ -2037,11 +2826,11 @@
             "unique_constraints": {},
             "foreign_keys": {
               "claim_passed_test": {
-                "child_relation": "published_claim_links",
+                "child_relation": "claim_links",
                 "child_fields": [
-                  "test_case_id"
+                  "case_id"
                 ],
-                "parent_relation": "passed_cases",
+                "parent_relation": "passed_tests",
                 "parent_fields": [
                   "case_id"
                 ]
@@ -2057,6 +2846,7 @@
           "unknowns": [],
           "persist": true
         },
+        "expected": "reject_absent_reference",
         "result": {
           "family": "data_integrity",
           "mode": "verify",
@@ -2070,17 +2860,505 @@
               "diagnostic": "data_integrity.foreign_key.violation"
             }
           ],
-          "total_duration_ms": 41,
           "status": "unsat",
-          "duration_ms": 9,
-          "solve_id": "sol_ca496048720b40ff",
           "reason": null,
+          "solve_id": "sol_3f1ff59d77974cab",
+          "solver_version": "Z3 version 4.16.0 - 64 bit",
           "unsat_core": [
             "data_integrity_rule_0_data_integrity_foreign_key__subject_claim_passed_test"
-          ],
-          "solver_version": "Z3 version 4.16.0 - 64 bit"
+          ]
         }
       }
-    ]
+    ],
+    "standard_provider_package": {
+      "provider_inventory_sql": "SELECT provider_id, setting_name FROM qw_graph_providers() ORDER BY provider_id;",
+      "provider_inventory": [
+        {
+          "provider_id": "ladybug",
+          "setting_name": "qw_ladybug_config"
+        },
+        {
+          "provider_id": "neo4j",
+          "setting_name": "qw_neo4j_config"
+        },
+        {
+          "provider_id": "relate",
+          "setting_name": "qw_relate_config"
+        }
+      ],
+      "neo4j_secret_type": "quack_weave_neo4j",
+      "rule_id": "data_integrity.foreign_key",
+      "jev": {
+        "planned": {
+          "gate": "open",
+          "provenance": {
+            "served_model_version": "jev-1.14.0",
+            "answers": {
+              "data_complete": {
+                "type": "noul",
+                "noul": 0.97
+              },
+              "route_rule": {
+                "type": "choice",
+                "choice": "data_integrity.foreign_key",
+                "probabilities": {
+                  "data_integrity.aggregate_balance": 0,
+                  "data_integrity.cardinality": 0,
+                  "data_integrity.conditional_required": 0,
+                  "data_integrity.foreign_key": 1,
+                  "data_integrity.mutually_consistent": 0,
+                  "data_integrity.temporal_consistency": 0,
+                  "data_integrity.unique": 0,
+                  "data_integrity.value_range": 0
+                },
+                "confidence": 1
+              },
+              "solve_mode": {
+                "type": "choice",
+                "choice": "verify",
+                "probabilities": {
+                  "synthesize": 0,
+                  "verify": 1
+                },
+                "confidence": 1
+              }
+            },
+            "confidences": {
+              "data_complete": 0.97,
+              "route_rule": 1,
+              "solve_mode": 1
+            },
+            "weakest": 0.97,
+            "gate": {
+              "status": "open"
+            }
+          }
+        },
+        "observed": {
+          "gate": "open",
+          "provenance": {
+            "served_model_version": "jev-1.14.0",
+            "answers": {
+              "data_complete": {
+                "type": "noul",
+                "noul": 0.97
+              },
+              "route_rule": {
+                "type": "choice",
+                "choice": "data_integrity.foreign_key",
+                "probabilities": {
+                  "data_integrity.aggregate_balance": 0,
+                  "data_integrity.cardinality": 0,
+                  "data_integrity.conditional_required": 0,
+                  "data_integrity.foreign_key": 1,
+                  "data_integrity.mutually_consistent": 0,
+                  "data_integrity.temporal_consistency": 0,
+                  "data_integrity.unique": 0,
+                  "data_integrity.value_range": 0
+                },
+                "confidence": 1
+              },
+              "solve_mode": {
+                "type": "choice",
+                "choice": "verify",
+                "probabilities": {
+                  "synthesize": 0,
+                  "verify": 1
+                },
+                "confidence": 1
+              }
+            },
+            "confidences": {
+              "data_complete": 0.97,
+              "route_rule": 1,
+              "solve_mode": 1
+            },
+            "weakest": 0.97,
+            "gate": {
+              "status": "open"
+            }
+          }
+        }
+      },
+      "checks": [
+        {
+          "id": "planned_standard_package",
+          "request": {
+            "family": "data_integrity",
+            "mode": "verify",
+            "rules": [
+              {
+                "rule_id": "data_integrity.foreign_key",
+                "subjects": [
+                  "supported_in_default_package"
+                ],
+                "parameters": {}
+              }
+            ],
+            "facts": {
+              "relations": {
+                "supported": {
+                  "fields": {
+                    "provider": {
+                      "kind": "integer",
+                      "minimum": 0,
+                      "maximum": 2
+                    }
+                  },
+                  "rows": {
+                    "ladybug": {
+                      "active": true,
+                      "cells": {
+                        "provider": {
+                          "present": true,
+                          "value": 0
+                        }
+                      }
+                    },
+                    "relate": {
+                      "active": true,
+                      "cells": {
+                        "provider": {
+                          "present": true,
+                          "value": 1
+                        }
+                      }
+                    },
+                    "neo4j": {
+                      "active": true,
+                      "cells": {
+                        "provider": {
+                          "present": true,
+                          "value": 2
+                        }
+                      }
+                    }
+                  }
+                },
+                "packaged": {
+                  "fields": {
+                    "provider": {
+                      "kind": "integer",
+                      "minimum": 0,
+                      "maximum": 2
+                    }
+                  },
+                  "rows": {
+                    "ladybug": {
+                      "active": true,
+                      "cells": {
+                        "provider": {
+                          "present": true,
+                          "value": 0
+                        }
+                      }
+                    },
+                    "relate": {
+                      "active": true,
+                      "cells": {
+                        "provider": {
+                          "present": true,
+                          "value": 1
+                        }
+                      }
+                    },
+                    "neo4j": {
+                      "active": true,
+                      "cells": {
+                        "provider": {
+                          "present": true,
+                          "value": 2
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "unique_constraints": {},
+              "foreign_keys": {
+                "supported_in_default_package": {
+                  "child_relation": "supported",
+                  "child_fields": [
+                    "provider"
+                  ],
+                  "parent_relation": "packaged",
+                  "parent_fields": [
+                    "provider"
+                  ]
+                }
+              },
+              "cardinality_constraints": {},
+              "value_ranges": {},
+              "conditional_requirements": {},
+              "aggregate_balances": {},
+              "consistency_relations": {},
+              "temporal_constraints": {}
+            },
+            "unknowns": [],
+            "persist": true
+          },
+          "result": {
+            "status": "sat",
+            "outcome": "pass",
+            "solve_id": "sol_07caae4d13e34c79",
+            "rule_results": [
+              {
+                "rule_id": "data_integrity.foreign_key",
+                "binding_index": 0,
+                "status": "sat",
+                "outcome": "pass"
+              }
+            ],
+            "solver_version": "Z3 version 4.16.0 - 64 bit"
+          }
+        },
+        {
+          "id": "previous_ladybug_only_package",
+          "request": {
+            "family": "data_integrity",
+            "mode": "verify",
+            "rules": [
+              {
+                "rule_id": "data_integrity.foreign_key",
+                "subjects": [
+                  "supported_in_default_package"
+                ],
+                "parameters": {}
+              }
+            ],
+            "facts": {
+              "relations": {
+                "supported": {
+                  "fields": {
+                    "provider": {
+                      "kind": "integer",
+                      "minimum": 0,
+                      "maximum": 2
+                    }
+                  },
+                  "rows": {
+                    "ladybug": {
+                      "active": true,
+                      "cells": {
+                        "provider": {
+                          "present": true,
+                          "value": 0
+                        }
+                      }
+                    },
+                    "relate": {
+                      "active": true,
+                      "cells": {
+                        "provider": {
+                          "present": true,
+                          "value": 1
+                        }
+                      }
+                    },
+                    "neo4j": {
+                      "active": true,
+                      "cells": {
+                        "provider": {
+                          "present": true,
+                          "value": 2
+                        }
+                      }
+                    }
+                  }
+                },
+                "packaged": {
+                  "fields": {
+                    "provider": {
+                      "kind": "integer",
+                      "minimum": 0,
+                      "maximum": 2
+                    }
+                  },
+                  "rows": {
+                    "ladybug": {
+                      "active": true,
+                      "cells": {
+                        "provider": {
+                          "present": true,
+                          "value": 0
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "unique_constraints": {},
+              "foreign_keys": {
+                "supported_in_default_package": {
+                  "child_relation": "supported",
+                  "child_fields": [
+                    "provider"
+                  ],
+                  "parent_relation": "packaged",
+                  "parent_fields": [
+                    "provider"
+                  ]
+                }
+              },
+              "cardinality_constraints": {},
+              "value_ranges": {},
+              "conditional_requirements": {},
+              "aggregate_balances": {},
+              "consistency_relations": {},
+              "temporal_constraints": {}
+            },
+            "unknowns": [],
+            "persist": true
+          },
+          "result": {
+            "status": "unsat",
+            "outcome": "fail",
+            "solve_id": "sol_f0048dc8cefe4364",
+            "rule_results": [
+              {
+                "rule_id": "data_integrity.foreign_key",
+                "binding_index": 0,
+                "status": "unsat",
+                "outcome": "fail",
+                "diagnostic": "data_integrity.foreign_key.violation"
+              }
+            ],
+            "solver_version": "Z3 version 4.16.0 - 64 bit"
+          }
+        },
+        {
+          "id": "observed_standard_release",
+          "request": {
+            "family": "data_integrity",
+            "mode": "verify",
+            "rules": [
+              {
+                "rule_id": "data_integrity.foreign_key",
+                "subjects": [
+                  "supported_in_default_package"
+                ],
+                "parameters": {}
+              }
+            ],
+            "facts": {
+              "relations": {
+                "supported": {
+                  "fields": {
+                    "provider": {
+                      "kind": "integer",
+                      "minimum": 0,
+                      "maximum": 2
+                    }
+                  },
+                  "rows": {
+                    "ladybug": {
+                      "active": true,
+                      "cells": {
+                        "provider": {
+                          "present": true,
+                          "value": 0
+                        }
+                      }
+                    },
+                    "relate": {
+                      "active": true,
+                      "cells": {
+                        "provider": {
+                          "present": true,
+                          "value": 1
+                        }
+                      }
+                    },
+                    "neo4j": {
+                      "active": true,
+                      "cells": {
+                        "provider": {
+                          "present": true,
+                          "value": 2
+                        }
+                      }
+                    }
+                  }
+                },
+                "packaged": {
+                  "fields": {
+                    "provider": {
+                      "kind": "integer",
+                      "minimum": 0,
+                      "maximum": 2
+                    }
+                  },
+                  "rows": {
+                    "ladybug": {
+                      "active": true,
+                      "cells": {
+                        "provider": {
+                          "present": true,
+                          "value": 0
+                        }
+                      }
+                    },
+                    "neo4j": {
+                      "active": true,
+                      "cells": {
+                        "provider": {
+                          "present": true,
+                          "value": 2
+                        }
+                      }
+                    },
+                    "relate": {
+                      "active": true,
+                      "cells": {
+                        "provider": {
+                          "present": true,
+                          "value": 1
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "unique_constraints": {},
+              "foreign_keys": {
+                "supported_in_default_package": {
+                  "child_relation": "supported",
+                  "child_fields": [
+                    "provider"
+                  ],
+                  "parent_relation": "packaged",
+                  "parent_fields": [
+                    "provider"
+                  ]
+                }
+              },
+              "cardinality_constraints": {},
+              "value_ranges": {},
+              "conditional_requirements": {},
+              "aggregate_balances": {},
+              "consistency_relations": {},
+              "temporal_constraints": {}
+            },
+            "unknowns": [],
+            "persist": true
+          },
+          "result": {
+            "status": "sat",
+            "outcome": "pass",
+            "solve_id": "sol_ec884b89d6b84d97",
+            "rule_results": [
+              {
+                "rule_id": "data_integrity.foreign_key",
+                "binding_index": 0,
+                "status": "sat",
+                "outcome": "pass"
+              }
+            ],
+            "solver_version": "Z3 version 4.16.0 - 64 bit"
+          }
+        }
+      ],
+      "artifact_sha256": "d4643d65029deeca7574c50feddbc0d9f88498d60d0d218b768e2f3996ae9fb9"
+    }
   }
 }

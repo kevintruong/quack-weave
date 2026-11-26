@@ -39,13 +39,13 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked --features rusty_quack/template-compat
+        run: cargo clippy --workspace --all-targets --locked --no-default-features --features rusty_quack/template-compat
 
       - name: Build
-        run: cargo build --workspace --locked --features rusty_quack/template-compat
+        run: cargo build --workspace --locked --no-default-features --features rusty_quack/template-compat
 
       - name: Test
-        run: cargo test --workspace --locked --features rusty_quack/template-compat
+        run: cargo test --workspace --locked --no-default-features --features rusty_quack/template-compat
 
   plan:
     runs-on: ubuntu-latest
@@ -113,7 +113,7 @@ jobs:
           path: build/benchmark-host/
           if-no-files-found: error
           retention-days: 30
-      - name: Build the dual-provider release and its integration test fixture builder
+      - name: Build the native release and RelateDB integration fixture builder
         if: github.event_name != 'workflow_dispatch'
         env:
           SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -124,14 +124,14 @@ jobs:
             git worktree add --quiet --detach "$subject" "$SOURCE_HEAD"
             mkdir -p "$subject/build"
             ln -s "$PWD/build/deps" "$subject/build/deps"
-            env -u MACOSX_DEPLOYMENT_TARGET make -C "$subject" mvp2-deps
+            env -u MACOSX_DEPLOYMENT_TARGET make -C "$subject" native-deps
           fi
-          env -u MACOSX_DEPLOYMENT_TARGET make -C "$subject" mvp2-relate-release
+          env -u MACOSX_DEPLOYMENT_TARGET make -C "$subject" native-release
           python3 benchmarks/provider_comparison/tracker/artifacts.py stage "$subject" build/native/releases
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
-            target="$subject/target/mvp2-relate"
+            target="$subject/target/native"
             env -u MACOSX_DEPLOYMENT_TARGET cargo build --manifest-path "$subject/Cargo.toml" \
-              --locked -p rusty_quack --target "$QW_RUST_TARGET" --release --features relate-provider \
+              --locked -p rusty_quack --target "$QW_RUST_TARGET" --release \
               --target-dir "$target" --example relate_fixture
             mkdir -p build/native/clients
             cp "$target/$QW_RUST_TARGET/release/examples/relate_fixture" build/native/clients/
@@ -143,13 +143,16 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: qw-native-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
-          path: build/native/
+          path: |
+            build/native/releases/
+            build/native/clients/
+            build/native/toolchain.txt
           if-no-files-found: error
           retention-days: 30
 
   profiles:
     if: github.event_name != 'push'
-    name: Build stabilization profiles
+    name: Build native stabilization packages
     needs: plan
     runs-on: ${{ needs.plan.outputs.runner }}
     timeout-minutes: 90
@@ -162,13 +165,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/native-setup
-      - name: Build stabilization profiles at the CI checkout
-        run: env -u MACOSX_DEPLOYMENT_TARGET make mvp2 mvp2-release mvp1
+      - name: Build native stabilization packages at the CI checkout
+        run: env -u MACOSX_DEPLOYMENT_TARGET make native native-release
       - name: Build the observer test executables
         shell: bash
         run: |
           env -u MACOSX_DEPLOYMENT_TARGET cargo test --locked --no-run --lib -p rusty_quack -p rusty_quack_core \
-            --features rusty_quack/gql --target "$QW_RUST_TARGET" --target-dir target/mvp2 \
+            --target "$QW_RUST_TARGET" --target-dir target/native \
             --message-format=json > "$RUNNER_TEMP/observer-build.jsonl"
           mkdir -p build/observer-tests
           for crate in rusty_quack rusty_quack_core; do
@@ -178,16 +181,15 @@ jobs:
             ' "$RUNNER_TEMP/observer-build.jsonl")
             cp "$executable" "build/observer-tests/$crate"
           done
-      - name: Publish stabilization profiles with their licenses
+      - name: Publish native packages with their licenses
         id: profile-upload
         uses: actions/upload-artifact@v4
         with:
           name: qw-profiles-${{ github.sha }}-${{ github.run_attempt }}
           path: |
             build/observer-tests/
-            build/debug/extension/quack_weave/
-            build/mvp2/debug/extension/quack_weave/
-            build/mvp2/release/extension/quack_weave/
+            build/native/debug/extension/quack_weave/
+            build/native/release/extension/quack_weave/
           if-no-files-found: error
           retention-days: 30
 
@@ -241,10 +243,10 @@ jobs:
           artifact-ids: ${{ needs.profiles.outputs.packages }}
           merge-multiple: true
           path: build
-      - name: Verify package profiles and native observations
+      - name: Verify the native packages and observations
         run: |
           chmod +x build/observer-tests/{rusty_quack,rusty_quack_core}
-          make mvp2-stabilization-test-prebuilt OBSERVER_TEST_DIR="$PWD/build/observer-tests"
+          make native-stabilization-test-prebuilt OBSERVER_TEST_DIR="$PWD/build/observer-tests"
 
       - name: Verify public graph results through Apache Arrow ADBC
         run: |

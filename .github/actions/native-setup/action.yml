@@ -23,4 +23,4 @@ runs:
             echo 'QW_RUST_TARGET=aarch64-unknown-linux-gnu' >> "$GITHUB_ENV" ;;
           *) exit 1 ;;
         esac
-        env -u MACOSX_DEPLOYMENT_TARGET make mvp2-deps
+        env -u MACOSX_DEPLOYMENT_TARGET make native-deps

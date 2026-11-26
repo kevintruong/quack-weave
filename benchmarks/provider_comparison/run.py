@@ -25,7 +25,7 @@ from watchlist import KEYS, PATTERN, ROOT, digest, provider_rows, sql_literal
 
 BUILD = ROOT / "build/perf/provider-comparison"
 GRAPH_ALIAS = "social"
-EXT = ROOT / "build/mvp2-relate/release/extension/quack_weave/quack_weave.duckdb_extension"
+EXT = ROOT / "build/native/release/extension/quack_weave/quack_weave.duckdb_extension"
 DUCKDB_LIBRARY = "libduckdb.so" if sys.platform == "linux" else "libduckdb.dylib"
 LIB = ROOT / "build/benchmark-host/release/src" / DUCKDB_LIBRARY
 if not LIB.is_file():

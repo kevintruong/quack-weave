@@ -1,21 +1,24 @@
-//! Admit only row-producing reads. The read-only store enforces graph immutability;
-//! this AST gate also excludes procedure calls, external input and session control.
+//! Admit only row-producing reads and exclude procedures, external input, and session control.
 use relate_parser::{
     Clause, Expr, ExprEdge, GroupBySpec, LabelExpr, OrderByItem, PatternElement, PreambleMode,
     ReturnItem, Statement,
 };
 use rusty_quack_core::qw_query::BackendError::{self, Admission};
 
-/// Relate's parser recurses with input nesting. Parse, visit and drop its AST
-/// on a worker with the stack provision the pinned engine uses for queries.
-pub(super) fn admit<T: Send>(
+// The pinned Relate parser uses the same stack budget as its engine worker.
+const READ_PARSER_STACK_BYTES: usize = 64 * 1024 * 1024;
+#[cfg(feature = "relate-provider")]
+const _: () = assert!(READ_PARSER_STACK_BYTES == relate::QUERY_WORKER_STACK_BYTES);
+
+/// Parse, visit and drop the recursive AST on a worker with the pinned stack budget.
+pub(crate) fn admit<T: Send>(
     text: &str,
     inspect: impl FnOnce(&Statement) -> Result<T, BackendError> + Send,
 ) -> Result<T, BackendError> {
     std::thread::scope(|scope| {
         std::thread::Builder::new()
-            .name("qw-relate-parser".into())
-            .stack_size(relate::QUERY_WORKER_STACK_BYTES)
+            .name("qw-cypher-parser".into())
+            .stack_size(READ_PARSER_STACK_BYTES)
             .spawn_scoped(scope, || inspect(&read_statement(text)?))
             .map_err(|_| BackendError::Execution)?
             .join()

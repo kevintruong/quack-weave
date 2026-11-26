@@ -264,8 +264,10 @@ statement ok
 RESET GLOBAL qw_relate_config;
 
 onlyif action=set
-statement ok
+statement maybe
 SET GLOBAL qw_relate_config = '{"alias":"transient","path":"{QW_RELATE}"}';
+----
+QW_CONFIG: Graph registration changed during preparation
 
 endloop
 

@@ -1,0 +1,59 @@
+# name: test/stabilization/sqllogic/native_surface.test
+# description: One native package supports SQL/PGQ and the existing graph read interfaces
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_GRAPH UNSET_QW_GRAPH
+
+# case: artifact.unified_surface Typed Cypher and SQL/PGQ can share one SQL query
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+query TT
+SELECT provider_id, setting_name FROM qw_graph_providers() ORDER BY provider_id;
+----
+ladybug	qw_ladybug_config
+neo4j	qw_neo4j_config
+relate	qw_relate_config
+
+query IIT
+WITH from_cypher AS (
+  SELECT id, count(*) AS copies
+  FROM qw_query('kg', 'cypher',
+    $$MATCH (a:Document)-[:LINKS_TO]->(b:Document)
+      WHERE a.id = $source RETURN b.id AS id$$,
+    schema := 'id BIGINT', bindings := {'source': 100::BIGINT})
+  GROUP BY id
+)
+SELECT g.id, c.copies, g.title
+FROM GRAPH_TABLE (
+  kg MATCH (b:Document) COLUMNS (b.id AS id, b.title AS title)
+) AS g
+JOIN from_cypher AS c USING (id)
+ORDER BY g.id;
+----
+101	2	Linked, λ
+
+query I
+SELECT count(*)
+FROM qw_query('kg', 'gql',
+  $$MATCH (a:Document)-[:LINKS_TO]->(b:Document)
+    WHERE a.id = 100 RETURN b.id AS id$$,
+  schema := 'id BIGINT');
+----
+2
+
+statement ok
+SESSION SET GRAPH kg;
+
+query I rowsort
+MATCH (a:Document)-[:LINKS_TO]->(b:Document)
+WHERE a.id = 100
+RETURN b.id AS id;
+----
+101
+101

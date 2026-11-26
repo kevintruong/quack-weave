@@ -217,7 +217,6 @@ fn unsupported_nested_result_fails_during_schema_admission() {
     assert!(matches!(error, Some(BackendError::Schema)));
 }
 
-#[cfg(feature = "gql")]
 #[test]
 fn lowered_gql_uses_the_real_prepare_and_execute_boundary_once() {
     use rusty_quack_core::qw_query::compile_gql_query;
@@ -225,7 +224,7 @@ fn lowered_gql_uses_the_real_prepare_and_execute_boundary_once() {
     let fixture = Fixture::new();
     let cypher = compile_gql_query(
         "MATCH (a:Person)-[:KNOWS]->(b:Person) WHERE a.id = 1 RETURN b.id AS id",
-        Some(crate::gql::parse),
+        crate::gql::parse,
     )
     .unwrap();
 
@@ -258,7 +257,6 @@ fn lowered_gql_uses_the_real_prepare_and_execute_boundary_once() {
     );
 }
 
-#[cfg(feature = "gql")]
 #[test]
 fn lowered_gql_cannot_dispatch_after_native_prepare_fails() {
     use rusty_quack_core::qw_query::compile_gql_query;
@@ -266,7 +264,7 @@ fn lowered_gql_cannot_dispatch_after_native_prepare_fails() {
     let fixture = Fixture::new();
     let cypher = compile_gql_query(
         "MATCH (a:Person)-[:KNOWS]->(b:Person) RETURN b.unknown_property AS id",
-        Some(crate::gql::parse),
+        crate::gql::parse,
     )
     .unwrap();
     let native_text = CString::new(cypher.as_str()).unwrap();
@@ -351,7 +349,6 @@ fn observe_first_batch(
     }
 }
 
-#[cfg(feature = "gql")]
 #[test]
 fn fixture_observer_native_admission() {
     use crate::test_observation::{capture, event};
@@ -376,7 +373,7 @@ fn fixture_observer_native_admission() {
             "observer.admission",
             invocation,
             None,
-            || match compile_gql_query(gql, Some(crate::gql::parse)) {
+            || match compile_gql_query(gql, crate::gql::parse) {
                 Ok(cypher) => observe_first_batch(&fixture, &cypher, None, None),
                 Err(_) => event("result", "error", "GqlFrontend"),
             },

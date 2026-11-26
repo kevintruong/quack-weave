@@ -1,0 +1,24 @@
+# name: test/stabilization/sqllogic/declared_bindings.test
+# description: Bind scalar parameters on an explicit-schema graph query
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_GRAPH UNSET_QW_GRAPH
+
+# case: declared_bindings.read Reuse the typed parameter contract on the explicit path
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
+
+query I
+SELECT id FROM qw_query('kg', 'cypher', 'MATCH (d:Document) WHERE d.id = $start RETURN d.id AS id', schema := 'id BIGINT', bindings := {'start': 100::BIGINT});
+----
+100
+
+statement error
+SELECT * FROM qw_query('kg', 'cypher', 'MATCH (d:Document) WHERE d.id = $start RETURN d.id AS id', schema := 'id BIGINT', bindings := 100);
+----
+QW_ARGUMENT: Expected named graph parameter values

@@ -1,5 +1,7 @@
 use std::ffi::{CStr, c_char, c_void};
 
+use rusty_quack_core::qw_query::ProviderRegistry;
+
 use duckdb_neo::{
     AsRaw, DuckDBType, FromValue, Result, ToValue,
     connection::{Context, HasFactory, SettingScope},
@@ -22,7 +24,7 @@ pub(crate) fn runtime_watch_keys(column: usize) -> Vec<i64> {
 }
 
 enum GraphOption {
-    Graph,
+    Graph(ProviderRegistry),
     Dialect,
 }
 
@@ -41,15 +43,15 @@ impl CustomOptionCallbacks for GraphOption {
         }
         if reset {
             return match self {
-                Self::Graph => "".value(context),
+                Self::Graph(_) => "".value(context),
                 Self::Dialect => "gql".value(context),
             };
         }
         let text = String::from_value(&value)?
             .ok_or_else(|| Error::invalid_input("QW_ARGUMENT: Expected a name"))?;
         match self {
-            Self::Graph => {
-                rusty_quack_core::qw_query::validate_graph_alias(context, &text)?;
+            Self::Graph(providers) => {
+                providers.validate_graph_alias(&text)?;
                 Ok(value)
             }
             Self::Dialect => match text.to_ascii_lowercase().as_str() {
@@ -61,13 +63,13 @@ impl CustomOptionCallbacks for GraphOption {
     }
 }
 
-pub fn register(extension: &Extension) -> Result<()> {
+pub fn register(extension: &Extension, providers: ProviderRegistry) -> Result<()> {
     for (name, description, initial, option) in [
         (
             "qw_selected_graph",
             "Graph alias selected by SESSION SET GRAPH",
             "",
-            GraphOption::Graph,
+            GraphOption::Graph(providers),
         ),
         (
             "qw_graph_dialect",

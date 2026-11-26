@@ -18,7 +18,14 @@ for sha in "$@"; do
     git worktree add --quiet --detach "$subject" "$sha"
     mkdir -p "$subject/build"
     ln -s "$root/build/deps" "$subject/build/deps"
-    if make -C "$subject" mvp2-deps mvp2-relate-release; then
+    if git -C "$subject" grep -q '^native-relate-release:' -- Makefile; then
+        targets=(native-deps native-relate-release)
+    elif git -C "$subject" grep -q '^native-release:' -- Makefile; then
+        targets=(native-deps native-release)
+    else
+        targets=(mvp2-deps mvp2-relate-release)
+    fi
+    if make -C "$subject" "${targets[@]}"; then
         python3 "$root/benchmarks/provider_comparison/tracker/artifacts.py" stage "$subject" "$root/build/historical"
     else
         # The consumer marks this SHA failed and still measures the other releases.

@@ -1,24 +1,24 @@
 //! Read-only scalar graph scans over a single Relate bundle.
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use relate::{Connection, Database, Value};
 use rusty_quack_core::qw_query::{
     BackendError, Batch, BatchReader, ColumnData, ColumnSpec, GraphCatalog, GraphGeneration,
-    GraphParameter, PreparedRegistration, ReadBackend, ReadSession, ScalarType,
+    GraphParameter, PreparedRegistration, ReadBackend, ReadSession, RetiredRegistration,
+    ScalarType,
 };
 
-mod admission;
 mod catalog;
 use crate::batch_budget::reserve_slots;
-use admission::admit;
+use crate::cypher_read::admit;
 
 #[cfg(test)]
 mod tests;
 
 #[derive(Default)]
 pub(crate) struct RelateBackend {
-    registered: Mutex<Option<RegisteredDatabase>>,
+    registered: Mutex<Option<Arc<RegisteredDatabase>>>,
 }
 
 struct RegisteredDatabase {
@@ -54,11 +54,11 @@ impl ReadBackend for RelateBackend {
         let populations = catalog
             .as_ref()
             .and_then(|_| catalog::populations(&mut connection));
-        let registered = RegisteredDatabase {
+        let registered = Arc::new(RegisteredDatabase {
             generation,
             path: path.into(),
             database,
-        };
+        });
         Ok(PreparedRegistration {
             catalog,
             single_pattern_row_bound: populations.map(|(nodes, edges)| nodes.max(edges)),
@@ -66,19 +66,21 @@ impl ReadBackend for RelateBackend {
                 rusty_quack_core::qw_query::GraphPopulations::ByEntity { nodes, edges }
             }),
             activate: Box::new(move || {
-                *self
-                    .registered
+                self.registered
                     .lock()
-                    .unwrap_or_else(|err| err.into_inner()) = Some(registered);
+                    .unwrap_or_else(|err| err.into_inner())
+                    .replace(registered)
+                    .map(|retired| Box::new(retired) as RetiredRegistration)
             }),
         })
     }
 
-    fn set_generation(&self, _: Option<u64>) {
+    fn set_generation(&self, _: Option<u64>) -> Option<RetiredRegistration> {
         self.registered
             .lock()
             .unwrap_or_else(|err| err.into_inner())
-            .take();
+            .take()
+            .map(|retired| Box::new(retired) as RetiredRegistration)
     }
 
     fn projection(
@@ -92,9 +94,9 @@ impl ReadBackend for RelateBackend {
     fn native_gql(
         &self,
         query: String,
-        _: Option<rusty_quack_core::qw_query::GqlParser>,
+        _: rusty_quack_core::qw_query::GqlParser,
     ) -> duckdb_neo::Result<String> {
-        rusty_quack_core::qw_query::compile_gql_query(&query, Some(crate::gql::parse_native))
+        rusty_quack_core::qw_query::compile_gql_query(&query, crate::gql::parse_native)
     }
 
     fn runtime_watch_keys(&self, column: usize) -> Vec<i64> {
@@ -132,11 +134,14 @@ impl ReadBackend for RelateBackend {
 impl RelateBackend {
     fn connection(&self, path: &Path, generation: Option<u64>) -> Result<Connection, BackendError> {
         if let Some(id) = generation {
-            let active = self.registered.lock().map_err(|_| BackendError::Open)?;
-            if let Some(db) = active
+            let active = self
+                .registered
+                .lock()
+                .map_err(|_| BackendError::Open)?
                 .as_ref()
                 .filter(|db| db.generation == id && db.path == path)
-            {
+                .cloned();
+            if let Some(db) = active {
                 // The connection retains the frozen store after the lock is released.
                 return db.database.connect().map_err(|_| BackendError::Open);
             }
