@@ -7,6 +7,7 @@ import io
 import json
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 
@@ -109,12 +110,9 @@ def expect_failure(result, diagnostic):
         )
 
 
-def run_cases(duckdb_binary, lbug, extension, graph):
+def check_release_queries(duckdb_binary, extension, graph):
     load = f"LOAD {sql_literal(extension.resolve(strict=True))};\n"
     setup = load + provision(graph)
-    select = f"SELECT * FROM {graph_query(TRAVERSAL)};\n"
-
-    expect_rows(duckdb(duckdb_binary, setup + select), [["101"]])
     expect_rows(
         duckdb(duckdb_binary, load + "SELECT provider_id FROM qw_graph_providers() ORDER BY 1;\n"),
         [["ladybug"], ["neo4j"], ["relate"]],
@@ -131,6 +129,15 @@ def run_cases(duckdb_binary, lbug, extension, graph):
         [["101"]],
     )
     print("PASS all_providers_and_graph_table")
+
+
+def run_cases(duckdb_binary, lbug, extension, graph):
+    load = f"LOAD {sql_literal(extension.resolve(strict=True))};\n"
+    setup = load + provision(graph)
+    select = f"SELECT * FROM {graph_query(TRAVERSAL)};\n"
+
+    expect_rows(duckdb(duckdb_binary, setup + select), [["101"]])
+    check_release_queries(duckdb_binary, extension, graph)
     print("PASS normal_graph_read")
     multi_hop = graph_query(
         "MATCH (src:Document {id: 100})-[:LINKS_TO*1..2]->(dst:Document) "
@@ -311,6 +318,9 @@ def main():
     parser.add_argument("--duckdb", default="duckdb")
     parser.add_argument("--extension", type=Path)
     parser.add_argument("--lbug", default="lbug")
+    fixture_mode = parser.add_mutually_exclusive_group()
+    fixture_mode.add_argument("--prepare-release-fixture", type=Path)
+    fixture_mode.add_argument("--release-fixture", type=Path)
     options = parser.parse_args()
     version = subprocess.run(
         [options.duckdb, "-no-agent", "-version"],
@@ -322,14 +332,23 @@ def main():
     if not version or version[0] != DUCKDB_VERSION:
         parser.error(f"DuckDB {DUCKDB_VERSION} is required")
 
-    if not options.extension:
+    if options.release_fixture:
+        if not options.extension:
+            parser.error("--release-fixture requires --extension")
+        graph = options.release_fixture.resolve(strict=True)
+        check_release_queries(options.duckdb, options.extension, graph)
+        return
+
+    if not options.extension and not options.prepare_release_fixture:
         # Without an artifact, the same read exposes the missing feature on the host baseline.
         expect_rows(duckdb(options.duckdb, f"SELECT * FROM {graph_query(TRAVERSAL)};\n"), [["101"]])
         return
 
     lbug_version = subprocess.run(
-        [options.lbug, "-v"], text=True, capture_output=True, timeout=30, check=True
+        [options.lbug, "-v"], text=True, capture_output=True, timeout=30, check=False
     )
+    if lbug_version.returncode:
+        parser.error(f"Ladybug CLI could not start: {lbug_version.stderr.strip() or lbug_version.stdout.strip()}")
     version_pattern = rf"(?<![\d.]){re.escape(LADYBUG_VERSION)}(?![\d.])"
     if not re.search(version_pattern, lbug_version.stdout + lbug_version.stderr):
         parser.error(f"Ladybug {LADYBUG_VERSION} is required")
@@ -338,6 +357,14 @@ def main():
         ladybug(options.lbug, graph, FIXTURE)
         if not graph.is_file():
             raise AssertionError("Ladybug did not create the graph database file")
+        if options.prepare_release_fixture:
+            output = options.prepare_release_fixture.resolve()
+            output.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(dir=output.parent) as staging:
+                staged = Path(staging) / output.name
+                shutil.copyfile(graph, staged)
+                staged.replace(output)
+            return
         run_cases(options.duckdb, options.lbug, options.extension, graph)
 
 

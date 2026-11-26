@@ -54,6 +54,23 @@ class NativePackageTest(unittest.TestCase):
                 self.assertIn("build/release/extension/quack_weave/quack_weave.duckdb_extension", result.stdout)
                 self.assertNotIn("template-compat", result.stdout)
 
+    def test_linux_distribution_uses_a_host_built_fixture_inside_the_container(self):
+        env = {**os.environ, "CI_EXTENSION_NAME": "quack_weave", "DUCKDB_PLATFORM": "linux_amd64"}
+        for target, in_docker, expected in (
+            ("configure_ci", "0", "--prepare-release-fixture"),
+            ("test_release", "1", "--release-fixture"),
+            ("test_release", "0", "--lbug"),
+        ):
+            with self.subTest(target=target, in_docker=in_docker):
+                result = subprocess.run(
+                    ["make", "--dry-run", target], cwd=ROOT,
+                    env={**env, "LINUX_CI_IN_DOCKER": in_docker}, capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(expected, result.stdout)
+                if in_docker == "1":
+                    self.assertNotIn("--lbug", result.stdout)
+
     def test_linux_amd64_dependency_archives(self):
         sys.path.insert(0, str(ROOT / "scripts"))
         try:

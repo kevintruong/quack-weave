@@ -71,8 +71,9 @@ def prepare_clients(platform):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("platform", choices=CLIENTS)
+    parser.add_argument("--clients-only", action="store_true")
     args = parser.parse_args()
     ROOT.mkdir(parents=True, exist_ok=True)
     prepare_clients(args.platform)
-    if args.platform.startswith("linux_"):
+    if args.platform.startswith("linux_") and not args.clients_only:
         build_openssl()

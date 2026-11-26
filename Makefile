@@ -16,18 +16,23 @@ CAPI_VERSION=2
 # Target DuckDB version
 TARGET_DUCKDB_VERSION=v2.0.1
 
-ifeq ($(EXTENSION_NAME),quack_weave)
+ifeq ($(or $(CI_EXTENSION_NAME),$(EXTENSION_NAME)),quack_weave)
 .PHONY: configure_ci release test_release community-deps
 COMMUNITY_ARTIFACT := build/release/extension/quack_weave/quack_weave.duckdb_extension
 COMMUNITY_TOOLS := $(abspath build/deps/gql-antlr)
 COMMUNITY_PYTHON ?= $(or $(wildcard /opt/python/cp312-cp312/bin/python),python3)
 COMMUNITY_DUCKDB := $(COMMUNITY_TOOLS)/duckdb-cli-$(DUCKDB_PLATFORM)/duckdb
 COMMUNITY_LBUG := $(COMMUNITY_TOOLS)/ladybug-cli-$(DUCKDB_PLATFORM)/lbug
+COMMUNITY_GRAPH := $(abspath build/distribution-fixture/$(DUCKDB_PLATFORM).lbdb)
 ifeq ($(shell uname -s),Linux)
 export OPENSSL_LIB_DIR := $(COMMUNITY_TOOLS)/openssl-static
 endif
 
 configure_ci:
+ifeq ($(LINUX_CI_IN_DOCKER),0)
+	$(COMMUNITY_PYTHON) -B scripts/prepare_distribution_deps.py $(DUCKDB_PLATFORM) --clients-only
+	$(COMMUNITY_PYTHON) -B test/cypher_acceptance.py --duckdb '$(COMMUNITY_DUCKDB)' --lbug '$(COMMUNITY_LBUG)' --prepare-release-fixture '$(COMMUNITY_GRAPH)'
+endif
 
 community-deps: native-deps
 	$(COMMUNITY_PYTHON) -B scripts/prepare_distribution_deps.py $(DUCKDB_PLATFORM)
@@ -125,9 +130,16 @@ define check_native
 	$(PYTHON_BIN) -B test/gql_acceptance.py --duckdb '$(or $(2),$(DUCKDB))' --lbug '$(or $(3),$(LBUG))' --extension '$(1)'
 endef
 
+ifeq ($(LINUX_CI_IN_DOCKER),1)
+define check_community_release
+	QUACK_WEAVE_TEST_ARTIFACT='$(COMMUNITY_ARTIFACT)' $(COMMUNITY_PYTHON) -B test/native_package_test.py
+	$(COMMUNITY_PYTHON) -B test/cypher_acceptance.py --duckdb '$(COMMUNITY_DUCKDB)' --extension '$(COMMUNITY_ARTIFACT)' --release-fixture '$(COMMUNITY_GRAPH)'
+endef
+else
 define check_community_release
 	$(call check_native,$(COMMUNITY_ARTIFACT),$(COMMUNITY_DUCKDB),$(COMMUNITY_LBUG))
 endef
+endif
 
 native:
 	$(call package_native,$(NATIVE_CARGO_DIR),,debug,$(NATIVE_DEBUG_ARTIFACT))
