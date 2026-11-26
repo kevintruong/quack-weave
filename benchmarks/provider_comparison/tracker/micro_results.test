@@ -1,0 +1,69 @@
+# name: benchmarks/provider_comparison/tracker/micro_results.test
+# description: Compare the exact benchmark queries with independent CSV result bags on both scan routes
+# group: [quack_weave]
+
+test-env QW_MICRO_EXTENSION UNSET_QW_MICRO_EXTENSION
+
+test-env QW_MICRO_REGISTER UNSET_QW_MICRO_REGISTER
+
+test-env QW_MICRO_THRESHOLD UNSET_QW_MICRO_THRESHOLD
+
+test-env QW_MICRO_PEOPLE UNSET_QW_MICRO_PEOPLE
+
+test-env QW_MICRO_MESSAGES UNSET_QW_MICRO_MESSAGES
+
+test-env QW_MICRO_RESULT UNSET_QW_MICRO_RESULT
+
+test-env QW_MICRO_REFERENCE UNSET_QW_MICRO_REFERENCE
+
+statement ok
+LOAD {QW_MICRO_EXTENSION};
+
+statement ok
+{QW_MICRO_REGISTER};
+
+statement ok
+SET threads = 1;
+
+statement ok
+SET dynamic_or_filter_threshold = {QW_MICRO_THRESHOLD};
+
+statement ok
+CREATE TEMP TABLE micro_people(author BIGINT, tier BIGINT, segment BIGINT);
+
+statement ok
+INSERT INTO micro_people VALUES {QW_MICRO_PEOPLE};
+
+statement ok
+CREATE TEMP TABLE micro_messages(mid BIGINT, topic BIGINT);
+
+statement ok
+INSERT INTO micro_messages VALUES {QW_MICRO_MESSAGES};
+
+statement ok
+CREATE TEMP TABLE expected(workload VARCHAR, segment BIGINT, topic BIGINT, matches BIGINT, checksum BIGINT);
+
+statement ok
+INSERT INTO expected VALUES {QW_MICRO_REFERENCE};
+
+statement ok
+SET SESSION qw_enable_runtime_watchlist = false;
+
+query I
+WITH actual AS MATERIALIZED ({QW_MICRO_RESULT}), diff AS (
+    (FROM actual EXCEPT ALL FROM expected) UNION ALL (FROM expected EXCEPT ALL FROM actual)
+)
+SELECT count(*) FROM diff;
+----
+0
+
+statement ok
+SET SESSION qw_enable_runtime_watchlist = true;
+
+query I
+WITH actual AS MATERIALIZED ({QW_MICRO_RESULT}), diff AS (
+    (FROM actual EXCEPT ALL FROM expected) UNION ALL (FROM expected EXCEPT ALL FROM actual)
+)
+SELECT count(*) FROM diff;
+----
+0

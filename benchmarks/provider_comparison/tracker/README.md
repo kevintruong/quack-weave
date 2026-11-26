@@ -77,6 +77,29 @@ Pass `--include-prepared` to compare a reused `qw_query` statement with bare Cyp
 "$py" -B "$tracker" run --include-prepared --case lookup --case lookup_miss
 ```
 
+### CM-LDBC workloads
+
+`--micro` adapts MICRO's CM-LDBC split between graph topology and relational attributes to the matched LSQB SF1 creator projection. The suite uses its own creator and message relations with matching IDs, synthetic misses, duplicate rows and NULL keys. It exercises four query shapes from that design on DuckDB and the two local graph providers. [MICRO CM-LDBC design](https://arxiv.org/html/2603.13835v1#S7.SS2) · [Pinned upstream benchmark](https://github.com/xiz675/MICRO/tree/ec0e5ab51e2b7899e8048ced8efe33992f06d394/benchmark)
+
+| Workload | Join shape |
+| --- | --- |
+| `micro_creator_selective` | Join creator attributes with a selective tier predicate and group by segment. |
+| `micro_creator_broad` | Join the larger creator relation without the tier filter. Its 65 matching keys exceed the QuackWeave cap. |
+| `micro_message_selective` | Join attributes on the message endpoint and group by topic. |
+| `micro_creator_message` | Join both endpoints to their relations and group by segment and topic. |
+
+The suite defaults to `mod32` and measures both `qw_pgq` and `qw_pgq_host` with the same SQL and DuckDB optimizer. `qw_pgq_host` disables only QuackWeave's runtime watchlist prefilter. Both routes use a DuckDB key-offer threshold of 128. Use an extension with `qw_enable_runtime_watchlist`. Use `--provider` or `--case` to focus a run.
+
+```sh
+tracker=benchmarks/provider_comparison/tracker.py
+"$py" -B "$tracker" run --micro \
+  --extension build/native/release/extension/quack_weave/quack_weave.duckdb_extension \
+  --duckdb-unittest build/benchmark-host/unittest \
+  --out build/perf/provider-comparison/tracker/micro-snapshot.json
+```
+
+The tracker checks every fetch against the CSV oracle. Before publishing an immutable snapshot, it runs the actual workload SQL through SQLLogic on both routes, then independently recomputes p50, p95, and sample counts from the saved timing rows. The snapshot records fixture and binary hashes, the relational input rows, SQLLogic source hashes and rows delivered from the provider. Rerun with a fresh output path, then use `tracker.py compare` with the two snapshots. The standard suite and its CI workload matrix use the existing default selection.
+
 ### Track changes
 
 ```sh

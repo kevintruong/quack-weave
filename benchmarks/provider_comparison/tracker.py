@@ -15,24 +15,28 @@ import resource
 from statistics import median
 import subprocess
 import sys
-from tempfile import NamedTemporaryFile
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 from time import perf_counter_ns, process_time_ns
 from uuid import uuid4
 
 import pyarrow as pa
 
+import micro_workloads as micro
 import run
 from planning.compare import OUTER, VIA_VIEW
 from watchlist import SQL as VALUES_JOIN
 
 
 # A case names one logical workload. Each direct baseline uses native Cypher.
+MICRO_CASES = {name: (sql, name) for name, sql in micro.statements(run.PAIRS).items()}
+MICRO_HOST_ROUTE = "qw_pgq_host"
 STANDALONE = {
     "lookup": (run.POINT, "gql_lookup"),
     "lookup_miss": ("MATCH (p:Person) WHERE p.PersonId = -1 RETURN p.PersonId AS id", "lookup_miss"),
     "fanout": (run.FAN, "cypher_fanout"),
 }
 HYBRID = {
+    **MICRO_CASES,
     "graph_table_where": (run.CASES["graph_table_where"][1], "graph_table_where"),
     "outer_where": (OUTER, "graph_table_where"),
     "view_where": (VIA_VIEW, "graph_table_where"),
@@ -43,7 +47,8 @@ HYBRID = {
 CASES = {**STANDALONE, **HYBRID}
 PREPARED_ROUTE = "qw_prepared_cypher"
 ROUTES = {"direct_cypher": STANDALONE, "qw_gql": STANDALONE,
-          "qw_cypher": STANDALONE, PREPARED_ROUTE: STANDALONE, "qw_pgq": HYBRID}
+          "qw_cypher": STANDALONE, PREPARED_ROUTE: STANDALONE, "qw_pgq": HYBRID,
+          MICRO_HOST_ROUTE: MICRO_CASES}
 HISTORY = run.BUILD / "tracker"
 PROTOCOL = 2
 
@@ -128,6 +133,8 @@ def python_worker(a, request):
             cur.execute("SET SESSION qw_graph_dialect = " + run.sql_literal(dialect))
             if "view_where" in request["cases"]:
                 cur.execute("CREATE TEMP VIEW planning_pairs AS SELECT * FROM " + run.PAIRS)
+            if "micro_relations" in request:
+                micro.setup(cur, request["micro_relations"], prefilter=a.route != MICRO_HOST_ROUTE)
 
             def fetch(statement):
                 cur.execute(statement)
@@ -140,7 +147,7 @@ def python_worker(a, request):
             samples.append({"repetition": repetition, "case": name, **timing})
         worker = {"setup": setup, "samples": samples,
                   "peak_rss_mib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (2**20 if sys.platform == "darwin" else 1024)}
-        if a.route == "qw_pgq":
+        if a.route in ("qw_pgq", MICRO_HOST_ROUTE):
             crossings = {}
             for name in request["cases"]:
                 cur.execute("EXPLAIN (ANALYZE, FORMAT JSON) " + CASES[name][0])
@@ -160,7 +167,10 @@ def measure_worker(a, provider, route, block, cases, expected):
     command = [sys.executable, "-B", __file__, "_worker", "--provider", provider, "--route", route,
                "--fixture", a.fixture, "--extension", a.extension, "--library", a.library,
                "--runs", str(a.runs), "--block", str(block)]
-    measured = json.loads(run_process(command, json.dumps({"expected": expected, "cases": cases}), a.timeout))
+    payload = {"expected": expected, "cases": cases}
+    if getattr(a, "micro", False):
+        payload["micro_relations"] = a.micro_relations
+    measured = json.loads(run_process(command, json.dumps(payload), a.timeout))
     return {"block": block, "provider": provider, "route": route, **measured}
 
 
@@ -208,12 +218,49 @@ def release_metadata(a, common, binaries):
     return {**common, "workspace_head": source_commit, "binaries": {**binaries, "extension": run.digest(a.extension)}}
 
 
+def verify_micro(a, report, providers, expected_rows):
+    """Require SQLLogic query and snapshot checks before publishing a CM-LDBC record."""
+    sys.path.insert(0, str(run.ROOT / "test" / "stabilization"))
+    try:
+        from run_sqllogictest import PIN_PROBE_SQL, run_cases
+    finally:
+        sys.path.pop(0)
+
+    test_dir = Path(__file__).resolve().parent / "tracker"
+    results_test = test_dir / "micro_results.test"
+    snapshot_test = test_dir / "micro_snapshot.test"
+    with TemporaryDirectory(prefix="qw-micro-") as directory:
+        scratch = Path(directory).resolve()
+        snapshot = scratch / "snapshot.json"
+        snapshot.write_text(json.dumps(report, allow_nan=False), encoding="utf-8")
+        run_cases(a.duckdb_unittest, scratch, {}, stdin=PIN_PROBE_SQL)
+        for provider in providers:
+            variables = micro.sqllogic_variables(
+                a.extension, a.fixture / run.ENGINES[provider], provider, run.GRAPH_ALIAS,
+                a.micro_relations, expected_rows, report["statements"],
+            )
+            run_cases(a.duckdb_unittest, scratch, variables, [results_test])
+        run_cases(a.duckdb_unittest, scratch, {"QW_TRACKER_SNAPSHOT": snapshot}, [snapshot_test])
+    return {"providers": providers, "checks": {test.name: run.digest(test) for test in (results_test, snapshot_test)}}
+
+
 def benchmark(a):
     supported_host = (platform.system(), platform.machine()) in {("Darwin", "arm64"), ("Linux", "aarch64")}
     if not supported_host or a.runs < 1 or a.blocks < 2 or a.blocks % 2 or a.timeout <= 0:
         raise ValueError("Use native ARM64 Linux or macOS, positive runs/worker timeout and an even number of blocks >= 2")
-    cases = [name for name in CASES if not a.case or name in a.case]
+    is_micro = getattr(a, "micro", False)
+    if a.fixture is None:
+        a.fixture = run.BUILD / ("mod32" if is_micro else "mod1")
+    suite = MICRO_CASES if is_micro else [name for name in CASES if name not in MICRO_CASES]
+    if set(a.case or []) - set(suite):
+        raise ValueError("Select CM-LDBC cases with --micro and other cases without it")
+    cases = [name for name in suite if not a.case or name in a.case]
     providers = sorted(set(a.provider or run.ENGINES))
+    if is_micro:
+        if a.include_prepared:
+            raise ValueError("CM-LDBC measures hybrid SQL without standalone prepared lookups")
+        if not a.describe:
+            a.duckdb_unittest = a.duckdb_unittest.resolve(strict=True)
     pairing = (a.baseline_extension, a.baseline_revision, a.baseline_out)
     supplied = [arg is not None for arg in pairing]
     if any(supplied) and not all(supplied):
@@ -222,11 +269,18 @@ def benchmark(a):
         raise ValueError("Use --describe alone to write the candidate workload description")
     fixture = json.loads((a.fixture / "fixture.json").read_text())
     verify_fixture(a.fixture, fixture)
-    oracle = run.oracle(a.fixture)
-    if any(group[0] == -1 for group in oracle["watchlist_groups"]):
-        raise ValueError("lookup_miss requires -1 to be absent")
-    expected = {**oracle["expected"], "lookup_miss": run.signature([[]])}
-    expected = {CASES[n][1]: expected[CASES[n][1]] for n in cases}
+    if is_micro:
+        csv_path = a.fixture / "edges.csv"
+        a.micro_relations, edge_count = micro.fixture_inputs(csv_path)
+        rows = micro.expected_rows(micro.edge_rows(csv_path), a.micro_relations)
+        expected = {name: run.signature(list(zip(*rows[name]))) for name in cases}
+    else:
+        oracle = run.oracle(a.fixture)
+        if any(group[0] == -1 for group in oracle["watchlist_groups"]):
+            raise ValueError("lookup_miss requires -1 to be absent")
+        expected = {**oracle["expected"], "lookup_miss": run.signature([[]])}
+        expected = {CASES[n][1]: expected[CASES[n][1]] for n in cases}
+        edge_count = oracle["edges"]
     routes = {k: [n for n in cases if n in group] for k, group in ROUTES.items()
               if k != PREPARED_ROUTE or a.include_prepared}
     binaries = {"duckdb_library": run.digest(a.library)}
@@ -246,9 +300,13 @@ def benchmark(a):
               "host_id": sha256(platform.node().encode()).hexdigest()[:16],
               "versions": {"python": platform.python_version(), "duckdb": "2.0.1/8d78114e90",
                            "relate": "1.2.0", **{k: version(k) for k in ("ladybug", "pyarrow", "adbc-driver-manager", "numpy")}},
-              "fixture": fixture, "edge_count": oracle["edges"], "duckdb_threads": 1,
+              "fixture": fixture, "edge_count": edge_count, "duckdb_threads": 1,
               "blocks": a.blocks, "runs": a.runs, "expected": expected,
-              "statements": {n: CASES[n][0] for n in cases}, "watchlist": run.KEYS}
+              "statements": {n: CASES[n][0] for n in cases}, "watchlist": None if is_micro else run.KEYS}
+    if is_micro:
+        common["micro"] = {"source_revision": micro.REVISION, "host_threshold": micro.HOST_THRESHOLD,
+                           "relations": a.micro_relations, "providers": providers}
+        common["micro_workloads_sha256"] = run.digest(Path(micro.__file__))
     if routes.get(PREPARED_ROUTE):
         common["prepared_statements"] = {name: prepared_sql(name) for name in routes[PREPARED_ROUTE]}
     if a.describe:
@@ -291,9 +349,13 @@ def benchmark(a):
                     report["workers"].append(worker)
                     print(f"Verified block {block + 1}/{a.blocks} {report['workspace_head'][:12]} {provider} {route}", flush=True)
     verify_fixture(a.fixture, fixture)
-    for _, _, report in subjects:
+    for release, _, report in subjects:
         report["summary"] = summarize(report["workers"])
         report["finished_utc"] = datetime.now(timezone.utc).isoformat()
+        if is_micro:
+            report["micro_sqllogic"] = verify_micro(release, report, providers, rows)
+    if is_micro:
+        verify_fixture(a.fixture, fixture)
     with ExitStack() as rollback:
         for _, path, report in subjects:
             publish(path, report)
@@ -311,6 +373,16 @@ def print_summary(path, report):
         print(f"{row['provider']}\t{row['route']}\t{row['case']}\t{row['n']}\t"
               f"{row['p50_ms']:.3f}\t{row['p95_ms']:.3f}\t{ratio}")
 
+    if "micro" in report:
+        crossings = {}
+        for worker in report["workers"]:
+            for case, rows in worker["graph_scan_rows"].items():
+                crossings.setdefault((worker["provider"], worker["route"], case), set()).add(rows)
+        print("CM-LDBC provider rows delivered to DuckDB")
+        print("provider\troute\tcase\trows_min\trows_max")
+        for key, rows in sorted(crossings.items()):
+            print(*key, min(rows), max(rows), sep="\t")
+
 
 def compare(old, new):
     before, after = [json.loads(p.read_text()) for p in (old, new)]
@@ -319,6 +391,8 @@ def compare(old, new):
             raise ValueError(f"Incompatible snapshots: {field} differs")
     if before.get("prepared_statements") != after.get("prepared_statements"):
         raise ValueError("Incompatible snapshots: prepared statements differ")
+    if before.get("micro") != after.get("micro"):
+        raise ValueError("Incompatible snapshots: CM-LDBC inputs differ")
     if before["id"] == after["id"]:
         raise ValueError("Select two distinct benchmark runs")
     def by_key(report):
@@ -346,12 +420,16 @@ def main():
     measure = cmds.add_parser("run", help="Verify results, measure timings, and save an immutable snapshot")
     worker = cmds.add_parser("_worker", help=argparse.SUPPRESS)
     for cmd in (measure, worker):
-        cmd.add_argument("--fixture", type=Path, default=run.BUILD / "mod1")
+        cmd.add_argument("--fixture", type=Path)
         cmd.add_argument("--library", type=Path, default=Path(os.environ.get("DUCKDB_LIB", run.LIB)))
         cmd.add_argument("--extension", type=Path, default=run.EXT)
         cmd.add_argument("--runs", type=int, default=5)
     measure.add_argument("--provider", action="append", choices=run.ENGINES)
     measure.add_argument("--case", action="append", choices=CASES)
+    measure.add_argument("--micro", action="store_true", help="Measure the CM-LDBC hybrid workload suite")
+    measure.add_argument("--duckdb-unittest", type=Path,
+                         default=Path(os.environ.get("DUCKDB_UNITTEST", run.ROOT / "build/benchmark-host/unittest")),
+                         help="Pinned SQLLogic runner for the CM-LDBC workload and snapshot gates")
     measure.add_argument("--include-prepared", action="store_true",
                          help="Also time reused explicit-schema qw_query Cypher statements")
     measure.add_argument("--out", type=Path, help="New JSON file (default: timestamped history)")

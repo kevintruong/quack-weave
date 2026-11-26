@@ -1,0 +1,61 @@
+# name: benchmarks/provider_comparison/tracker/micro_snapshot.test
+# description: Independently verify CM-LDBC timing and graph-row snapshot evidence
+# group: [quack_weave]
+
+require json
+
+test-env QW_TRACKER_SNAPSHOT UNSET_QW_TRACKER_SNAPSHOT
+
+statement ok
+CREATE TEMP TABLE snapshot AS FROM read_json_auto('{QW_TRACKER_SNAPSHOT}');
+
+statement ok
+CREATE TEMP VIEW series AS
+SELECT s.provider, s.route, s."case" AS workload, s.scope, s.n, s.p50_ms, s.p95_ms
+FROM snapshot, unnest(summary) AS t(s);
+
+statement ok
+CREATE TEMP VIEW sample AS
+SELECT w.provider, w.route, s."case" AS workload, w.block, s.repetition, s.wall_ms
+FROM snapshot, unnest(workers) AS t(w), unnest(w.samples) AS t2(s);
+
+query I
+WITH expected AS (
+    SELECT provider, route, workload
+    FROM snapshot, unnest(micro.providers) t(provider),
+         unnest(json_keys(to_json(statements))) t2(workload),
+         (VALUES ('qw_pgq'), ('qw_pgq_host')) t3(route)
+)
+SELECT count(*) FROM expected e FULL JOIN series s USING (provider, route, workload)
+WHERE e.workload IS NULL OR s.scope IS DISTINCT FROM 'hybrid';
+----
+0
+
+query I
+SELECT count(*) FROM (
+    SELECT provider, route, workload, block FROM sample GROUP BY ALL
+    HAVING block NOT BETWEEN 0 AND (SELECT blocks - 1 FROM snapshot)
+        OR count(*) <> (SELECT runs + 1 FROM snapshot) OR min(repetition) <> 0
+        OR max(repetition) <> (SELECT runs FROM snapshot) OR count(DISTINCT repetition) <> count(*)
+);
+----
+0
+
+query I
+WITH measured AS (
+    SELECT provider, route, workload, count(*) AS n, median(wall_ms) AS p50,
+           quantile_disc(wall_ms, .95) AS p95
+    FROM sample WHERE repetition > 0 GROUP BY ALL
+)
+SELECT count(*) FROM measured m FULL JOIN series s USING (provider, route, workload)
+WHERE m.n IS DISTINCT FROM s.n OR s.n <> (SELECT blocks * runs FROM snapshot)
+   OR s.p50_ms IS NULL OR s.p95_ms IS NULL OR s.p50_ms <= 0
+   OR abs(m.p50 - s.p50_ms) > 1e-8 OR abs(m.p95 - s.p95_ms) > 1e-8;
+----
+0
+
+query I
+SELECT count(*) FROM snapshot, unnest(workers) AS t(w), unnest(json_keys(to_json(statements))) AS t2(workload)
+WHERE coalesce(json_extract(to_json(w.graph_scan_rows), workload)::BIGINT, -1) NOT BETWEEN 0 AND edge_count;
+----
+0
