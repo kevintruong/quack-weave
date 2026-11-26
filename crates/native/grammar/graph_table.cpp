@@ -159,8 +159,10 @@ ParsedGraphTable::ParsedGraphTable(PEGTransformer &transformer, ParseResult &par
 	if (steps.HasResult()) {
 		for (auto &step : steps.GetResult().Cast<RepeatParseResult>().GetChildren()) {
 			auto &parts = step.get().Cast<ListParseResult>();
-			query += "-" + bindings.Element(transformer, parts.GetChild(1), true) + "->" +
-			         bindings.Element(transformer, parts.GetChild(3), false);
+			// Element also records the descriptor order consumed by the Rust binder.
+			const auto edge = bindings.Element(transformer, parts.GetChild(1), true);
+			const auto vertex = bindings.Element(transformer, parts.GetChild(3), false);
+			query += "-" + edge + "->" + vertex;
 		}
 	}
 

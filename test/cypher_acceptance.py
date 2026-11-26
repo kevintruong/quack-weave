@@ -128,6 +128,17 @@ def check_release_queries(duckdb_binary, extension, graph):
         """),
         [["101"]],
     )
+    expect_rows(
+        duckdb(duckdb_binary, setup + """
+            SELECT document_id
+            FROM GRAPH_TABLE (
+                kg MATCH (src:Document)-[first:LINKS_TO]->(mid:Document)-[second:LINKS_TO]->(dst:Document)
+                WHERE src.id = 100
+                COLUMNS (dst.id AS document_id)
+            );
+        """),
+        [["102"]],
+    )
     print("PASS all_providers_and_graph_table")
 
 
