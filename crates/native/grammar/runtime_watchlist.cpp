@@ -1,6 +1,8 @@
 #include "watchlist.hpp"
 
 #include "duckdb/execution/operator/scan/physical_table_scan.hpp"
+#include "duckdb/logging/log_manager.hpp"
+#include "duckdb/logging/logger.hpp"
 #include "duckdb/main/database.hpp"
 #include "duckdb/optimizer/join_filter_pushdown_optimizer.hpp"
 #include "duckdb/optimizer/optimizer.hpp"
@@ -18,23 +20,59 @@
 
 namespace duckdb {
 namespace {
+constexpr const char *WATCHLIST_LOG_TYPE = "QuackWeaveWatchlist";
+
+// Ordered by preference when the scan asks about more than one slot.
+enum class KeyOffer { NotRequested, NoExactKeys, OverCap, ExactKeys };
+
+struct WatchInit {
+	const TableFunctionInitInput &input;
+	KeyOffer offer = KeyOffer::NotRequested;
+
+	void Observe(KeyOffer next) {
+		if (next > offer)
+			offer = next;
+	}
+};
+
 // The v2 C table-function API doesn't expose dynamic scan filters. Forward them
 // only during its synchronous init_local callback. Rust copies the bounded keys
 // into this scan's local state before it returns, including on prepared plans.
-thread_local const TableFunctionInitInput *active_input = nullptr;
+thread_local WatchInit *active_watch = nullptr;
+
+void LogKeyOffer(ExecutionContext &context, KeyOffer offer) noexcept {
+	if (offer == KeyOffer::NotRequested)
+		return;
+	const char *message = "no_exact_keys";
+	if (offer == KeyOffer::OverCap)
+		message = "key_cap";
+	else if (offer == KeyOffer::ExactKeys)
+		message = "exact_keys";
+	try {
+		DUCKDB_LOG_INTERNAL(context, WATCHLIST_LOG_TYPE, LogLevel::LOG_INFO, message);
+	} catch (...) {
+		// Diagnostics cannot change query execution if a log sink fails.
+	}
+}
 
 unique_ptr<LocalTableFunctionState> InitWatch(ExecutionContext &context, TableFunctionInitInput &input,
                                               GlobalTableFunctionState *global) {
 	const auto &scan = input.op->Cast<PhysicalTableScan>();
 	const auto original_init = scan.function.GetDefinition()->init_local;
-	struct Restore {
-		const TableFunctionInitInput *previous;
-		~Restore() {
-			active_input = previous;
-		}
-	} restore {active_input};
-	active_input = &input;
-	return original_init(context, input, global);
+	WatchInit watch {input};
+	unique_ptr<LocalTableFunctionState> result;
+	{
+		struct Restore {
+			WatchInit *previous;
+			~Restore() {
+				active_watch = previous;
+			}
+		} restore {active_watch};
+		active_watch = &watch;
+		result = original_init(context, input, global);
+	}
+	LogKeyOffer(context, watch.offer);
+	return result;
 }
 
 // Follow only column renames. Moving a predicate past a throwing or volatile
@@ -83,16 +121,26 @@ void AttachWatch(OptimizerExtensionInput &input, LogicalOperator &op) {
 		graph->function.init_local = InitWatch;
 }
 
-size_t CopyKeys(const Expression &expr, int64_t *out, size_t cap) {
+struct KeyCopy {
+	KeyOffer offer = KeyOffer::NoExactKeys;
+	size_t count = 0;
+};
+
+KeyCopy CopyKeys(const Expression &expr, int64_t *out, size_t cap) {
 	if (auto child = ExpressionFilter::GetOptionalFilterChild(expr)) {
 		return CopyKeys(*child, out, cap);
 	}
 	if (expr.GetExpressionType() == ExpressionType::CONJUNCTION_AND &&
 	    expr.GetExpressionClass() == ExpressionClass::BOUND_CONJUNCTION) {
+		KeyCopy best;
 		for (const auto &child : expr.Cast<BoundConjunctionExpression>().GetChildren()) {
-			if (auto n = CopyKeys(*child, out, cap))
-				return n;
+			const auto keys = CopyKeys(*child, out, cap);
+			if (keys.count)
+				return keys;
+			if (keys.offer == KeyOffer::OverCap)
+				best = keys;
 		}
+		return best;
 	}
 	if (expr.GetExpressionType() == ExpressionType::COMPARE_EQUAL &&
 	    expr.GetExpressionClass() == ExpressionClass::BOUND_FUNCTION && cap) {
@@ -101,29 +149,35 @@ size_t CopyKeys(const Expression &expr, int64_t *out, size_t cap) {
 		    ExpressionFilter::TryGetColumnConstantComparison(expr.Cast<BoundFunctionExpression>(), comparison);
 		if (constant && constant->GetValue().type() == LogicalType::BIGINT && !constant->GetValue().IsNull()) {
 			out[0] = BigIntValue::Get(constant->GetValue());
-			return 1;
+			return {KeyOffer::ExactKeys, 1};
 		}
 	}
 	if (expr.GetExpressionType() != ExpressionType::COMPARE_IN ||
 	    expr.GetExpressionClass() != ExpressionClass::BOUND_OPERATOR)
-		return 0;
+		return {};
 	const auto &items = expr.Cast<BoundOperatorExpression>().GetChildren();
-	if (items.size() < 2 || items.size() - 1 > cap || items[0]->GetExpressionClass() != ExpressionClass::BOUND_REF ||
+	if (items.size() < 2 || items[0]->GetExpressionClass() != ExpressionClass::BOUND_REF ||
 	    items[0]->GetReturnType() != LogicalType::BIGINT || items[0]->Cast<BoundReferenceExpression>().Index() != 0)
-		return 0;
+		return {};
+	const auto count = items.size() - 1;
+	// DuckDB constructs this runtime IN offer from the join key column. In the
+	// over-cap case, report its size class without inspecting or copying keys.
+	if (count > cap)
+		return {KeyOffer::OverCap, 0};
 	for (idx_t i = 1; i < items.size(); i++) {
 		if (items[i]->GetExpressionClass() != ExpressionClass::BOUND_CONSTANT)
-			return 0;
+			return {};
 		auto &value = items[i]->Cast<BoundConstantExpression>().GetValue();
 		if (value.type() != LogicalType::BIGINT || value.IsNull())
-			return 0;
+			return {};
 		out[i - 1] = BigIntValue::Get(value);
 	}
-	return items.size() - 1;
+	return {KeyOffer::ExactKeys, count};
 }
 } // namespace
 
 void QwRegisterRuntimeWatchlist(DatabaseInstance &db) {
+	db.GetLogManager().RegisterLogType(make_uniq<LogType>(WATCHLIST_LOG_TYPE, LogLevel::LOG_INFO));
 	OptimizerExtension ext;
 	ext.optimize_function = [](OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
 		if (input.optimizer.OptimizerDisabled(OptimizerType::JOIN_FILTER_PUSHDOWN))
@@ -145,15 +199,22 @@ void QwRegisterRuntimeWatchlist(DatabaseInstance &db) {
 
 extern "C" size_t qw_runtime_watch_keys(size_t column, int64_t *out, size_t cap) noexcept {
 	using namespace duckdb;
+	if (!active_watch)
+		return 0;
+	auto &watch = *active_watch;
+	const auto &input = watch.input;
+	watch.Observe(KeyOffer::NoExactKeys);
 	try {
-		if (!active_input || !active_input->filters)
+		if (!input.filters)
 			return 0;
-		for (idx_t i = 0; i < active_input->column_ids.size(); ++i) {
-			if (active_input->column_ids[i] != column)
+		for (idx_t i = 0; i < input.column_ids.size(); ++i) {
+			if (input.column_ids[i] != column)
 				continue;
-			auto filter = active_input->filters->TryGetFilterByColumnIndex(ProjectionIndex(i));
+			auto filter = input.filters->TryGetFilterByColumnIndex(ProjectionIndex(i));
 			if (filter && filter->filter_type == TableFilterType::EXPRESSION_FILTER) {
-				return CopyKeys(*filter->Cast<ExpressionFilter>().expr, out, cap);
+				const auto keys = CopyKeys(*filter->Cast<ExpressionFilter>().expr, out, cap);
+				watch.Observe(keys.offer);
+				return keys.count;
 			}
 		}
 	} catch (...) {
