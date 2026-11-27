@@ -22,7 +22,8 @@ SELECT count(*) FROM replay
 WHERE report->>'schedule_sha256' IS DISTINCT FROM sha256(to_json(json_transform(report->'workload_schedule',
   '[{"block":"INTEGER","provider":"VARCHAR","route":"VARCHAR","sequence":[{"case":"VARCHAR","repetition":"INTEGER"}]}]')))
    OR json_array_length(report->'workload_schedule') IS DISTINCT FROM
-      json_array_length(coalesce(report->'$.micro.providers', report->'$.application.providers')) * 2 * (report->>'blocks')::INTEGER;
+      json_array_length(coalesce(report->'$.micro.providers', report->'$.application.providers'))
+      * coalesce(json_array_length(report->'$.application.routes'), 2) * (report->>'blocks')::INTEGER;
 ----
 0
 

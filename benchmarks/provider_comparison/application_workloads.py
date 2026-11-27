@@ -1,14 +1,18 @@
 """Ordered Hybrid Query workloads with shared benchmark and SQLLogic execution."""
-from hashlib import sha256
 import json
 from pathlib import Path
 
+import creator_sales_workload
 import directory_join_topk
 import prepared_watchlist_churn
 
 
-CASES = {case.CASE_ID: case for case in (directory_join_topk, prepared_watchlist_churn)}
+CASES = {case.CASE_ID: case for case in (
+    directory_join_topk, prepared_watchlist_churn, creator_sales_workload,
+)}
 HOST_ROUTE = "qw_pgq_host"
+STAGED_ROUTE = "qw_sql_staged"
+STAGED = {creator_sales_workload.CASE_ID}
 SLT = {"BIGINT": "I", "VARCHAR": "T"}
 
 
@@ -49,7 +53,10 @@ def verify(a, report, rows, run, scratch):
     snapshot = scratch / "snapshot.json"
     snapshot.write_text(json.dumps(report, sort_keys=True, allow_nan=False), encoding="utf-8")
     snapshot_test = Path(__file__).with_name("tracker") / "workload_snapshot.test"
-    variables = {"QW_APPLICATION_EXTENSION": run.sql_literal(a.extension.resolve())}
+    directory_path = str(a.application_directory.resolve()).replace("'", "''")
+    variables = {"QW_APPLICATION_EXTENSION": run.sql_literal(a.extension.resolve()),
+                 "QW_APPLICATION_DIR": directory_path}
+    checks = {}
     run_cases(a.duckdb_unittest, scratch, {}, stdin=PIN_PROBE_SQL)
 
     for worker in report["workload_schedule"]:
@@ -63,6 +70,7 @@ def verify(a, report, rows, run, scratch):
         blocks = [
             "require parquet",
             "test-env QW_APPLICATION_EXTENSION UNSET_QW_APPLICATION_EXTENSION",
+            "test-env QW_APPLICATION_DIR UNSET_QW_APPLICATION_DIR",
             "test-env QW_APPLICATION_REGISTER UNSET_QW_APPLICATION_REGISTER",
             "statement ok\nLOAD {QW_APPLICATION_EXTENSION};",
             "statement ok\n{QW_APPLICATION_REGISTER};",
@@ -73,8 +81,11 @@ def verify(a, report, rows, run, scratch):
             case = CASES[name]
             parameters = a.application_parameters[name]
             directory = a.application_directory / name
-            blocks.extend(f"statement ok\n{sql.rstrip(';')};"
-                          for sql in setup_sql(case, parameters, directory, route != HOST_ROUTE))
+            setup = setup_sql(case, parameters, directory, route != HOST_ROUTE)
+            if route == STAGED_ROUTE:
+                setup.extend(case.staged_sql())
+            blocks.extend(f"statement ok\n{sql.rstrip(';').replace(directory_path, '{QW_APPLICATION_DIR}')};"
+                          for sql in setup)
             for commands, query, schema, expected in query_steps(case, parameters, rows[name]):
                 blocks.extend(f"statement ok\n{sql.rstrip(';')};" for sql in commands)
                 columns = "".join(SLT[kind] for _, kind in schema)
@@ -83,9 +94,8 @@ def verify(a, report, rows, run, scratch):
                 blocks.append(f"query {columns} nosort\n{query};\n----\n{answer}")
         test.write_text("\n\n".join(blocks) + "\n\n", encoding="utf-8")
         run_cases(a.duckdb_unittest, scratch, variables, [test])
+        checks[test.name] = run.digest(test)
 
     run_cases(a.duckdb_unittest, scratch, {"QW_TRACKER_SNAPSHOT": snapshot}, [snapshot_test])
-    # Paths inside generated SQLLogic tests vary per run; bind stable inputs and exact rows.
-    receipt = json.dumps(report["workload_evidence"], sort_keys=True, separators=(",", ":")).encode()
-    return {"checks": {snapshot_test.name: run.digest(snapshot_test),
-                       "scaled_queries": sha256(receipt).hexdigest()}}
+    checks[snapshot_test.name] = run.digest(snapshot_test)
+    return {"checks": checks}

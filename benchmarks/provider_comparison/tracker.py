@@ -52,7 +52,8 @@ CASES = {**STANDALONE, **HYBRID}
 PREPARED_ROUTE = "qw_prepared_cypher"
 ROUTES = {"direct_cypher": STANDALONE, "qw_gql": STANDALONE,
           "qw_cypher": STANDALONE, PREPARED_ROUTE: STANDALONE, "qw_pgq": HYBRID,
-          MICRO_HOST_ROUTE: {**MICRO_CASES, **APPLICATION_CASES}}
+          MICRO_HOST_ROUTE: {**MICRO_CASES, **APPLICATION_CASES},
+          application.STAGED_ROUTE: {name: APPLICATION_CASES[name] for name in application.STAGED}}
 HISTORY = run.BUILD / "tracker"
 PROTOCOL = 2
 
@@ -175,7 +176,10 @@ def python_worker(a, request):
                         application.CASES[name], parameters, directory, a.route != MICRO_HOST_ROUTE,
                     ):
                         cur.execute(statement)
+                    if a.route == application.STAGED_ROUTE:
+                        application.CASES[name].setup_staged(cur)
                 setup["application_setup_ms"] = run.milliseconds(start)
+                setup["bootstrap_ms"] += setup["application_setup_ms"]
 
             def fetch(statement):
                 cur.execute(statement)
@@ -196,7 +200,7 @@ def python_worker(a, request):
             samples.append({"repetition": repetition, "case": name, **timing})
         worker = {"setup": setup, "samples": samples,
                   "peak_rss_mib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (2**20 if sys.platform == "darwin" else 1024)}
-        if a.route in ("qw_pgq", MICRO_HOST_ROUTE):
+        if a.route in ("qw_pgq", MICRO_HOST_ROUTE, application.STAGED_ROUTE):
             crossings = {}
             if record_replay:
                 cur.execute("CALL enable_logging(level = 'info')")
@@ -211,7 +215,13 @@ def python_worker(a, request):
                 if record_replay:
                     cur.execute("CALL truncate_duckdb_logs()")
                 cur.execute("EXPLAIN (ANALYZE, FORMAT JSON) " + statements[name])
-                (crossings[name],) = run.provider_rows(json.loads(cur.fetchone()[1])["operator"])
+                scans = list(run.provider_rows(json.loads(cur.fetchone()[1])["operator"]))
+                if a.route == application.STAGED_ROUTE:
+                    if scans:
+                        raise ValueError(f"Staged benchmark query {name} still reads the provider")
+                    crossings[name] = 0
+                else:
+                    (crossings[name],) = scans
                 if record_replay:
                     worker["scan_diagnostics"][name] = scan_diagnostic(cur, crossings[name])
             worker["graph_scan_rows"] = crossings
@@ -417,7 +427,8 @@ def benchmark_suite(a):
                            "relations": a.micro_relations, "providers": providers}
         common["micro_workloads_sha256"] = run.digest(Path(micro.__file__))
     if a.hybrid:
-        common["application"] = {"providers": providers, "parameters": a.application_parameters}
+        common["application"] = {"providers": providers, "parameters": a.application_parameters,
+                                 "routes": [route for route, names in routes.items() if names]}
     if is_micro or a.hybrid:
         a.micro_cases = workload_manifest.load_manifest()
         common["workload_evidence"] = {

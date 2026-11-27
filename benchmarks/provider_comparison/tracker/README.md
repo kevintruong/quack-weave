@@ -215,3 +215,9 @@ a route/destination projection and joins it to a generated, hashed Parquet file.
 65 distinct keys. Each sample includes replacing the watchlist and fetching
 each epoch. Untimed `scan_diagnostics.steps` records rows, offers and the applied
 route per epoch. The top-level scan count is the sum across the three executions.
+
+`creator_sales_top_channels` uses a seeded million-order Parquet ledger and
+ranks channels by seven- and 30-day settled net sales. The `qw_sql_staged` arm
+fetches the graph portfolio into Arrow once per connection and ingests it into
+DuckDB. `setup.application_setup_ms` includes that work, and the warm samples
+time the same ranking SQL on the staged portfolio with zero graph rows scanned.

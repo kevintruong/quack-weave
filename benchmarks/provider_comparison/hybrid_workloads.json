@@ -245,6 +245,50 @@
           "case_ids": []
         }
       ]
+    },
+    {
+      "case_id": "creator_sales_top_channels",
+      "case_revision": 1,
+      "sql_template_sha256": "6001d7073fe949037882b7723980ad3210ee9e67ba253b1aa3f5309ce601f8f9",
+      "result_schema": [
+        [
+          "days",
+          "BIGINT"
+        ],
+        [
+          "channel",
+          "VARCHAR"
+        ],
+        [
+          "sales",
+          "BIGINT"
+        ],
+        [
+          "net_sales_cents",
+          "BIGINT"
+        ]
+      ],
+      "comparison": "ordered",
+      "oracle": {
+        "id": "creator_sales_top_channels_csv",
+        "revision": 1,
+        "encoding": "canonical_json_v1"
+      },
+      "sql_logic_refs": [
+        {
+          "path": "test/stabilization/sqllogic/hybrid_creator_sales.test",
+          "case_ids": [
+            "hybrid_sales.setup",
+            "hybrid_sales.ledger",
+            "hybrid_sales.fresh",
+            "hybrid_sales.staged"
+          ]
+        },
+        {
+          "path": "benchmarks/provider_comparison/tracker/workload_snapshot.test",
+          "case_ids": []
+        }
+      ]
     }
   ]
 }

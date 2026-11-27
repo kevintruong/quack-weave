@@ -152,3 +152,7 @@ hybrid_churn.setup,hybrid_prepared_watchlist_churn.test,native-debug|native-rele
 hybrid_churn.below,hybrid_prepared_watchlist_churn.test,native-debug|native-release,6
 hybrid_churn.at,hybrid_prepared_watchlist_churn.test,native-debug|native-release,7
 hybrid_churn.above,hybrid_prepared_watchlist_churn.test,native-debug|native-release,8
+hybrid_sales.setup,hybrid_creator_sales.test,native-debug|native-release,8
+hybrid_sales.ledger,hybrid_creator_sales.test,native-debug|native-release,1
+hybrid_sales.fresh,hybrid_creator_sales.test,native-debug|native-release,4
+hybrid_sales.staged,hybrid_creator_sales.test,native-debug|native-release,4

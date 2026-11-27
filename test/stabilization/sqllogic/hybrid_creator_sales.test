@@ -1,0 +1,115 @@
+# name: test/stabilization/sqllogic/hybrid_creator_sales.test
+# description: Rank settled sales and signed refunds from a native graph and Parquet ledger
+# group: [quack_weave]
+
+require parquet
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_AIR_ROUTES UNSET_QW_AIR_ROUTES
+
+test-env QW_ROOT UNSET_QW_ROOT
+
+test-env QW_CREATOR_SALES_SQL UNSET_QW_CREATOR_SALES_SQL
+
+# case: hybrid_sales.setup Create a portfolio with a duplicate graph destination and an independent ledger
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"air_routes","path":"{QW_AIR_ROUTES}"}';
+
+statement ok
+SET threads = 1;
+
+statement ok
+CREATE TEMP VIEW tiny_creator_graph AS
+SELECT g.* FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[r:route]->(d:airport)
+    WHERE o.code = 'ATL'
+    COLUMNS (d.code AS destination)) AS g;
+
+statement ok
+CREATE TEMP VIEW creator_sales_portfolio AS
+SELECT DISTINCT 10::BIGINT AS content_id FROM tiny_creator_graph WHERE destination = 'BOS';
+
+query II
+SELECT (SELECT count(*) FROM tiny_creator_graph WHERE destination = 'BOS'),
+       (SELECT count(*) FROM creator_sales_portfolio);
+----
+2	1
+
+statement ok
+COPY (
+    SELECT 10::BIGINT AS content_id, channel, 100::BIGINT AS amount_cents,
+           DATE '2025-03-25' AS booked_on, 'sale' AS kind, 'settled' AS status
+    FROM (VALUES ('affiliate'), ('email'), ('storefront'), ('social')) AS channel(channel), range(5)
+    UNION ALL
+    SELECT * FROM (VALUES
+        (10::BIGINT, 'affiliate', -100::BIGINT, DATE '2025-03-25', 'refund', 'settled'),
+        (10::BIGINT, 'social', -500::BIGINT, DATE '2025-03-25', 'refund', 'settled'),
+        (10::BIGINT, 'affiliate', 600::BIGINT, DATE '2025-03-02', 'sale', 'settled'),
+        (10::BIGINT, 'email', 1000::BIGINT, DATE '2025-04-01', 'sale', 'settled'),
+        (10::BIGINT, 'email', 1000::BIGINT, DATE '2025-03-01', 'sale', 'settled'),
+        (10::BIGINT, 'email', 1000::BIGINT, DATE '2025-03-25', 'sale', 'pending'),
+        (99::BIGINT, 'email', 1000::BIGINT, DATE '2025-03-25', 'sale', 'settled'),
+        (10::BIGINT, 'small', 10000::BIGINT, DATE '2025-03-25', 'sale', 'settled')
+    ) AS ledger(content_id, channel, amount_cents, booked_on, kind, status)
+) TO '{QW_ROOT}/hybrid_creator_sales.parquet' (FORMAT PARQUET);
+
+statement ok
+SET VARIABLE qw_creator_sales_path = '{QW_ROOT}/hybrid_creator_sales.parquet';
+
+# case: hybrid_sales.ledger The affiliate refund reduces the seven-day balance in exact cents
+query II
+SELECT count(*) FILTER (WHERE kind = 'sale'), sum(amount_cents)::BIGINT
+FROM read_parquet(getvariable('qw_creator_sales_path')) JOIN creator_sales_portfolio USING (content_id)
+WHERE channel = 'affiliate' AND status = 'settled' AND booked_on >= DATE '2025-03-25' AND booked_on < DATE '2025-04-01';
+----
+5	400
+
+# case: hybrid_sales.fresh Both watchlist settings preserve ranking ties and exclude unsettled and out-of-window rows
+statement ok
+SET SESSION qw_enable_runtime_watchlist = false;
+
+query ITII
+{QW_CREATOR_SALES_SQL};
+----
+7	email	5	500
+7	storefront	5	500
+7	affiliate	5	400
+30	affiliate	6	1000
+30	email	5	500
+30	storefront	5	500
+
+statement ok
+SET SESSION qw_enable_runtime_watchlist = true;
+
+query ITII
+{QW_CREATOR_SALES_SQL};
+----
+7	email	5	500
+7	storefront	5	500
+7	affiliate	5	400
+30	affiliate	6	1000
+30	email	5	500
+30	storefront	5	500
+
+# case: hybrid_sales.staged Materializing the portfolio preserves the same query results
+statement ok
+CREATE TEMP TABLE creator_sales_staged AS SELECT content_id FROM creator_sales_portfolio;
+
+statement ok
+DROP VIEW creator_sales_portfolio;
+
+statement ok
+ALTER TABLE creator_sales_staged RENAME TO creator_sales_portfolio;
+
+query ITII
+{QW_CREATOR_SALES_SQL};
+----
+7	email	5	500
+7	storefront	5	500
+7	affiliate	5	400
+30	affiliate	6	1000
+30	email	5	500
+30	storefront	5	500

@@ -226,6 +226,12 @@ def main():
             "QW_GRAPH": graph, "QW_CORRUPT": corrupt, "QW_EXPORT": export,
             "QW_EXT": relocated, "QW_ROOT": scratch,
         }
+        sys.path.insert(0, str(HERE.parents[1] / "benchmarks/provider_comparison"))
+        try:
+            from creator_sales_workload import SQL as sales_sql
+        finally:
+            sys.path.pop(0)
+        variables["QW_CREATOR_SALES_SQL"] = sales_sql
         test_dir = HERE / "sqllogic"
         duckgql_graph = scratch / "duckgql.lbdb"
         ladybug(lbug, duckgql_graph, (HERE / "fixtures/duckgql_reads.cypher").read_text(encoding="utf-8"))
@@ -263,6 +269,7 @@ def main():
             "duckgql_admission.test", "duckgql_aggregates.test", "duckgql_basic.test",
             "duckgql_paths.test", "duckgql_reachability.test", "duckgql_scalars.test",
             "hybrid_directory_join_topk.test",
+            "hybrid_creator_sales.test",
             "hybrid_prepared_watchlist_churn.test",
         )])
         run_creator_witness(unittest, scratch, lbug, relocated)
