@@ -1,7 +1,12 @@
-//! Each attachment belongs to a private Ladybug database and connection.
+//! Read-only attachments scoped to a DuckDB connection and a registered graph generation.
+mod scope;
+
+use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, TryLockError};
+
+use scope::Scope;
 
 use duckdb_neo::{AsRaw, connection::Context};
 use rusty_quack_core::qw_query::{
@@ -9,7 +14,10 @@ use rusty_quack_core::qw_query::{
     ReadSession,
 };
 
-use super::{Connection, Database, QueryResult, Session, admit_graph_read, execution_error, ffi};
+use super::{
+    Connection, Database, DatabaseCache, QueryResult, Session, admit_graph_read, execution_error,
+    ffi,
+};
 
 #[repr(C)]
 struct SecretText {
@@ -57,6 +65,7 @@ unsafe extern "C" {
     ) -> bool;
 }
 
+#[derive(PartialEq, Eq)]
 struct Credential {
     key_id: String,
     secret: String,
@@ -149,11 +158,53 @@ fn valid_region(region: &str) -> bool {
         && number.bytes().all(|b| b.is_ascii_digit())
 }
 
+// Each generation owns one slot per DuckDB ClientContext. A rotated credential
+// replaces the slot, so an already-admitted scan cannot repopulate its successor.
+#[derive(Default)]
+pub(super) struct Cache(Mutex<HashMap<u64, Arc<Slot>>>);
+
+impl Cache {
+    fn select(&self, id: u64, uri: &str, credential: Credential) -> Arc<Slot> {
+        let mut slots = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(slot) = slots.get(&id)
+            && slot.uri == uri
+            && slot.credential == credential
+        {
+            return Arc::clone(slot);
+        }
+        let slot = Slot::new(uri, credential);
+        let retired = slots.insert(id, Arc::clone(&slot));
+        drop(slots);
+        drop(retired);
+        slot
+    }
+
+    fn remove(&self, id: u64) {
+        let retired = self.0.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+        drop(retired);
+    }
+}
+
+struct Slot {
+    uri: String,
+    credential: Credential,
+    database: Mutex<Option<Arc<Mutex<Database>>>>,
+}
+
+impl Slot {
+    fn new(uri: &str, credential: Credential) -> Arc<Self> {
+        Arc::new(Self {
+            uri: uri.to_owned(),
+            credential,
+            database: Mutex::default(),
+        })
+    }
+}
+
 pub(super) struct Pending {
     storage: CloudStorage,
     endpoint: Endpoint,
-    credential: Credential,
-    uri: String,
+    slot: Arc<Slot>,
     timeout_ms: Option<u64>,
     nested: bool,
 }
@@ -164,20 +215,42 @@ impl Pending {
         source: &CloudSource,
         timeout_ms: Option<u64>,
         schema: &[ColumnSpec],
+        cache: Option<Arc<DatabaseCache>>,
     ) -> Result<Self, BackendError> {
-        let credential = Credential::resolve(context, source)?;
+        let scope = Scope::resolve(context)?;
+        if let Some(cache) = &cache {
+            scope.track(cache);
+        }
+        Self::resolve(context, source, timeout_ms, schema, &scope, cache.as_ref())
+    }
+
+    fn resolve(
+        context: &Context,
+        source: &CloudSource,
+        timeout_ms: Option<u64>,
+        schema: &[ColumnSpec],
+        scope: &Scope,
+        cache: Option<&Arc<DatabaseCache>>,
+    ) -> Result<Self, BackendError> {
+        let credential = Credential::resolve(context, source).inspect_err(|_| {
+            if let Some(cache) = cache {
+                cache.cloud.remove(scope.id());
+            }
+        })?;
+        let slot = match cache {
+            Some(cache) => cache.cloud.select(scope.id(), &source.uri, credential),
+            None => Slot::new(&source.uri, credential),
+        };
         Ok(Self {
             storage: source.storage,
-            endpoint: Endpoint::new(source.storage, &credential.region)?,
-            credential,
-            uri: source.uri.clone(),
+            endpoint: Endpoint::new(source.storage, &slot.credential.region)?,
+            slot,
             timeout_ms,
             nested: schema.iter().any(|column| column.data_type.is_nested()),
         })
     }
 
-    fn attach(self) -> Result<Session, BackendError> {
-        let database = Arc::new(Mutex::new(Database::open(Path::new(":memory:"), false)?));
+    fn connect(&self, database: Arc<Mutex<Database>>) -> Result<Session, BackendError> {
         let mut session = Session::connect_native(database, self.timeout_ms, self.nested)?;
         let connection = &mut session.connection;
         // The matching HTTPFS is auto-loaded from the static Ladybug build.
@@ -186,27 +259,33 @@ impl Pending {
             CloudStorage::Gcs => "gcs",
         };
         for (setting, value) in [
-            ("access_key_id", self.credential.key_id.as_str()),
-            ("secret_access_key", self.credential.secret.as_str()),
-            ("session_token", self.credential.token.as_str()),
+            ("access_key_id", self.slot.credential.key_id.as_str()),
+            ("secret_access_key", self.slot.credential.secret.as_str()),
+            ("session_token", self.slot.credential.token.as_str()),
             ("url_style", "path"),
             ("endpoint", self.endpoint.host.as_str()),
         ] {
             set_string(connection, prefix, setting, value)?;
         }
         if self.storage == CloudStorage::S3 {
-            set_string(connection, prefix, "region", &self.credential.region)?;
+            set_string(connection, prefix, "region", &self.slot.credential.region)?;
         }
         let ssl = CString::new(format!("{prefix}_disable_ssl")).map_err(|_| BackendError::Open)?;
         set_bool(connection, &ssl, self.endpoint.disable_ssl)?;
         set_bool(connection, c"http_cache_file", false)?;
 
+        Ok(session)
+    }
+
+    fn attach(&self) -> Result<Session, BackendError> {
+        let database = Arc::new(Mutex::new(Database::open(Path::new(":memory:"), false)?));
+        let mut session = self.connect(database)?;
         // Escape both Cypher string delimiters. The core source parser also validates the URI.
-        let escaped = self.uri.replace('\\', "\\\\").replace('\'', "\\'");
+        let escaped = self.slot.uri.replace('\\', "\\\\").replace('\'', "\\'");
         let attach = CString::new(format!("ATTACH '{escaped}' AS qw_snapshot (dbtype lbug)"))
             .map_err(|_| BackendError::RemoteConfig)?;
         command(
-            connection,
+            &mut session.connection,
             &attach,
             self.timeout_ms,
             BackendError::RemoteTransport,
@@ -222,16 +301,37 @@ impl ReadSession for Pending {
         params: &[(String, GraphParameter)],
     ) -> Result<Box<dyn BatchReader>, BackendError> {
         let cypher = admit_graph_read(cypher)?;
-        Box::new(self.attach()?).execute_admitted(&cypher, params)
+        // HTTPFS has mutable client and offset state. Serialize execution on
+        // this attachment only. An overlapping scan gets its own attachment.
+        // Arrow readers drain materialized results after this guard is released.
+        let mut cached = match self.slot.database.try_lock() {
+            Ok(guard) => guard,
+            Err(TryLockError::WouldBlock) => {
+                return Box::new(self.attach()?).execute_admitted(&cypher, params);
+            }
+            Err(TryLockError::Poisoned(_)) => return Err(BackendError::Open),
+        };
+        let session = match &*cached {
+            Some(database) => self.connect(Arc::clone(database))?,
+            None => {
+                let session = self.attach()?;
+                *cached = Some(Arc::clone(&session._database));
+                session
+            }
+        };
+        Box::new(session).execute_admitted(&cypher, params)
     }
 }
 
-pub(super) fn catalog(
+pub(super) fn prepare_registration(
     context: &Context,
     source: &CloudSource,
     timeout_ms: Option<u64>,
-) -> Result<GraphCatalog, BackendError> {
-    let mut session = Pending::new(context, source, timeout_ms, &[])?.attach()?;
+    cache: &Arc<DatabaseCache>,
+) -> Result<(GraphCatalog, Arc<Scope>), BackendError> {
+    let scope = Scope::resolve(context)?;
+    let pending = Pending::resolve(context, source, timeout_ms, &[], &scope, Some(cache))?;
+    let mut session = pending.attach()?;
     command(
         &mut session.connection,
         c"BEGIN TRANSACTION READ ONLY",
@@ -247,7 +347,21 @@ pub(super) fn catalog(
             collect_property,
         )
     };
-    ok.then_some(catalog).ok_or(BackendError::Schema)
+    if !ok {
+        return Err(BackendError::Schema);
+    }
+    command(
+        &mut session.connection,
+        c"COMMIT",
+        timeout_ms,
+        BackendError::Schema,
+    )?;
+    *pending
+        .slot
+        .database
+        .lock()
+        .map_err(|_| BackendError::Open)? = Some(Arc::clone(&session._database));
+    Ok((catalog, scope))
 }
 
 unsafe extern "C" fn collect_property(
@@ -317,7 +431,47 @@ fn command(
 
 #[cfg(test)]
 mod tests {
-    use super::valid_region;
+    use super::{Cache, Credential, valid_region};
+    use std::sync::Arc;
+
+    #[test]
+    fn reuse_requires_the_same_connection_uri_and_every_credential_field() {
+        let cache = Cache::default();
+        let fields = ["identity", "key", "token", "region"];
+        let credential = |v: [&str; 4]| Credential {
+            key_id: v[0].into(),
+            secret: v[1].into(),
+            token: v[2].into(),
+            region: v[3].into(),
+        };
+        let uri = "s3://graphs/v1.lbdb";
+        let slot = cache.select(1, uri, credential(fields));
+        assert!(Arc::ptr_eq(
+            &slot,
+            &cache.select(1, uri, credential(fields))
+        ));
+        assert!(!Arc::ptr_eq(
+            &slot,
+            &cache.select(2, uri, credential(fields))
+        ));
+        for i in 0..fields.len() {
+            let initial = cache.select(1, uri, credential(fields));
+            let mut changed = fields;
+            changed[i] = "replacement";
+            assert!(!Arc::ptr_eq(
+                &initial,
+                &cache.select(1, uri, credential(changed))
+            ));
+        }
+        let initial = cache.select(1, uri, credential(fields));
+        let replaced = cache.select(1, "s3://graphs/v2.lbdb", credential(fields));
+        assert!(!Arc::ptr_eq(&initial, &replaced));
+        cache.remove(1);
+        assert!(!Arc::ptr_eq(
+            &replaced,
+            &cache.select(1, "s3://graphs/v2.lbdb", credential(fields))
+        ));
+    }
 
     #[test]
     fn region_is_one_dns_label_with_an_aws_region_shape() {

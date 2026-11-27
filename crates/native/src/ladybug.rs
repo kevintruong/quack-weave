@@ -22,21 +22,44 @@ pub(crate) struct LadybugBackend {
 struct DatabaseCache {
     generation: u64,
     database: Mutex<Option<(PathBuf, Arc<Mutex<Database>>)>>,
+    cloud: cloud::Cache,
+}
+
+impl DatabaseCache {
+    fn new(generation: u64) -> Arc<Self> {
+        Arc::new(Self {
+            generation,
+            database: Mutex::new(None),
+            cloud: cloud::Cache::default(),
+        })
+    }
 }
 
 impl LadybugBackend {
-    fn database(
+    fn generation_cache(
         &self,
-        path: &Path,
         generation: &GraphGeneration,
-    ) -> Result<Arc<Mutex<Database>>, BackendError> {
-        let cache = self
+    ) -> Result<Option<Arc<DatabaseCache>>, BackendError> {
+        Ok(self
             .cache
             .lock()
             .map_err(|_| BackendError::Open)?
             .as_ref()
             .filter(|cache| cache.generation == generation.id())
-            .cloned();
+            .cloned())
+    }
+
+    fn replace_cache(&self, next: Option<Arc<DatabaseCache>>) -> Option<RetiredRegistration> {
+        let mut cache = self.cache.lock().unwrap_or_else(|err| err.into_inner());
+        std::mem::replace(&mut *cache, next).map(|retired| Box::new(retired) as RetiredRegistration)
+    }
+
+    fn database(
+        &self,
+        path: &Path,
+        generation: &GraphGeneration,
+    ) -> Result<Arc<Mutex<Database>>, BackendError> {
+        let cache = self.generation_cache(generation)?;
         // An admitted scan can keep its generation owner across SET/RESET. Its
         // lazy open cannot block the registry or replace the new generation's handle.
         let Some(cache) = cache else {
@@ -75,14 +98,7 @@ impl ReadBackend for LadybugBackend {
     }
 
     fn set_generation(&self, generation: Option<u64>) -> Option<RetiredRegistration> {
-        let next = generation.map(|generation| {
-            Arc::new(DatabaseCache {
-                generation,
-                database: Mutex::new(None),
-            })
-        });
-        let mut cache = self.cache.lock().unwrap_or_else(|err| err.into_inner());
-        std::mem::replace(&mut *cache, next).map(|retired| Box::new(retired) as RetiredRegistration)
+        self.replace_cache(generation.map(DatabaseCache::new))
     }
 
     fn catalog(&self, path: &Path) -> Option<rusty_quack_core::qw_query::GraphCatalog> {
@@ -152,13 +168,24 @@ impl ReadBackend for LadybugBackend {
         matches!(storage, CloudStorage::S3 | CloudStorage::Gcs)
     }
 
-    fn cloud_catalog(
-        &self,
+    fn prepare_cloud_registration<'a>(
+        &'a self,
         context: &Context,
         source: &CloudSource,
         timeout_ms: Option<u64>,
-    ) -> Result<GraphCatalog, BackendError> {
-        cloud::catalog(context, source, timeout_ms)
+        generation: u64,
+    ) -> Result<PreparedRegistration<'a>, BackendError> {
+        let cache = DatabaseCache::new(generation);
+        let (catalog, scope) = cloud::prepare_registration(context, source, timeout_ms, &cache)?;
+        Ok(PreparedRegistration {
+            catalog: Some(catalog),
+            populations: None,
+            single_pattern_row_bound: None,
+            activate: Box::new(move || {
+                scope.track(&cache);
+                self.replace_cache(Some(cache))
+            }),
+        })
     }
 
     fn open_cloud(
@@ -167,9 +194,14 @@ impl ReadBackend for LadybugBackend {
         source: &CloudSource,
         timeout_ms: Option<u64>,
         schema: &[ColumnSpec],
+        generation: &GraphGeneration,
     ) -> Result<Box<dyn ReadSession>, BackendError> {
         Ok(Box::new(cloud::Pending::new(
-            context, source, timeout_ms, schema,
+            context,
+            source,
+            timeout_ms,
+            schema,
+            self.generation_cache(generation)?,
         )?))
     }
 }

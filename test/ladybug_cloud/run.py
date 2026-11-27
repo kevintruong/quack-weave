@@ -54,6 +54,18 @@ CHECKPOINT;
     return graph
 
 
+def run_attachment_case(unittest, directory, variables, case, objects, expected_heads):
+    with read_only_store(objects) as server:
+        run_cases(unittest, directory, {**variables, "QW_LADYBUG_CLOUD_FIXTURE_ENDPOINT": server.endpoint}, [case])
+        if server.unexpected:
+            raise AssertionError(f"Unexpected object-store requests: {server.unexpected}")
+        actual = {request: server.requests[request] for request in expected_heads}
+        if actual != expected_heads:
+            raise AssertionError(f"Expected signed HEAD counts {expected_heads}, observed {actual}")
+        print(f"Signed HEAD counts for {case.stem}: {actual}", flush=True)
+        return server
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--duckdb-unittest", required=True, type=Path)
@@ -131,6 +143,13 @@ def main():
                 if server.requests["GET", path.removesuffix(".wal"), 206]:
                     raise AssertionError(f"Read graph bytes despite its unusable sidecar: {path}")
             print(f"Ladybug cloud fixture observed {sum(server.range_lengths.values())} ranged GETs and no mutations.")
+
+        reuse_path = "/qw-s3-fixture/snapshots/reuse.lbdb"
+        run_attachment_case(
+            unittest, test_dir, variables, cases / "cloud_attachment_reuse.test",
+            {reuse_path: clean_objects["/qw-s3-fixture/snapshots/graph.lbdb"]},
+            {("HEAD", reuse_path + ".wal", 404): 1, ("HEAD", reuse_path, 200): 2},
+        )
 
         path = "/qw-s3-fixture/snapshots/slow.lbdb"
         wal_path = path + ".wal"

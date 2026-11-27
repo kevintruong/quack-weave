@@ -1,5 +1,6 @@
 #include "duckdb/catalog/catalog_transaction.hpp"
 #include "duckdb/main/capi_v2/capi_v2_internal.hpp"
+#include "duckdb/main/client_context_state.hpp"
 #include "duckdb/main/secret/secret_manager.hpp"
 
 namespace {
@@ -17,6 +18,26 @@ struct CloudFields {
 };
 
 using CloudVisitor = void (*)(void *, CloudFields);
+
+using CreateScope = const void *(*)();
+using DropScope = void (*)(const void *);
+using ScopeVisitor = void (*)(void *, const void *);
+
+class LadybugCloudScopeState final : public duckdb::ClientContextState {
+public:
+	LadybugCloudScopeState(CreateScope create, DropScope drop) : scope(create()), drop(drop) {
+	}
+	~LadybugCloudScopeState() override {
+		if (scope) {
+			drop(scope);
+		}
+	}
+
+	const void *const scope;
+
+private:
+	const DropScope drop;
+};
 
 SecretText Field(const duckdb::KeyValueSecret &secret, const char *key) {
 	auto entry = secret.secret_map.find(key);
@@ -48,6 +69,24 @@ bool MatchesObject(const duckdb::BaseSecret &secret, const duckdb::string &uri) 
 }
 
 } // namespace
+
+extern "C" bool qw_visit_ladybug_cloud_scope(duckdb_v2_context_handle handle, CreateScope create, DropScope drop,
+                                             void *output, ScopeVisitor visit) noexcept {
+	try {
+		bool found = false;
+		duckdb::capiv2::Convert(handle)->WithContext([&](duckdb::ClientContext &context) {
+			auto state = context.registered_state->GetOrCreate<LadybugCloudScopeState>(
+			    "quack_weave_ladybug_cloud_scope", create, drop);
+			if (state->scope) {
+				visit(output, state->scope);
+				found = true;
+			}
+		});
+		return found;
+	} catch (...) {
+		return false;
+	}
+}
 
 extern "C" bool qw_visit_ladybug_cloud_secret(duckdb_v2_context_handle handle, const char *name,
                                               size_t name_size, const char *path, size_t path_size,

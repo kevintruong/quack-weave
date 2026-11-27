@@ -208,13 +208,14 @@ pub trait ReadBackend: Send + Sync {
         false
     }
 
-    /// Attach with the registration connection's credentials and capture metadata.
-    fn cloud_catalog(
-        &self,
+    /// Attach with the registration connection's credentials and prepare the new generation.
+    fn prepare_cloud_registration<'a>(
+        &'a self,
         _context: &Context,
         _source: &CloudSource,
         _timeout_ms: Option<u64>,
-    ) -> std::result::Result<GraphCatalog, BackendError> {
+        _generation: u64,
+    ) -> std::result::Result<PreparedRegistration<'a>, BackendError> {
         Err(BackendError::RemoteConfig)
     }
 
@@ -226,6 +227,7 @@ pub trait ReadBackend: Send + Sync {
         _source: &CloudSource,
         _timeout_ms: Option<u64>,
         _schema: &[ColumnSpec],
+        _generation: &GraphGeneration,
     ) -> std::result::Result<Box<dyn ReadSession>, BackendError> {
         Err(BackendError::Open)
     }
@@ -1017,6 +1019,7 @@ impl TableFunctionCallbacks for GraphQuery {
                                 &config.source,
                                 config.timeout_ms,
                                 projection.schema(bound),
+                                generation,
                             )
                             .map_err(backend_error)?;
                         remote::admit_remote(context)?;

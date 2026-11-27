@@ -435,24 +435,24 @@ impl CustomOptionCallbacks for GraphConfig {
                     "QW_CONFIG: Ladybug cloud storage is unavailable in this package",
                 ));
             }
-            let catalog = backend
-                .cloud_catalog(context, &config.source, config.timeout_ms)
+            let generation = next_generation()?;
+            let prepared = backend
+                .prepare_cloud_registration(context, &config.source, config.timeout_ms, generation)
                 .map_err(backend_error)?;
             remote::admit_remote(context)?;
-            let generation = next_generation()?;
             let snapshot = ConfigSnapshot {
                 generation: GraphGeneration::remote(generation),
                 config: RegisteredConfig::Cloud(config),
-                observed_catalog: !catalog.is_empty(),
-                catalog: Some(catalog),
+                observed_catalog: prepared
+                    .catalog
+                    .as_ref()
+                    .is_some_and(|catalog| !catalog.is_empty()),
+                catalog: prepared.catalog,
                 single_pattern_row_bound: None,
                 populations: None,
                 feedback: Default::default(),
             };
-            // Retire the local handle, if any. Admitted readers own their sessions.
-            return self.publish(context, expected_revision, snapshot, || {
-                backend.set_generation(None)
-            });
+            return self.publish(context, expected_revision, snapshot, prepared.activate);
         }
         if config.secret.is_some() {
             return Err(Error::invalid_input(
