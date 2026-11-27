@@ -23,12 +23,13 @@ import pyarrow as pa
 
 import micro_workloads as micro
 import run
+import workload_manifest
 from planning.compare import OUTER, VIA_VIEW
 from watchlist import SQL as VALUES_JOIN
 
 
 # A case names one logical workload. Each direct baseline uses native Cypher.
-MICRO_CASES = {name: (sql, name) for name, sql in micro.statements(run.PAIRS).items()}
+MICRO_CASES = {name: (sql, name) for name, sql in workload_manifest.micro_statements().items()}
 MICRO_HOST_ROUTE = "qw_pgq_host"
 STANDALONE = {
     "lookup": (run.POINT, "gql_lookup"),
@@ -62,6 +63,19 @@ def schedule(cases, block, runs):
     return series
 
 
+def replay_schedule(providers, routes, blocks, runs):
+    planned = []
+    for block in range(blocks):
+        order = 1 if block % 2 == 0 else -1
+        for provider in providers[::order]:
+            for route in list(routes)[::order]:
+                if routes[route]:
+                    planned.append({"provider": provider, "route": route, "block": block,
+                                    "sequence": [{"case": case, "repetition": repetition}
+                                                 for repetition, case in schedule(routes[route], block, runs)]})
+    return planned
+
+
 def check_result(expected, name, actual):
     if actual != expected[CASES[name][1]]:
         raise ValueError(f"{name}: incorrect result; expected {expected[CASES[name][1]]}, got {actual}")
@@ -73,11 +87,16 @@ def prepared_sql(name):
     return f"SELECT * FROM qw_query({alias}, 'cypher', {statement}, schema := 'id BIGINT')"
 
 
-def fetch_table(fetch, statement):
+def fetch_table(fetch, statement, expected_schema=None):
     cpu = process_time_ns()
     start = perf_counter_ns()
     table = fetch(statement)
     timing = {"wall_ms": run.milliseconds(start), "cpu_ms": (process_time_ns() - cpu) / 1e6}
+    if expected_schema is not None:
+        actual_schema = [[field.name, "BIGINT" if field.type == pa.int64() else str(field.type)]
+                         for field in table.schema]
+        if actual_schema != expected_schema:
+            raise ValueError(f"Unexpected Hybrid Query result schema: {actual_schema}, expected {expected_schema}")
     for column in table.columns:
         if column.null_count or not (pa.types.is_integer(column.type) or
                                      (pa.types.is_decimal(column.type) and column.type.scale == 0)):
@@ -88,6 +107,7 @@ def fetch_table(fetch, statement):
 def python_worker(a, request):
     sequence = schedule(request["cases"], a.block, a.runs)
     statements = {name: CASES[name][0] for name in request["cases"]}
+    record_replay = "micro_relations" in request
     with ExitStack() as stack:
         if a.route == "direct_cypher" and a.provider == "relate":
             from relate import Database
@@ -95,6 +115,7 @@ def python_worker(a, request):
             db = Database(str(a.fixture / run.ENGINES["relate"]), read_only=True)
             stack.callback(db.close)
             setup = {"open_ms": run.milliseconds(start)}
+            setup["bootstrap_ms"] = setup["open_ms"]
 
             def fetch(statement):
                 table = pa.ipc.open_stream(db.execute_arrow(statement)).read_all()
@@ -108,6 +129,7 @@ def python_worker(a, request):
             db = stack.enter_context(ladybug.Database(a.fixture / run.ENGINES["ladybug"], read_only=True))
             conn = stack.enter_context(ladybug.Connection(db))
             setup = {"open_ms": run.milliseconds(start)}
+            setup["bootstrap_ms"] = setup["open_ms"]
 
             def fetch(statement):
                 with conn.execute(statement) as result:
@@ -130,10 +152,14 @@ def python_worker(a, request):
         else:
             cur, setup = stack.enter_context(run.cursor(a))
             dialect = "cypher" if a.route == "qw_cypher" else "gql"
+            start = perf_counter_ns()
             cur.execute("SET SESSION qw_graph_dialect = " + run.sql_literal(dialect))
+            if "bootstrap_ms" in setup:
+                setup["set_dialect_ms"] = run.milliseconds(start)
+                setup["bootstrap_ms"] += setup["set_dialect_ms"]
             if "view_where" in request["cases"]:
                 cur.execute("CREATE TEMP VIEW planning_pairs AS SELECT * FROM " + run.PAIRS)
-            if "micro_relations" in request:
+            if record_replay:
                 micro.setup(cur, request["micro_relations"], prefilter=a.route != MICRO_HOST_ROUTE)
 
             def fetch(statement):
@@ -142,18 +168,46 @@ def python_worker(a, request):
 
         samples = []
         for repetition, name in sequence:
-            actual, timing = fetch_table(fetch, statements[name])
+            actual, timing = fetch_table(fetch, statements[name], request.get("schemas", {}).get(name))
             check_result(request["expected"], name, actual)
+            if record_replay:
+                timing.update(result_rows=int(actual[0]), result_sha256=actual[1])
             samples.append({"repetition": repetition, "case": name, **timing})
         worker = {"setup": setup, "samples": samples,
                   "peak_rss_mib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (2**20 if sys.platform == "darwin" else 1024)}
         if a.route in ("qw_pgq", MICRO_HOST_ROUTE):
             crossings = {}
+            if record_replay:
+                cur.execute("CALL enable_logging(level = 'info')")
+                worker["scan_diagnostics"] = {}
             for name in request["cases"]:
-                cur.execute("EXPLAIN (ANALYZE, FORMAT JSON) " + CASES[name][0])
+                if record_replay:
+                    cur.execute("CALL truncate_duckdb_logs()")
+                cur.execute("EXPLAIN (ANALYZE, FORMAT JSON) " + statements[name])
                 (crossings[name],) = run.provider_rows(json.loads(cur.fetchone()[1])["operator"])
+                if record_replay:
+                    worker["scan_diagnostics"][name] = scan_diagnostic(cur, crossings[name])
             worker["graph_scan_rows"] = crossings
         return worker
+
+
+def scan_diagnostic(cursor, rows):
+    kinds = ("QuackWeaveGraphRoute", "QuackWeaveGraphAdmission", "QuackWeaveWatchlist")
+    cursor.execute("SELECT type, message FROM duckdb_logs() WHERE type IN ("
+                   + ", ".join(map(run.sql_literal, kinds)) + ") ORDER BY type, message")
+    events = {kind: [] for kind in kinds}
+    for kind, message in cursor.fetchall():
+        events[kind].append(message)
+    applied, admission, offers = (events[kind] for kind in kinds)
+    diagnostic = {"scan_rows": rows, "watchlist_offers": offers}
+    unavailable = {}
+    for field, messages in (("applied_route", applied), ("admitted_generation", admission)):
+        diagnostic[field] = messages[0] if len(messages) == 1 else None
+        if len(messages) != 1:
+            unavailable[field] = "no log entry" if not messages else "multiple log entries for one scan"
+    if unavailable:
+        diagnostic["unavailable"] = unavailable
+    return diagnostic
 
 
 def run_process(command, payload, timeout):
@@ -170,6 +224,7 @@ def measure_worker(a, provider, route, block, cases, expected):
     payload = {"expected": expected, "cases": cases}
     if getattr(a, "micro", False):
         payload["micro_relations"] = a.micro_relations
+        payload["schemas"] = {name: a.micro_cases[name]["result_schema"] for name in cases}
     measured = json.loads(run_process(command, json.dumps(payload), a.timeout))
     return {"block": block, "provider": provider, "route": route, **measured}
 
@@ -228,7 +283,7 @@ def verify_micro(a, report, providers, expected_rows):
 
     test_dir = Path(__file__).resolve().parent / "tracker"
     results_test = test_dir / "micro_results.test"
-    snapshot_test = test_dir / "micro_snapshot.test"
+    snapshot_tests = [test_dir / name for name in ("micro_snapshot.test", "workload_snapshot.test")]
     with TemporaryDirectory(prefix="qw-micro-") as directory:
         scratch = Path(directory).resolve()
         snapshot = scratch / "snapshot.json"
@@ -240,8 +295,8 @@ def verify_micro(a, report, providers, expected_rows):
                 a.micro_relations, expected_rows, report["statements"],
             )
             run_cases(a.duckdb_unittest, scratch, variables, [results_test])
-        run_cases(a.duckdb_unittest, scratch, {"QW_TRACKER_SNAPSHOT": snapshot}, [snapshot_test])
-    return {"providers": providers, "checks": {test.name: run.digest(test) for test in (results_test, snapshot_test)}}
+        run_cases(a.duckdb_unittest, scratch, {"QW_TRACKER_SNAPSHOT": snapshot}, snapshot_tests)
+    return {"providers": providers, "checks": {test.name: run.digest(test) for test in (results_test, *snapshot_tests)}}
 
 
 def benchmark(a):
@@ -307,6 +362,17 @@ def benchmark(a):
         common["micro"] = {"source_revision": micro.REVISION, "host_threshold": micro.HOST_THRESHOLD,
                            "relations": a.micro_relations, "providers": providers}
         common["micro_workloads_sha256"] = run.digest(Path(micro.__file__))
+        a.micro_cases = workload_manifest.load_manifest()
+        common["workload_evidence"] = {
+            name: workload_manifest.workload_evidence(
+                a.micro_cases[name], scale=f"mod{fixture['modulus']}",
+                fixture_sha256=fixture["files"]["edges.csv"]["sha256"],
+                sql=common["statements"][name], parameters=a.micro_relations,
+                oracle_rows=expected[name][0], oracle_sha256=expected[name][1])
+            for name in cases
+        }
+        common["workload_schedule"] = replay_schedule(providers, routes, a.blocks, a.runs)
+        common["schedule_sha256"] = workload_manifest.canonical_sha256(common["workload_schedule"])
     if routes.get(PREPARED_ROUTE):
         common["prepared_statements"] = {name: prepared_sql(name) for name in routes[PREPARED_ROUTE]}
     if a.describe:
@@ -353,9 +419,15 @@ def benchmark(a):
         report["summary"] = summarize(report["workers"])
         report["finished_utc"] = datetime.now(timezone.utc).isoformat()
         if is_micro:
+            if run.digest(release.extension) != report["binaries"]["extension"]:
+                raise ValueError("QuackWeave extension changed during measurement")
             report["micro_sqllogic"] = verify_micro(release, report, providers, rows)
+            if run.digest(release.extension) != report["binaries"]["extension"]:
+                raise ValueError("QuackWeave extension changed during SQLLogic verification")
     if is_micro:
         verify_fixture(a.fixture, fixture)
+        if run.digest(a.library) != binaries["duckdb_library"]:
+            raise ValueError("DuckDB library changed during measurement")
     with ExitStack() as rollback:
         for _, path, report in subjects:
             publish(path, report)
@@ -393,6 +465,13 @@ def compare(old, new):
         raise ValueError("Incompatible snapshots: prepared statements differ")
     if before.get("micro") != after.get("micro"):
         raise ValueError("Incompatible snapshots: CM-LDBC inputs differ")
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "tracker"))
+    try:
+        from ci import verify_workload_replay
+    finally:
+        sys.path.pop(0)
+    if verify_workload_replay(before) != verify_workload_replay(after):
+        raise ValueError("Incompatible snapshots: workload evidence or replay schedule differs")
     if before["id"] == after["id"]:
         raise ValueError("Select two distinct benchmark runs")
     def by_key(report):

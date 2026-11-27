@@ -51,6 +51,28 @@ measure() {
             --stdin < "$driver/tracker/pair.test" | tee "$scratch/pair.log"
         check_sqllogic_log "$scratch/pair.log"
     fi
+    if [[ "$sha" == "${SOURCE_HEAD:-}" ]]; then
+        local hybrid_fixture="$root/build/perf/provider-comparison/mod32"
+        echo "86ee28c86fbc633d3f354721c7778ff404ccf41370d9a74b567717a78c2e9e0b  $hybrid_fixture/edges.csv" | shasum -a 256 --check
+        python "$driver/tracker.py" run --source-revision "$sha" --extension "$release/quack_weave.duckdb_extension" \
+            --fixture "$hybrid_fixture" --library "$DUCKDB_LIB" \
+            --duckdb-unittest "$DUCKDB_UNITTEST" --micro --case micro_creator_selective \
+            --blocks 2 --runs 2 --out "$scratch/hybrid.json"
+        python - "$driver/tracker" "$folder/snapshot.json" "$scratch/hybrid.json" <<'PY_ATTACH'
+import json
+from pathlib import Path
+import sys
+
+sys.path.insert(0, sys.argv[1])
+from archive import validate_hybrid_snapshot
+
+snapshot_file, hybrid_file = map(Path, sys.argv[2:])
+snapshot, hybrid = (json.loads(path.read_text()) for path in (snapshot_file, hybrid_file))
+validate_hybrid_snapshot(snapshot, hybrid)
+snapshot["hybrid_smoke_snapshot"] = hybrid
+snapshot_file.write_text(json.dumps(snapshot, indent=2, allow_nan=False) + "\n")
+PY_ATTACH
+    fi
     python "$driver/tracker/ci.py" judge "$folder" --selection "$scratch/selection.json"
 }
 

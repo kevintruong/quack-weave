@@ -132,19 +132,45 @@ jobs:
           echo "QW_BUILD_TOOLCHAIN=$(cat build/native/toolchain.txt)" >> "$GITHUB_ENV"
           python -m pip install --only-binary=:all: --require-hashes -r benchmarks/provider_comparison/tracker/requirements.txt
           python -B -m unittest discover -s benchmarks/provider_comparison -p 'test_tracker_pair.py'
+          python -B -m unittest discover -s benchmarks/provider_comparison -p test_workload_manifest.py
+          python -B -m unittest discover -s benchmarks/provider_comparison/tracker -p test_hybrid_archive.py
           DUCKDB_UNITTEST="$PWD/build/benchmark-host/unittest" python -B -m unittest discover \
-            -s benchmarks/provider_comparison/tracker -p test_ci.py -k test_verified_timings_are_advisory_per_percentile
+            -s benchmarks/provider_comparison/tracker -p test_ci.py
+          tracker=benchmarks/provider_comparison/tracker
+          export QW_TRACKER_METRIC_FIXTURE="$PWD/$tracker/metrics_fixture.json"
+          {
+            printf 'require json\n\nstatement ok\n'
+            sed '/^[[:space:]]*$/d' "$tracker/history.sql"
+            printf '\n'
+            cat "$tracker/metrics.test"
+          } | "$PWD/build/benchmark-host/unittest" --test-dir "$RUNNER_TEMP" \
+              --env-passthrough QW_TRACKER_METRIC_FIXTURE --stdin | tee "$RUNNER_TEMP/hybrid-metrics.log"
+          grep -Eq 'All tests passed \([1-9][0-9]* assertions? in 1 test case\)' "$RUNNER_TEMP/hybrid-metrics.log"
       - uses: actions/cache@v4
         id: fixture
         with:
           path: build/perf/provider-comparison/mod1
           key: benchmark-sf1-mod1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('benchmarks/provider_comparison/prepare.py', 'benchmarks/provider_comparison/tracker/requirements.txt') }}
-      - name: Reproduce the full SF1 fixture on cache miss
-        if: steps.fixture.outputs.cache-hit != 'true'
+      - uses: actions/cache@v4
+        id: hybrid-fixture
+        if: contains(inputs.commits, inputs.source-head)
+        with:
+          path: build/perf/provider-comparison/mod32
+          key: benchmark-sf1-mod32-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('benchmarks/provider_comparison/prepare.py', 'benchmarks/provider_comparison/tracker/requirements.txt') }}
+      - name: Reproduce the pinned SF1 fixtures on cache miss
+        if: steps.fixture.outputs.cache-hit != 'true' || (contains(inputs.commits, inputs.source-head) && steps.hybrid-fixture.outputs.cache-hit != 'true')
+        env:
+          FULL_HIT: ${{ steps.fixture.outputs.cache-hit }}
+          HYBRID_HIT: ${{ steps.hybrid-fixture.outputs.cache-hit }}
         run: |
           curl --fail --location --retry 3 --output "$RUNNER_TEMP/sf1.lbdb" \
             https://huggingface.co/datasets/ladybugdb/lsqb-sf1/resolve/8283a51fa16c4d9fbc3c53ebde66252f7a41f3f6/lbdb/sf1.lbdb
-          python benchmarks/provider_comparison/prepare.py --modulus 1 --source "$RUNNER_TEMP/sf1.lbdb"
+          if [[ "$FULL_HIT" != true ]]; then
+            python benchmarks/provider_comparison/prepare.py --modulus 1 --source "$RUNNER_TEMP/sf1.lbdb"
+          fi
+          if [[ " $COMMITS " == *" $SOURCE_HEAD "* && "$HYBRID_HIT" != true ]]; then
+            python benchmarks/provider_comparison/prepare.py --modulus 32 --source "$RUNNER_TEMP/sf1.lbdb"
+          fi
       - name: Measure, verify and compare each commit
         env:
           QW_ARTIFACT_TOKEN: ${{ github.token }}

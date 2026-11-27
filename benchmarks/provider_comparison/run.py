@@ -92,22 +92,30 @@ def milliseconds(start):
 def cursor(a):
     graph_path = a.fixture / ENGINES[a.provider]
     config = json.dumps({"alias": GRAPH_ALIAS, "path": str(graph_path.resolve())})
+    start = perf_counter_ns()
     with dbapi.connect(driver=str(a.library.resolve()), entrypoint="duckdb_adbc_init", autocommit=True,
                        db_kwargs={"allow_unsigned_extensions": "true"}) as db, db.cursor() as cur:
+        open_ms = milliseconds(start)
         cur.execute("SELECT library_version, source_id FROM pragma_version()")
         if cur.fetchone() != ("v2.0.1", "8d78114e90"):
             raise ValueError("Unexpected DuckDB version")
+        start = perf_counter_ns()
         cur.execute("SET threads = 1")
+        threads_ms = milliseconds(start)
         start = perf_counter_ns()
         cur.execute("LOAD " + sql_literal(a.extension.resolve()))
         load_ms = milliseconds(start)
         start = perf_counter_ns()
         cur.execute(f"SET GLOBAL qw_{a.provider}_config = " + sql_literal(config))
         register_ms = milliseconds(start)
+        start = perf_counter_ns()
         cur.execute(f"SESSION SET GRAPH {GRAPH_ALIAS}")
+        select_graph_ms = milliseconds(start)
         cur.execute("CREATE TEMP TABLE watch(author BIGINT)")
         cur.execute("INSERT INTO watch VALUES " + ",".join(f"({k})" for k in KEYS))
-        yield cur, {"load_ms": load_ms, "register_ms": register_ms}
+        setup = {"open_ms": open_ms, "threads_ms": threads_ms, "load_ms": load_ms,
+                 "register_ms": register_ms, "select_graph_ms": select_graph_ms}
+        yield cur, {**setup, "bootstrap_ms": sum(setup.values())}
 
 
 def fetch(cur, stmt):

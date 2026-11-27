@@ -100,6 +100,22 @@ tracker=benchmarks/provider_comparison/tracker.py
 
 The tracker checks every fetch against the CSV oracle. Before publishing an immutable snapshot, it runs the actual workload SQL through SQLLogic on both routes, then independently recomputes p50, p95, and sample counts from the saved timing rows. The snapshot records fixture and binary hashes, the relational input rows, SQLLogic source hashes and rows delivered from the provider. Rerun with a fresh output path, then use `tracker.py compare` with the two snapshots. The standard suite and its CI workload matrix use the existing default selection.
 
+### Replay evidence and metric history
+
+The [workload manifest](../hybrid_workloads.json) pins the case revision, SQL template and oracle. `micro_creator_selective` uses the same SQL in the tiny native stabilization witness and the scaled tracker. The fixtures are independent instances. MICRO snapshots retain their case, fixture, parameter, SQL and result digests, plus the planned schedule and verified call receipts. A run publishes after SQLLogic checks those receipts against the observed sample order and oracle.
+
+The benchmark workflow runs a source-head MICRO smoke replay with the checksummed SF1 mod32 fixture and the same release. The history publisher exposes it as `hybrid_snapshot.json` beside the ordinary snapshot. Use the raw metric view with that file or a local tracker snapshot.
+
+```sql
+.read benchmarks/provider_comparison/tracker/history.sql
+SELECT provider, route, block, repetition, metric_id, unit, numeric_value, count_value, text_value
+FROM qw_benchmark_metrics('path/to/hybrid_snapshot.json')
+WHERE workload = 'micro_creator_selective'
+ORDER BY provider, route, block, repetition, metric_id;
+```
+
+`first_fetch` is the verified warmup on each worker and case. `release_wall` covers the later full client fetches. The scan diagnostics come from a separate untimed query. Optional provider timing and route evidence appear when captured by the measured artifact.
+
 ### Track changes
 
 ```sh

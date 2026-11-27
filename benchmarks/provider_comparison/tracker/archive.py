@@ -10,7 +10,7 @@ import tempfile
 import time
 import zipfile
 
-from ci import RESULTS, checked_sha, markdown_report, verify_pair
+from ci import RESULTS, SHA256, checked_sha, markdown_report, verify_pair, verify_workload_replay
 
 
 REF = "refs/heads/benchmark-history"
@@ -27,6 +27,31 @@ def planned_commits(body):
         if len(expected) != len(shas):
             raise ValueError("Duplicate planned commit")
         return expected
+
+
+def validate_hybrid_snapshot(snapshot, hybrid):
+    """Bind the independently verified smoke run to the main attempt's inputs and artifact."""
+    if not isinstance(hybrid, dict) or hybrid.get("workspace_head") != snapshot["workspace_head"] \
+            or not hybrid.get("id") or hybrid["id"] == snapshot.get("id"):
+        raise ValueError("Hybrid Query snapshot differs from the benchmark attempt")
+    primary_source = snapshot.get("fixture", {}).get("source_sha256")
+    hybrid_source = hybrid.get("fixture", {}).get("source_sha256")
+    if not isinstance(primary_source, str) or not SHA256.fullmatch(primary_source) or hybrid_source != primary_source:
+        raise ValueError("Hybrid Query snapshot comes from a different SF1 source")
+    hybrid_binaries = hybrid.get("binaries", {})
+    base_binaries = snapshot.get("binaries", {})
+    for name in ("extension", "duckdb_library"):
+        if not hybrid_binaries.get(name) or hybrid_binaries[name] != base_binaries.get(name):
+            raise ValueError(f"Hybrid Query snapshot has a different {name} artifact")
+    try:
+        identity = verify_workload_replay(hybrid)
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("Hybrid Query snapshot has invalid workload evidence") from error
+    receipts = hybrid.get("micro_sqllogic", {}).get("checks", {})
+    required = {"micro_results.test", "micro_snapshot.test", "workload_snapshot.test"}
+    if identity is None or not required <= receipts.keys() or any(
+            not isinstance(receipts[name], str) or not SHA256.fullmatch(receipts[name]) for name in required):
+        raise ValueError("Hybrid Query snapshot is missing verified SQLLogic receipts")
 
 
 def records(archive, event, run_id, attempt, head):
@@ -56,6 +81,10 @@ def records(archive, event, run_id, attempt, head):
             raise ValueError("Benchmark snapshot and commit status disagree")
         paired = "paired_baseline" in record
         snapshot = pair.get("snapshot", {})
+        if "hybrid_smoke_snapshot" in snapshot:
+            hybrid = snapshot.pop("hybrid_smoke_snapshot")
+            validate_hybrid_snapshot(snapshot, hybrid)
+            pair["hybrid_snapshot"] = hybrid
         if paired != ("paired_baseline_snapshot" in snapshot) or paired != ("pair_id" in snapshot):
             raise ValueError("Incomplete paired benchmark evidence")
         if paired:
@@ -98,6 +127,8 @@ def add_reports(files):
             report = (f"### Benchmark `{checked_sha(record['commit'])[:12]}` · {record['status']}\n\n"
                       "Timing tables are unavailable for this evidence. See the archived JSON files.\n")
             print(f"Could not render timing tables for {path}")
+        if folder + "hybrid_snapshot.json" in files:
+            report += "\n[Verified Hybrid Query smoke snapshot](hybrid_snapshot.json)\n"
         files[folder + "README.md"] = report.encode()
 
 
@@ -113,6 +144,7 @@ def update_latest_main(report_path, env):
     folder = report_path.rsplit("/", 1)[0]
     header = f"# Latest main benchmark report\n\n[Archived attempt and raw data]({folder}/)\n\n"
     body = git("show", ":" + report_path, env=env)
+    body = body.replace(b"](hybrid_snapshot.json)", f"]({folder}/hybrid_snapshot.json)".encode())
     blob = git("hash-object", "-w", "--stdin", data=header.encode() + body + b"\n")
     git("update-index", "--add", "--cacheinfo", "100644", blob.decode(), "README.md", env=env)
 

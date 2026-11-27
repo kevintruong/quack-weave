@@ -1,0 +1,92 @@
+# name: benchmarks/provider_comparison/tracker/workload_snapshot.test
+# description: Check workload identity, replay schedule and verified result receipts
+# group: [quack_weave]
+
+require json
+
+test-env QW_TRACKER_SNAPSHOT UNSET_QW_TRACKER_SNAPSHOT
+
+statement ok
+CREATE TEMP VIEW replay AS SELECT content::JSON AS report FROM read_text('{QW_TRACKER_SNAPSHOT}');
+
+query I
+SELECT count(*) FROM replay
+WHERE NOT coalesce(regexp_full_match(report->>'schedule_sha256', '[0-9a-f]{64}'), false)
+   OR json_type(report->'workload_evidence') IS DISTINCT FROM 'OBJECT'
+   OR json_type(report->'workload_schedule') IS DISTINCT FROM 'ARRAY';
+----
+0
+
+query I
+SELECT count(*) FROM replay
+WHERE report->>'schedule_sha256' IS DISTINCT FROM sha256(to_json(json_transform(report->'workload_schedule',
+  '[{"block":"INTEGER","provider":"VARCHAR","route":"VARCHAR","sequence":[{"case":"VARCHAR","repetition":"INTEGER"}]}]')))
+   OR json_array_length(report->'workload_schedule') IS DISTINCT FROM
+      json_array_length(report->'$.micro.providers') * 2 * (report->>'blocks')::INTEGER;
+----
+0
+
+query I
+WITH workloads AS (
+    SELECT entry.key AS workload, entry.value AS evidence, report
+    FROM replay, json_each(report->'workload_evidence') AS entry
+), statements AS (
+    SELECT entry.key AS workload, entry.value AS sql
+    FROM replay, json_each(report->'statements') AS entry
+)
+SELECT count(*) FROM workloads FULL JOIN statements USING (workload)
+WHERE evidence IS NULL OR sql IS NULL
+   OR evidence->>'case_id' IS DISTINCT FROM workload
+   OR NOT coalesce(try_cast(evidence->>'case_revision' AS UBIGINT) > 0, false)
+   OR evidence->>'fixture_sha256' IS DISTINCT FROM report->>'$.fixture.files."edges.csv".sha256'
+   OR evidence->>'sql_sha256' IS DISTINCT FROM sha256(json_extract_string(sql, '$'))
+   OR evidence->>'oracle_sha256' IS DISTINCT FROM json_extract_string(json_extract(report->'expected', workload), '$[1]')
+   OR NOT coalesce(regexp_full_match(evidence->>'workload_sha256', '[0-9a-f]{64}'), false)
+   OR evidence->>'parameter_trace_sha256' IS DISTINCT FROM sha256(to_json(json_transform(report->'$.micro.relations',
+      '{"messages":[["BIGINT"]],"people":[["BIGINT"]]}')));
+----
+0
+
+query I
+WITH planned AS (
+    SELECT w.key AS worker, s.key AS seq, w.value->>'provider' AS provider,
+           w.value->>'route' AS route, w.value->>'block' AS block,
+           s.value->>'case' AS workload, s.value->>'repetition' AS repetition
+    FROM replay, json_each(report->'workload_schedule') AS w, json_each(w.value->'sequence') AS s
+), actual AS (
+    SELECT w.key AS worker, s.key AS seq, w.value->>'provider' AS provider,
+           w.value->>'route' AS route, w.value->>'block' AS block,
+           s.value->>'case' AS workload, s.value->>'repetition' AS repetition
+    FROM replay, json_each(report->'workers') AS w, json_each(w.value->'samples') AS s
+)
+SELECT count(*) FROM planned p FULL JOIN actual a USING (worker, seq)
+WHERE p.provider IS DISTINCT FROM a.provider OR p.route IS DISTINCT FROM a.route
+   OR p.block IS DISTINCT FROM a.block OR p.workload IS DISTINCT FROM a.workload
+   OR p.repetition IS DISTINCT FROM a.repetition;
+----
+0
+
+query I
+WITH calls AS (
+    SELECT s.value AS sample, json_extract(report->'expected', s.value->>'case') AS expected
+    FROM replay, json_each(report->'workers') AS w, json_each(w.value->'samples') AS s
+)
+SELECT count(*) FROM calls
+WHERE expected IS NULL OR sample->>'result_rows' IS DISTINCT FROM expected->>'$[0]'
+    OR sample->>'result_sha256' IS DISTINCT FROM expected->>'$[1]';
+----
+0
+
+query I
+WITH scans AS (
+    SELECT w.value AS worker, s.key AS workload, s.value AS diagnostic
+    FROM replay, json_each(report->'workers') AS w, json_each(w.value->'scan_diagnostics') AS s
+)
+SELECT count(*) FROM scans
+WHERE diagnostic->>'scan_rows' IS DISTINCT FROM json_extract_string(worker->'graph_scan_rows', workload)
+   OR (diagnostic->>'applied_route' IS NOT NULL AND diagnostic->>'applied_route'
+       NOT IN ('host', 'literal_exact', 'runtime_exact', 'bounded_exact'))
+   OR (diagnostic->>'admitted_generation' IS NOT NULL
+       AND try_cast(diagnostic->>'admitted_generation' AS UBIGINT) IS NULL);
+----
+0
