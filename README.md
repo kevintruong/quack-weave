@@ -81,7 +81,9 @@ MATCH (c:Creator)-[e:AUTHORED]->(p:Post)
 RETURN c.id AS creator_id, p.id AS post_id;
 ```
 
-Cloud HTTPS uses the OpenSSL trust store. Set `SSL_CERT_FILE` to a trusted CA bundle when the build-time default is unavailable. Ladybug applies its query timeout to each statement and bounds individual HTTP requests. Use a `gs://` URI for GCS. Create the scoped secret on each querying connection. Replacing a snapshot requires a new key and registration. Cloud snapshots use the host SQL route, including for `GRAPH_TABLE` joins. Azure Blob Storage and ADLS graph attachments are pending random-access support in the Ladybug Azure extension. [Cloud execution architecture](docs/core-native-architecture.ipynb)
+Registration opens the cloud snapshot once on the registering DuckDB connection. Sequential reads on that connection reuse the attachment and pages already fetched. Another connection creates its own attachment on first use. Every scan checks the connection’s current scoped secret. Changing the effective credentials or registering a new generation requires a fresh attachment. Closing the connection releases its retained attachment.
+
+Cloud HTTPS uses the OpenSSL trust store. Set `SSL_CERT_FILE` to a trusted CA bundle when the build-time default is unavailable. Ladybug applies its query timeout to each statement and bounds individual HTTP requests. Use a `gs://` URI for GCS. Replacing a snapshot requires a new key and registration. Cloud snapshots use the host SQL route, including for `GRAPH_TABLE` joins. Azure Blob Storage and ADLS graph attachments are pending random-access support in the Ladybug Azure extension. [Cloud execution architecture](docs/core-native-architecture.ipynb)
 
 ### Query a RelateDB graph alongside Ladybug
 

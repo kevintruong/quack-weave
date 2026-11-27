@@ -3,6 +3,7 @@
 
 import argparse
 import csv
+from dataclasses import replace
 from hashlib import file_digest, shake_256
 import json
 from pathlib import Path
@@ -168,6 +169,25 @@ def main():
                 print(f"SQLLogic finished {elapsed_ms:.0f} ms after the stalled HEAD started, before its response.")
             finally:
                 finished.set()
+
+        snapshot_prefix = "/qw-s3-fixture/snapshots/"
+        rotation_path = snapshot_prefix + "rotation.lbdb"
+        lifecycle_heads = {
+            snapshot_prefix + "connections.lbdb": 3,
+            snapshot_prefix + "generation.lbdb": 2,
+            rotation_path: 4,
+        }
+        s3_object = clean_objects[snapshot_prefix + "graph.lbdb"]
+        lifecycle_objects = dict.fromkeys(lifecycle_heads, s3_object)
+        lifecycle_objects[rotation_path] = replace(s3_object, alternate_signing_keys=("qw-s3-fixture-rotated-key",))
+        lifecycle = run_attachment_case(
+            unittest, test_dir, variables, cases / "cloud_attachment_lifecycle.test", lifecycle_objects,
+            {("HEAD", path + ".wal", 404): count for path, count in lifecycle_heads.items()},
+        )
+        rotation_wal = rotation_path + ".wal"
+        rotation_heads = tuple(lifecycle.wal_heads_by_signing_key[rotation_wal, index] for index in (0, 1))
+        if rotation_heads != (2, 2):
+            raise AssertionError(f"Expected two signed WAL HEADs per credential generation, observed {rotation_heads}")
 
 
 if __name__ == "__main__":

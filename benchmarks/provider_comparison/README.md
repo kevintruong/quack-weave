@@ -4,6 +4,20 @@ The notebook compares the same DuckDB SQL through the two providers. Its DuckDB 
 
 The benchmark tracker also measures direct Ladybug and direct RelateDB for standalone graph queries. It tracks hybrid SQL workloads through QuackWeave on both providers, with immutable snapshots and a DuckDB history query. [Standalone baselines and hybrid tracker](tracker/README.md)
 
+## Ladybug SF1 on local disk and S3
+
+The local and S3 arms run the same point lookup, traversal and aggregate through QuackWeave. Each block starts fresh connections, times registration separately, warms each query once, then measures three rounds through the full Arrow fetch. The second block reverses connection order. Each successful result must match the SF1 oracle and the other arm’s schema.
+
+Use the benchmark Python environment, a pinned DuckDB host, AWS CLI credentials and an immutable S3 copy of the tracker’s checkpointed `sf1.lbdb`. The runner verifies the local digest against the S3 full-object SHA-256 before and after timing. Supply a new output filename for each run.
+
+```sh
+python benchmarks/provider_comparison/ladybug_local_s3.py \
+  --local build/perf/lsqb-sf1/sf1.lbdb --uri "$SF1_S3_URI" --region "$AWS_REGION" \
+  --extension "$QW_EXTENSION" --out build/perf/sf1-s3-run.json
+```
+
+The architecture notebook computes the warm medians from the recorded pairs. The observations also include cold registration, the first query round, the previous release’s timeout and separate signed loopback request counts. [Paired observations](optimized/ladybug-s3-attachments.json) · [Executed notebook](../../docs/core-native-architecture.ipynb)
+
 ## Creator partnership review with a Parquet sales ledger
 
 A partnerships manager is preparing a creator’s next campaign brief. Which three sales channels generated the most settled net sales on that creator’s current portfolio in the last month? Does the last week give the same ranking? The graph supplies post authorship at query time. The sales ledger contains order and content IDs, booking dates, channels, settlement status and signed USD amounts. A refund reduces sales in the period when it settles, even if the purchase happened earlier.

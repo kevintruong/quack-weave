@@ -1,0 +1,191 @@
+{
+  "graph_sha256": "84cd660cac88e20b627b40f2adf8de0c2c6d8693237c0d9f422469825721693f",
+  "graph_bytes": 526757888,
+  "region": "ap-southeast-1",
+  "host_sha256": "3a6cdbca6264639ac578f0a7ec34cc5548f4fe2094e6270c8292ca8c8e86a57f",
+  "oracle": "tracker/sf1.json",
+  "oracle_sha256": "2bd9bc0bc9d267a11c783e24b58c49e6546687bb6338f9745a118e4140ff03d9",
+  "cases": {
+    "gql_lookup": {
+      "sql": "MATCH (p:Person) WHERE p.PersonId = 4398046519825 RETURN p.PersonId AS id",
+      "rows": 1,
+      "sha256": "8b01ac121f147e12ecb6e29308cbbeddf445f2af83566950fc639e5766f8c5ee",
+      "schema": [
+        [
+          "id",
+          "int64"
+        ]
+      ],
+      "dispatch": []
+    },
+    "graph_table_where": {
+      "sql": "SELECT mid FROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person) WHERE p.PersonId = 4398046519825 COLUMNS (m.MessageId AS mid)) AS g",
+      "rows": 6465,
+      "sha256": "708658f3d570935ad72db47441f594d20ce8f4371040b098e8d7a8e7bbdd3866",
+      "schema": [
+        [
+          "mid",
+          "int64"
+        ]
+      ],
+      "dispatch": [
+        "host"
+      ]
+    },
+    "full_scan_aggregate": {
+      "sql": "SELECT count(*), sum(mid % 1000003) FROM GRAPH_TABLE (social MATCH (m:Message)-[r:Message_hasCreator_Person]->(p:Person)  COLUMNS (m.MessageId AS mid)) AS g",
+      "rows": 1,
+      "sha256": "ae46a374778efb764593bed0c71541b34381c261c943f1a7d4bd265b71747622",
+      "schema": [
+        [
+          "count_star()",
+          "int64"
+        ],
+        [
+          "sum((mid % 1000003))",
+          "decimal128(38, 0)"
+        ]
+      ],
+      "dispatch": [
+        "host"
+      ]
+    }
+  },
+  "runs": {
+    "previous": {
+      "revision": "be31db62f5f189035c7e5eb9d7b8a20df74c03be",
+      "started": "2026-11-27T17:44:01.394921+00:00",
+      "finished": "2026-11-27T18:24:35.357602+00:00",
+      "package_sha256": "dbe9f8d9eb7f80198a842a423cd2f2c642f9c689968a0881c586596147ed828e",
+      "raw_report_sha256": "fbfb057e0d6aa065db2a59d4332bcc7828fcd97ac8b003ef8a98213d899351d1",
+      "matched_outputs_including_warmups_and_retries": {
+        "gql_lookup": 16,
+        "graph_table_where": 16,
+        "full_scan_aggregate": 16
+      },
+      "registration_ms": [
+        [43.077833, 68961.435083],
+        [41.423208, 69341.8595]
+      ],
+      "query_ms": {
+        "gql_lookup": [
+          [120.603125, 72653.269459],
+          [1.460208, 69886.072709],
+          [1.879541, 67106.107333],
+          [0.804084, 66521.281084],
+          [94.731708, 66792.893041],
+          [0.849875, 61083.932167],
+          [0.832375, 58862.277834],
+          [0.714166, 53167.174458]
+        ],
+        "graph_table_where": [
+          [572.284875, 113493.714833],
+          [230.554041, 112469.766833],
+          [571.715417, 111133.838083],
+          [248.722708, 116106.639291],
+          [258.692625, 96289.177708],
+          [250.124, 96790.190917],
+          [238.379042, 99867.008666],
+          [243.494792, 99402.983167]
+        ],
+        "full_scan_aggregate": [
+          [413.307042, 115554.013584],
+          [189.466291, 119608.737667],
+          [184.996917, 114201.3235],
+          ["unattempted", "timeout"],
+          [226.282958, 97277.93875],
+          [183.778917, 99775.915],
+          [179.889375, 95214.916125],
+          [180.693917, 94539.762666]
+        ]
+      },
+      "retries": [
+        {
+          "case": "full_scan_aggregate",
+          "arm": "s3",
+          "status": "ok",
+          "wall_ms": 97024.826209
+        },
+        {
+          "case": "full_scan_aggregate",
+          "arm": "local",
+          "status": "ok",
+          "wall_ms": 179.681959
+        }
+      ],
+      "loopback_package_sha256": "c1f87b88339e091951fe37ec48b8a1d3dcac40c539f720098ed5b035bcd2575d",
+      "loopback_requests": {
+        "register": [3, 814],
+        "gql_lookup": [2, 816],
+        "graph_table_where": [2, 1360],
+        "full_scan_aggregate": [2, 1357]
+      }
+    },
+    "retained": {
+      "revision": "fded52e503b11e0d086efad78e01882949c36ebc",
+      "started": "2026-11-27T23:27:22.093771+00:00",
+      "finished": "2026-11-27T23:30:36.762920+00:00",
+      "package_sha256": "78fcff081198be65834788d2660be8bf91f2a906dbf4e058e7330580a5c617e4",
+      "raw_report_sha256": "7d8342809ae4dc55dbcdf231eedf7a9980855576061d05b2012aeb4de007d8e7",
+      "matched_outputs_including_warmups_and_retries": {
+        "gql_lookup": 16,
+        "graph_table_where": 16,
+        "full_scan_aggregate": 16
+      },
+      "registration_ms": [
+        [97.157542, 56253.774459],
+        [127.7005, 56202.453]
+      ],
+      "query_ms": {
+        "gql_lookup": [
+          [27.869542, 160.609709],
+          [0.973625, 1.271416],
+          [1.220292, 0.911917],
+          [0.928625, 0.652417],
+          [18.770459, 107.873875],
+          [1.646792, 1.230417],
+          [1.480125, 1.510667],
+          [1.582708, 1.61075]
+        ],
+        "graph_table_where": [
+          [327.698708, 34893.002291],
+          [269.492208, 266.519333],
+          [327.866667, 304.656541],
+          [306.250459, 322.76575],
+          [374.989334, 35227.934833],
+          [476.948458, 450.652166],
+          [422.731958, 401.560042],
+          [376.45275, 382.170166]
+        ],
+        "full_scan_aggregate": [
+          [224.168875, 218.163292],
+          [216.769625, 214.908125],
+          [209.063166, 209.706167],
+          [211.897542, 225.11],
+          [296.368958, 252.540625],
+          [366.3745, 348.871666],
+          [305.525625, 314.739792],
+          [295.538916, 301.606417]
+        ]
+      },
+      "retries": [],
+      "loopback_package_sha256": "fbff23bfc518bec012badef69e71b54885602a4935339feda668fd4bca59b17d",
+      "loopback_requests": {
+        "register": [3, 814],
+        "gql_lookup": [0, 2],
+        "graph_table_where": [0, 542],
+        "full_scan_aggregate": [0, 0],
+        "warm_gql_lookup": [0, 0],
+        "warm_graph_table_where": [0, 0],
+        "warm_full_scan_aggregate": [0, 0]
+      },
+      "runner_sha256": "60719be0e3feb6b219efc7af9888be2796543ec1e05723858c0871b9343dc3cb",
+      "s3_full_object_sha256": "84cd660cac88e20b627b40f2adf8de0c2c6d8693237c0d9f422469825721693f"
+    }
+  },
+  "layout": {
+    "query_ms": "Two blocks, four ordered rounds per block. Round zero warms each workload. Each pair is [local, S3] in milliseconds through Arrow fetch. Strings identify incomplete observations. Compute medians over complete measurement pairs only.",
+    "registration_ms": "[local, S3] in milliseconds per block.",
+    "loopback_requests": "[HEAD, range GET] on the same SF1 graph in a separate signed loopback run."
+  }
+}

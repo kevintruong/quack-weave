@@ -1,0 +1,186 @@
+# name: test/ladybug_cloud/sqllogic/cloud_attachment_lifecycle.test
+# description: Scope reusable native Ladybug attachments to credentials, connections, and generations
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_LOAD_DUCKDB_HTTPFS UNSET_QW_LOAD_DUCKDB_HTTPFS
+
+# case: ladybug_cloud.attachment_connections Independent DuckDB connections attach separately
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+{QW_LOAD_DUCKDB_HTTPFS};
+
+statement ok
+SET GLOBAL qw_enable_remote_graphs = true;
+
+statement ok
+CREATE SECRET cloud_reader IN connection
+    (TYPE s3, KEY_ID 'qw-s3-fixture', SECRET 'qw-s3-fixture-key', REGION 'us-east-1',
+     SESSION_TOKEN 'qw-s3-fixture-token', SCOPE 's3://qw-s3-fixture/snapshots/');
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"s3://qw-s3-fixture/snapshots/connections.lbdb","secret":"cloud_reader"}';
+
+query IT
+SELECT a.edge_id, b.reader
+FROM qw_query('cloud_graph', 'cypher',
+    'MATCH (a:Person)-[e:FOLLOWS]->(b:Person) WHERE a.id = 1 RETURN e.id AS edge_id',
+    schema := 'edge_id BIGINT') AS a
+JOIN qw_query('cloud_graph', 'cypher',
+    'MATCH (a:Person)-[e:FOLLOWS]->(b:Person) RETURN e.id AS edge_id, b.name AS reader',
+    schema := 'edge_id BIGINT, reader VARCHAR') AS b
+  ON a.edge_id = b.edge_id
+ORDER BY a.edge_id;
+----
+10	Bob
+11	Bob
+12	Carol
+
+statement error peer
+SELECT edge_id FROM qw_query('cloud_graph', 'cypher',
+    'MATCH (:Person)-[e:FOLLOWS]->(:Person) RETURN e.id AS edge_id',
+    schema := 'edge_id BIGINT');
+----
+QW_AUTH: Remote graph credentials unavailable or rejected
+
+statement ok peer
+CREATE SECRET cloud_reader IN connection
+    (TYPE s3, KEY_ID 'qw-s3-fixture', SECRET 'qw-s3-fixture-key', REGION 'us-east-1',
+     SESSION_TOKEN 'qw-s3-fixture-token', SCOPE 's3://qw-s3-fixture/snapshots/');
+
+query I peer
+SELECT edge_id FROM qw_query('cloud_graph', 'cypher',
+    'MATCH (a:Person)-[e:FOLLOWS]->(:Person) WHERE a.id = 2 RETURN e.id AS edge_id',
+    schema := 'edge_id BIGINT');
+----
+40
+
+query I
+SELECT edge_id FROM qw_query('cloud_graph', 'cypher',
+    'MATCH (a:Person)-[e:FOLLOWS]->(:Person) WHERE a.id = 2 RETURN e.id AS edge_id',
+    schema := 'edge_id BIGINT');
+----
+40
+
+reconnect
+
+statement error
+SELECT edge_id FROM qw_query('cloud_graph', 'cypher',
+    'MATCH (:Person)-[e:FOLLOWS]->(:Person) RETURN e.id AS edge_id',
+    schema := 'edge_id BIGINT');
+----
+QW_AUTH: Remote graph credentials unavailable or rejected
+
+statement ok
+CREATE SECRET cloud_reader IN connection
+    (TYPE s3, KEY_ID 'qw-s3-fixture', SECRET 'qw-s3-fixture-key', REGION 'us-east-1',
+     SESSION_TOKEN 'qw-s3-fixture-token', SCOPE 's3://qw-s3-fixture/snapshots/');
+
+query I
+SELECT edge_id FROM qw_query('cloud_graph', 'cypher',
+    'MATCH (a:Person)-[e:FOLLOWS]->(:Person) WHERE a.id = 2 RETURN e.id AS edge_id',
+    schema := 'edge_id BIGINT');
+----
+40
+
+query I peer
+SELECT edge_id FROM qw_query('cloud_graph', 'cypher',
+    'MATCH (a:Person)-[e:FOLLOWS]->(:Person) WHERE a.id = 2 RETURN e.id AS edge_id',
+    schema := 'edge_id BIGINT');
+----
+40
+
+# case: ladybug_cloud.attachment_generation A same-URI replacement installs a new generation
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"s3://qw-s3-fixture/snapshots/generation.lbdb","secret":"cloud_reader"}';
+
+statement ok
+PREPARE previous_graph AS
+SELECT edge_id FROM qw_query('cloud_graph', 'cypher',
+    'MATCH (a:Person)-[e:FOLLOWS]->(:Person) WHERE a.id = 2 RETURN e.id AS edge_id',
+    schema := 'edge_id BIGINT');
+
+query I
+EXECUTE previous_graph;
+----
+40
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"s3://qw-s3-fixture/snapshots/generation.lbdb","secret":"cloud_reader"}';
+
+statement error
+EXECUTE previous_graph;
+----
+QW_CONFIG: Ladybug configuration changed after binding
+
+query I
+SELECT edge_id FROM qw_query('cloud_graph', 'cypher',
+    'MATCH (a:Person)-[e:FOLLOWS]->(:Person) WHERE a.id = 2 RETURN e.id AS edge_id',
+    schema := 'edge_id BIGINT');
+----
+40
+
+# case: ladybug_cloud.attachment_rotation Changed HMAC credentials reattach and a dropped secret blocks the prepared scan
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"s3://qw-s3-fixture/snapshots/rotation.lbdb","secret":"cloud_reader"}';
+
+statement ok
+PREPARE rotating_scan AS
+SELECT edge_id FROM qw_query('cloud_graph', 'cypher',
+    'MATCH (a:Person)-[e:FOLLOWS]->(:Person) WHERE a.id = 2 RETURN e.id AS edge_id',
+    schema := 'edge_id BIGINT');
+
+query I
+EXECUTE rotating_scan;
+----
+40
+
+statement ok
+CREATE OR REPLACE SECRET cloud_reader IN connection
+    (TYPE s3, KEY_ID 'qw-s3-fixture', SECRET 'qw-s3-fixture-rotated-key', REGION 'us-east-1',
+     SESSION_TOKEN 'qw-s3-fixture-token', SCOPE 's3://qw-s3-fixture/snapshots/');
+
+query I
+EXECUTE rotating_scan;
+----
+40
+
+query I
+EXECUTE rotating_scan;
+----
+40
+
+query I peer
+SELECT edge_id FROM qw_query('cloud_graph', 'cypher',
+    'MATCH (a:Person)-[e:FOLLOWS]->(:Person) WHERE a.id = 2 RETURN e.id AS edge_id',
+    schema := 'edge_id BIGINT');
+----
+40
+
+statement ok
+DROP SECRET cloud_reader FROM connection;
+
+statement error
+EXECUTE rotating_scan;
+----
+QW_AUTH: Remote graph credentials unavailable or rejected
+
+query I peer
+SELECT edge_id FROM qw_query('cloud_graph', 'cypher',
+    'MATCH (a:Person)-[e:FOLLOWS]->(:Person) WHERE a.id = 2 RETURN e.id AS edge_id',
+    schema := 'edge_id BIGINT');
+----
+40
+
+statement ok
+CREATE SECRET cloud_reader IN connection
+    (TYPE s3, KEY_ID 'qw-s3-fixture', SECRET 'qw-s3-fixture-rotated-key', REGION 'us-east-1',
+     SESSION_TOKEN 'qw-s3-fixture-token', SCOPE 's3://qw-s3-fixture/snapshots/');
+
+query I
+EXECUTE rotating_scan;
+----
+40
