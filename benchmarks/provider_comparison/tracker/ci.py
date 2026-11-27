@@ -1,6 +1,7 @@
 """GitHub Actions commit selection, paired verification and latency reporting."""
 import argparse
 from decimal import Decimal
+from hashlib import sha256
 import json
 import math
 import os
@@ -12,6 +13,9 @@ import sys
 
 HISTORY = "refs/remotes/origin/benchmark-history"
 SHA = re.compile(r"[0-9a-f]{40}")
+SHA256 = re.compile(r"[0-9a-f]{64}")
+WORKLOAD_HASHES = ("fixture_sha256", "sql_sha256", "parameter_trace_sha256", "oracle_sha256", "workload_sha256")
+WORKLOAD_FIELDS = ("case_id", "case_revision", "scale", *WORKLOAD_HASHES)
 RESULTS = {"passed", "baseline", "regression", "not_measured", "failed"}
 REVIEW_PERCENT = 10
 
@@ -60,6 +64,61 @@ def matrix(shas):
                         for i in range(0, len(shas), width)]}
 
 
+def workload_identity(snapshot):
+    """Return the comparable workload and schedule evidence, or None for a legacy snapshot."""
+    if "workload_evidence" not in snapshot and "schedule_sha256" not in snapshot:
+        return None
+    evidence, schedule = snapshot.get("workload_evidence"), snapshot.get("schedule_sha256")
+    if not isinstance(evidence, dict) or not evidence or not isinstance(schedule, str) or not SHA256.fullmatch(schedule):
+        raise ValueError("Incomplete benchmark workload evidence or schedule digest")
+    cases = {row["case"] for row in snapshot["summary"]}
+    if set(evidence) != cases or set(snapshot["statements"]) != cases:
+        raise ValueError("Benchmark workload evidence must cover exactly the measured cases")
+    comparable = {}
+    for name, case in evidence.items():
+        if not isinstance(case, dict) or any(field not in case for field in WORKLOAD_FIELDS):
+            raise ValueError(f"Incomplete benchmark workload evidence for {name}")
+        if any(not isinstance(case[field], str) or not case[field].strip() for field in ("case_id", "scale")):
+            raise ValueError(f"Invalid case ID or scale in benchmark workload evidence for {name}")
+        if type(case["case_revision"]) is not int or case["case_revision"] < 1:
+            raise ValueError(f"Invalid revision in benchmark workload evidence for {name}")
+        if any(not isinstance(case[field], str) or not SHA256.fullmatch(case[field]) for field in WORKLOAD_HASHES):
+            raise ValueError(f"Invalid digest in benchmark workload evidence for {name}")
+        # Artifact-specific lineage can differ between the candidate and baseline.
+        comparable[name] = tuple(case[field] for field in WORKLOAD_FIELDS)
+    return schedule, comparable
+
+
+def verify_workload_replay(snapshot):
+    """Require a measured workload's ordered calls to match its declared plan."""
+    identity = workload_identity(snapshot)
+    if identity is None:
+        return None
+
+    planned, workers = snapshot.get("workload_schedule"), snapshot.get("workers")
+    if not isinstance(planned, list) or not planned or not isinstance(workers, list) or not workers:
+        raise ValueError("Missing planned or observed benchmark replay schedule")
+    try:
+        observed = [
+            {"provider": worker["provider"], "route": worker["route"], "block": worker["block"],
+             "sequence": [{"case": sample["case"], "repetition": sample["repetition"]}
+                          for sample in worker["samples"]]}
+            for worker in workers
+        ]
+    except (KeyError, TypeError) as error:
+        raise ValueError("Malformed observed benchmark replay schedule") from error
+
+    def schedule_digest(schedule):
+        payload = json.dumps(schedule, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+        return sha256(payload.encode("utf-8")).hexdigest()
+
+    if schedule_digest(planned) != identity[0]:
+        raise ValueError("Declared benchmark replay schedule digest differs")
+    if any(not worker["sequence"] for worker in observed) or schedule_digest(observed) != identity[0]:
+        raise ValueError("Observed benchmark replay schedule differs from plan")
+    return identity
+
+
 def cohort(snapshot):
     # Hosted VMs have ephemeral hostnames. Compare a hardware/OS cohort and the
     # logical input, even if a freshly checkpointed provider file has a new ID.
@@ -67,7 +126,7 @@ def cohort(snapshot):
     return [snapshot[k] for k in ("protocol", "platform", "machine", "duckdb_threads",
                                     "runs", "blocks", "watchlist", "expected", "statements", "versions")] + [
         snapshot.get("ci_runner"), snapshot.get("upstream_duckdb_sha256"), fixture["source_sha256"], fixture["selection"],
-        fixture["files"]["edges.csv"]["sha256"], snapshot["edge_count"]]
+        fixture["files"]["edges.csv"]["sha256"], snapshot["edge_count"], workload_identity(snapshot)]
 
 
 def series(snapshot):
@@ -75,6 +134,7 @@ def series(snapshot):
 
 
 def compatible_baselines(current, start):
+    wanted = cohort(current)
     tree = f"{HISTORY}:main"
     if not start or subprocess.run(["git", "cat-file", "-e", tree], capture_output=True).returncode:
         return
@@ -89,7 +149,11 @@ def compatible_baselines(current, start):
             if record["status"] not in {"passed", "baseline"}:
                 continue
             snapshot = json.loads(git("show", f"{folder}/{entry}/snapshot.json"))
-            if (snapshot["workspace_head"] == ancestor and cohort(current) == cohort(snapshot)
+            try:
+                previous_cohort = cohort(snapshot)
+            except ValueError:
+                continue
+            if (snapshot["workspace_head"] == ancestor and wanted == previous_cohort
                     and series(current).keys() == series(snapshot).keys()):
                 yield snapshot
 
@@ -131,6 +195,8 @@ def verify_pair(current, previous, selection):
     if (current["id"] == previous["id"] or clients(current) != clients(previous)
             or cohort(current) != cohort(previous) or series(current).keys() != series(previous).keys()):
         raise ValueError("Incompatible paired measurements")
+    verify_workload_replay(current)
+    verify_workload_replay(previous)
 
 
 def latency_percent(old, new):
@@ -144,8 +210,11 @@ def latency_percent(old, new):
 def judge(current, previous):
     result = {"status": "baseline", "baseline_sha": None, "review_percent": REVIEW_PERCENT,
               "regressions": [], "improvements": []}
+    identity = verify_workload_replay(current)
     if previous is None:
         return result
+    if identity != verify_workload_replay(previous):
+        raise ValueError("Incompatible benchmark workload evidence or schedules")
     result.update(status="passed", baseline_sha=previous["workspace_head"])
     old = series(previous)
     for key, row in series(current).items():

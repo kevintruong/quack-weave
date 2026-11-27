@@ -1,6 +1,7 @@
 """Exercise the Actions range, gate and history writer with real temporary Git refs."""
 from contextlib import chdir, redirect_stdout
 from copy import deepcopy
+from hashlib import sha256
 import io
 import json
 import os
@@ -112,6 +113,163 @@ class TrackerCI(unittest.TestCase):
                     env={**os.environ, "QW_ADVISORY_FIXTURE": str(path)})
                 self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
                 self.assertRegex(check.stdout, r"All tests passed \([1-9][0-9]* assertions? in 1 test case\)")
+
+    def test_pairing_compares_workload_identity_before_advisory(self):
+        baseline = json.loads((HERE / "sf1.json").read_text())
+        case = "micro_creator_selective"
+        row = {**baseline["summary"][0], "case": case, "p50_ms": 1.0, "p95_ms": 2.0}
+        baseline.update(summary=[row], statements={case: "SELECT 1"}, expected={case: [1, "e" * 64]},
+                        pair_id="one-job", actions_artifacts={"release": "17"})
+        candidate = deepcopy(baseline)
+        candidate.update(id="candidate-run", workspace_head="b" * 40)
+        candidate["binaries"]["extension"] = "1" * 64
+        candidate["actions_artifacts"]["release"] = "21"
+        candidate["summary"][0]["p50_ms"] = 1.1
+        selection = {"baseline_sha": baseline["workspace_head"], "artifact_id": "17",
+                     "extension_sha256": baseline["binaries"]["extension"]}
+        identity = {
+            "case_id": "micro.creator_selective", "case_revision": 1, "scale": "mod32",
+            "fixture_sha256": baseline["fixture"]["files"]["edges.csv"]["sha256"],
+            "sql_sha256": "2" * 64, "parameter_trace_sha256": "3" * 64,
+            "oracle_sha256": "e" * 64, "workload_sha256": "4" * 64,
+        }
+
+        def with_identity(snapshot):
+            sequence = [{"case": case, "repetition": i} for i in range(3)]
+            worker = {"provider": row["provider"], "route": row["route"], "block": 0}
+            planned = [{**worker, "sequence": sequence}]
+            return {**deepcopy(snapshot),
+                    "workers": [{**worker, "samples": [{**call, "wall_ms": 1.0} for call in sequence]}],
+                    "workload_schedule": planned,
+                    "schedule_sha256": sha256(json.dumps(planned, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+                    "workload_evidence": {case: dict(identity)}}
+
+        current, previous = with_identity(candidate), with_identity(baseline)
+        previous["workload_evidence"][case]["evidence_artifact"] = "baseline-artifact"
+        current["workload_evidence"][case]["evidence_artifact"] = "candidate-artifact"
+
+        def changed(**values):
+            modified = deepcopy(current)
+            modified["workload_evidence"][case].update(values)
+            return modified
+
+        reordered_calls, reordered_plan = deepcopy(current), deepcopy(current)
+        reordered_calls["workers"][0]["samples"].reverse()
+        reordered_plan["workload_schedule"][0]["sequence"].reverse()
+        invalid_current = {**current, "schedule_sha256": "0" * 64}
+        invalid_previous = {**previous, "schedule_sha256": "0" * 64}
+        fixtures = [
+            ("archived_legacy", candidate, baseline, selection, True),
+            ("matched", current, previous, selection, True),
+            ("workload_drift", changed(workload_sha256="6" * 64), previous, selection, False),
+            ("revision_drift", changed(case_revision=2), previous, selection, False),
+            ("fixture_drift", changed(fixture_sha256="6" * 64), previous, selection, False),
+            ("statement_drift", changed(sql_sha256="6" * 64), previous, selection, False),
+            ("parameter_drift", changed(parameter_trace_sha256="6" * 64), previous, selection, False),
+            ("oracle_drift", changed(oracle_sha256="6" * 64), previous, selection, False),
+            ("scale_drift", changed(scale="mod256"), previous, selection, False),
+            ("schedule_drift", {**current, "schedule_sha256": "6" * 64}, previous, selection, False),
+            ("schedule_digest_detached", invalid_current, invalid_previous, selection, False),
+            ("observed_order_drift", reordered_calls, previous, selection, False),
+            ("planned_order_drift", reordered_plan, previous, selection, False),
+            ("missing_measurement", {**current, "workers": []}, previous, selection, False),
+            ("legacy_mismatch", current, baseline, selection, False),
+            ("partial_evidence", {**candidate, "schedule_sha256": "5" * 64}, previous, selection, False),
+            ("missing_case", {**current, "workload_evidence": {}}, previous, selection, False),
+            ("extra_case", {**current, "workload_evidence": {**current["workload_evidence"],
+                                                           "unmeasured": identity}}, previous, selection, False),
+            ("malformed_revision", changed(case_revision=True), previous, selection, False),
+            ("malformed_digest", changed(workload_sha256="invalid"), previous, selection, False),
+            ("wrong_release", current, previous, {**selection, "extension_sha256": "0" * 64}, False),
+        ]
+        decisions = []
+        for name, candidate, baseline, selected, _ in fixtures:
+            try:
+                ci.verify_pair(candidate, baseline, selected)
+                decision = ci.judge(candidate, baseline)
+            except ValueError:
+                decision = {"status": "rejected", "baseline_sha": None, "regressions": []}
+            decisions.append({"example": name, **decision})
+
+        if runner := os.environ.get("DUCKDB_UNITTEST"):
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "records.json"
+                path.write_text(json.dumps(decisions))
+                check = subprocess.run(
+                    [runner, "--test-dir", tmp, "--env-passthrough", "QW_WORKLOAD_PAIR_FIXTURE", "--stdin"],
+                    input=(HERE / "workload_pair.test").read_text(), text=True, capture_output=True,
+                    env={**os.environ, "QW_WORKLOAD_PAIR_FIXTURE": str(path)})
+                self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+                self.assertRegex(check.stdout, r"All tests passed \([1-9][0-9]* assertions? in 1 test case\)")
+
+        for pair, decision in zip(fixtures, decisions):
+            name, _, _, _, accepted = pair
+            with self.subTest(name=name):
+                self.assertEqual(decision["status"], "passed" if accepted else "rejected")
+        with self.assertRaisesRegex(ValueError, "workload evidence"):
+            ci.judge({**current, "workload_evidence": {}}, None)
+        with self.assertRaisesRegex(ValueError, "schedule"):
+            ci.judge(reordered_calls, None)
+        with self.assertRaisesRegex(ValueError, "schedule"):
+            ci.judge(reordered_plan, previous)
+        with self.assertRaisesRegex(ValueError, "schedule"):
+            ci.judge(invalid_current, None)
+
+    @unittest.skipUnless(os.environ.get("DUCKDB_UNITTEST"), "requires the pinned SQLLogic runner")
+    def test_pair_sqllogic_compares_snapshot_evidence(self):
+        baseline = json.loads((HERE / "sf1.json").read_text())
+        baseline["pair_id"] = "one-job"
+        for worker in baseline["workers"]:
+            worker["pair_position"] = worker["block"] % 2
+        candidate = deepcopy(baseline)
+        candidate.update(id="candidate-run", workspace_head="b" * 40)
+        for worker in candidate["workers"]:
+            worker["pair_position"] = 1 - worker["block"] % 2
+        legacy_candidate, legacy_baseline = deepcopy(candidate), deepcopy(baseline)
+        for snapshot in (candidate, baseline):
+            snapshot["schedule_sha256"] = "5" * 64
+            snapshot["workload_evidence"] = {
+                name: {"case_id": name, "case_revision": 1, "scale": "mod1",
+                       "fixture_sha256": snapshot["fixture"]["files"]["edges.csv"]["sha256"],
+                       "sql_sha256": "2" * 64, "parameter_trace_sha256": "3" * 64,
+                       "oracle_sha256": "4" * 64, "workload_sha256": "6" * 64,
+                       "capture_release": snapshot["workspace_head"]}
+                for name in snapshot["statements"]
+            }
+        missing = deepcopy(candidate)
+        drift = deepcopy(candidate)
+        reordered = deepcopy(candidate)
+        reordered["workers"][0]["samples"].reverse()
+        case = next(iter(candidate["workload_evidence"]))
+        del missing["workload_evidence"][case]
+        drift["workload_evidence"][case]["oracle_sha256"] = "7" * 64
+        fixtures = [
+            ("legacy", legacy_candidate, legacy_baseline, True),
+            ("match", candidate, baseline, True),
+            ("different_schedule", {**candidate, "schedule_sha256": "7" * 64}, baseline, False),
+            ("reordered_calls", reordered, baseline, False),
+            ("different_oracle", drift, baseline, False),
+            ("missing_workload", missing, baseline, False),
+            ("legacy_current_mix", candidate, legacy_baseline, False),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            candidate_path, baseline_path = Path(tmp) / "candidate.json", Path(tmp) / "baseline.json"
+            for name, candidate_run, baseline_run, accepted in fixtures:
+                with self.subTest(name=name):
+                    candidate_path.write_text(json.dumps(candidate_run))
+                    baseline_path.write_text(json.dumps(baseline_run))
+                    check = subprocess.run(
+                        [os.environ["DUCKDB_UNITTEST"], "--test-dir", tmp,
+                         "--env-passthrough", "QW_TRACKER_SNAPSHOT,QW_TRACKER_BASELINE", "--stdin"],
+                        input=(HERE / "pair.test").read_text(), text=True, capture_output=True,
+                        env={**os.environ, "QW_TRACKER_SNAPSHOT": str(candidate_path),
+                             "QW_TRACKER_BASELINE": str(baseline_path)})
+                    if accepted:
+                        self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+                        self.assertRegex(check.stdout, r"All tests passed \([1-9][0-9]* assertions? in 1 test case\)")
+                    else:
+                        self.assertNotEqual(check.returncode, 0, check.stdout + check.stderr)
+                        self.assertIn("Wrong result in query", check.stderr)
 
     def test_judge_displays_and_archives_the_same_tables_on_regression(self):
         previous = json.loads((HERE / "sf1.json").read_text())

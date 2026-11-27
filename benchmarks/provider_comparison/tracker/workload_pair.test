@@ -1,0 +1,45 @@
+# name: benchmarks/provider_comparison/tracker/workload_pair.test
+# description: Compare real pairing decisions for expected compatibility and advisory handling
+# group: [quack_weave]
+
+require json
+
+test-env QW_WORKLOAD_PAIR_FIXTURE UNSET_QW_WORKLOAD_PAIR_FIXTURE
+
+statement ok
+CREATE TEMP TABLE pair_decisions AS
+FROM read_json_auto('{QW_WORKLOAD_PAIR_FIXTURE}');
+
+query TTII nosort
+SELECT example, status, (baseline_sha IS NOT NULL)::INT, len(regressions)
+FROM pair_decisions ORDER BY example;
+----
+archived_legacy	passed	1	1
+extra_case	rejected	0	0
+fixture_drift	rejected	0	0
+legacy_mismatch	rejected	0	0
+malformed_digest	rejected	0	0
+malformed_revision	rejected	0	0
+matched	passed	1	1
+missing_case	rejected	0	0
+missing_measurement	rejected	0	0
+observed_order_drift	rejected	0	0
+oracle_drift	rejected	0	0
+parameter_drift	rejected	0	0
+partial_evidence	rejected	0	0
+planned_order_drift	rejected	0	0
+revision_drift	rejected	0	0
+scale_drift	rejected	0	0
+schedule_digest_detached	rejected	0	0
+schedule_drift	rejected	0	0
+statement_drift	rejected	0	0
+workload_drift	rejected	0	0
+wrong_release	rejected	0	0
+
+query TT nosort
+SELECT example, unnest(r.metrics)
+FROM pair_decisions, unnest(regressions) AS result(r)
+ORDER BY example;
+----
+archived_legacy	p50
+matched	p50

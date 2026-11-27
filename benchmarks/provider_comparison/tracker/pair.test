@@ -29,6 +29,39 @@ SELECT count(*) FROM c FULL JOIN b ON
     (c.w.block, c.w.provider, c.w.route) = (b.w.block, b.w.provider, b.w.route)
 WHERE c.w.block IS NULL OR b.w.block IS NULL
    OR b.w.pair_position IS DISTINCT FROM b.w.block % 2
-   OR c.w.pair_position IS DISTINCT FROM 1 - b.w.block % 2;
+   OR c.w.pair_position IS DISTINCT FROM 1 - b.w.block % 2
+   OR ((SELECT json_exists(to_json(s), '$.schedule_sha256') FROM candidate s)
+       AND list_transform(c.w.samples, lambda s: (s.repetition, s."case"))
+           IS DISTINCT FROM list_transform(b.w.samples, lambda s: (s.repetition, s."case")));
 ----
 0
+
+# Project stable workload fields independently of the release-specific receipts.
+statement ok
+CREATE TEMP MACRO workload_projection(snapshot) AS (
+    SELECT list(struct_pack(case_name := entry.key, identity := json_transform(entry.value,
+        '{"case_id":"VARCHAR","case_revision":"BIGINT","scale":"VARCHAR",
+          "fixture_sha256":"VARCHAR","sql_sha256":"VARCHAR","parameter_trace_sha256":"VARCHAR",
+          "oracle_sha256":"VARCHAR","workload_sha256":"VARCHAR"}')) ORDER BY entry.key)
+    FROM json_each(json_extract(snapshot, '$.workload_evidence')) AS entry
+);
+
+query I
+WITH snapshots AS (
+    SELECT to_json(c) AS c, to_json(b) AS b FROM candidate c, baseline b
+), evidence AS (
+    SELECT c, b, json_extract_string(c, '$.schedule_sha256') AS c_schedule,
+           json_extract_string(b, '$.schedule_sha256') AS b_schedule,
+           list_sort(json_keys(json_extract(c, '$.workload_evidence'))) AS c_cases,
+           list_sort(json_keys(json_extract(b, '$.workload_evidence'))) AS b_cases
+    FROM snapshots
+)
+SELECT count(*) FROM evidence
+WHERE (NOT json_exists(c, '$.schedule_sha256') AND NOT json_exists(b, '$.schedule_sha256')
+   AND NOT json_exists(c, '$.workload_evidence') AND NOT json_exists(b, '$.workload_evidence'))
+   OR (regexp_full_match(c_schedule, '[0-9a-f]{64}') AND c_schedule = b_schedule
+       AND len(c_cases) > 0 AND c_cases = b_cases
+       AND c_cases = list_sort(json_keys(json_extract(c, '$.statements')))
+       AND workload_projection(c) = workload_projection(b));
+----
+1
