@@ -6,7 +6,7 @@ QuackWeave is a read-only graph extension for DuckDB. Its SQL/PGQ interface embe
 
 ## Build and query a graph
 
-Build one QuackWeave extension for DuckDB `v2.0.1` on Linux ARM64 or macOS ARM64. It includes Ladybug `v0.22.3`, RelateDB `v1.2.0`, and Neo4j AuraDB. Load it once, then register the graphs you want to query.
+Build one QuackWeave extension for DuckDB `v2.0.1` on Linux ARM64 or macOS ARM64. It includes Ladybug `v0.23.0`, RelateDB `v1.2.0`, and Neo4j AuraDB. Load it once, then register the graphs you want to query.
 
 Install Rust, a C++20 compiler, CMake, Python 3.12 or later, and OpenSSL 3 static libraries. The build locates OpenSSL through Homebrew or `OPENSSL_LIB_DIR`. On Ubuntu 24.04 ARM64 set `CXX=g++-13` and `OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu`.
 
@@ -15,7 +15,7 @@ make native-deps && make native-release
 /path/to/duckdb-v2.0.1 -unsigned
 ```
 
-The commands build `build/native/release/extension/quack_weave/quack_weave.duckdb_extension`. Plain `make` produces the corresponding debug package in `build/native/debug/`. The adjacent `licenses/` directory contains the Quack Weave license and the notices for the pinned DuckDB, DuckGQL, openGQL, ANTLR, and RelateDB sources.
+The commands build `build/native/release/extension/quack_weave/quack_weave.duckdb_extension`. Plain `make` produces the corresponding debug package in `build/native/debug/`. The adjacent `licenses/` directory contains the Quack Weave license and the notices for the pinned DuckDB, DuckGQL, openGQL, ANTLR, Ladybug, and RelateDB sources.
 
 Open an existing Ladybug graph with `Document` nodes and `LINKS_TO` relationships. `GRAPH_TABLE` makes the matches available to standard SQL.
 
@@ -59,7 +59,7 @@ Scans reuse the registered read-only database handle and open independent connec
 Run the package and runtime acceptance checks with the pinned CLIs.
 
 ```sh
-make native-test DUCKDB=/path/to/duckdb-v2.0.1 LBUG=/path/to/lbug-v0.22.3
+make native-test DUCKDB=/path/to/duckdb-v2.0.1 LBUG=/path/to/lbug-v0.23.0
 ```
 
 ### Query a RelateDB graph alongside Ladybug
@@ -288,7 +288,7 @@ make native-deps
 make native-stabilization-test \
   DUCKDB_UNITTEST="$PWD/build/benchmark-host/unittest" \
   DUCKDB_LIB="$(find "$PWD/build/benchmark-host/release/src" -name 'libduckdb.*')" \
-  LBUG=/path/to/lbug-v0.22.3
+  LBUG=/path/to/lbug-v0.23.0
 ```
 
 The gate writes profile logs, raw observer evidence, and `stabilization-coverage.json` under `build/stabilization-reports/`. The coverage check requires every manifest case across its assigned profiles and verifies the SQL source hashes against the checked-out files. Set `STABILIZATION_REPORT_DIR` to choose a different destination.

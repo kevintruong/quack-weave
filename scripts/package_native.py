@@ -4,7 +4,7 @@ import shutil
 import tempfile
 
 from prepare_gql_deps import ANTLR_VERSION, DUCKDB_REVISION, DUCKGQL_REVISION, ROOT
-from prepare_ladybug_deps import verify
+from prepare_ladybug_deps import SOURCE_DIR as LADYBUG_SOURCE_DIR, verify
 
 
 def metadata_field(text):
@@ -44,6 +44,8 @@ def package_native(library, extension, duckdb_version, platform, extension_versi
          "43070e2d4e532684de521b885f385d0841030efa2b1a20bafb76133a5e1379c1"),
         ("ANTLR-LICENSE.txt", ROOT / f"antlr4-{ANTLR_VERSION}" / "LICENSE.txt",
          "3db1fb3ee79a4b4f9918fc4d0f6133bf18a3cf787f126cd22f8aa9b862281c0c"),
+        ("Ladybug-LICENSE", LADYBUG_SOURCE_DIR / "LICENSE",
+         "1c495c9546d0de02e83c9d50d5f7eb21f0085bc8f77a0ee333081a123a9c8d0c"),
         ("Relate-LICENSE", relate / "LICENSE",
          "ac87d12e27d69f09130a7b4178e48e995ab131e4b476aa188e58ffac7ed7fab3"),
         ("Relate-THIRDPARTY-NOTICES.md", relate / "THIRDPARTY-NOTICES.md",

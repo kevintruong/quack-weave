@@ -217,21 +217,21 @@ jobs:
 
       - name: Prepare pinned Ladybug fixture CLI
         run: |
-          directory="$RUNNER_TEMP/ladybug-0.22.3-cli"
+          directory="$RUNNER_TEMP/ladybug-0.23.0-cli"
           if [[ "$RUNNER_OS" == Linux ]]; then
             asset=lbug_cli-linux-aarch64.tar.gz
-            digest=31f90d7da53245ab1a3b533df8d02939e5fdb60f517855a44c3ac8cd0969fbcd
+            digest=da59ed10d0a4f64f89c4773d824283423bd8e15643a36ba0c9fc67828b762ded
           else
             asset=lbug_cli-osx-arm64.tar.gz
-            digest=d0012ffc8683a7b88fe47b8068bf4ee12c5a7f5b5c08fde89a2e4a6acd091a90
+            digest=14c1bdd15d06e5e71028b37c58fc0aedad55738d89e505124e9cc7c3aa7ce89e
           fi
           archive="$directory/$asset"
           mkdir -p "$directory"
           curl --fail --location --retry 3 --output "$archive" \
-            "https://github.com/LadybugDB/ladybug/releases/download/v0.22.3/$asset"
+            "https://github.com/LadybugDB/ladybug/releases/download/v0.23.0/$asset"
           printf '%s  %s\n' "$digest" "$archive" | shasum -a 256 --check
           tar -xzf "$archive" -C "$directory"
-          test "$("$directory/lbug" -v)" = 'Lbug 0.22.3'
+          test "$("$directory/lbug" -v)" = 'Lbug 0.23.0'
           printf 'LBUG=%s\n' "$directory/lbug" >> "$GITHUB_ENV"
 
       - uses: actions/download-artifact@v5

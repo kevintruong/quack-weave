@@ -1,16 +1,28 @@
+import fcntl
 import hashlib
+import os
 import pathlib
 import platform
 import shutil
+import subprocess
 import tarfile
 import tempfile
 import urllib.request
 
 
-VERSION = "0.22.3"
+VERSION = "0.23.0"
+EXTENSIONS_REVISION = "3e6d45bba993dbcb0a2b80921b9fa5f544b44bb6"
 ROOT = pathlib.Path(__file__).resolve().parents[1] / "build" / "deps" / f"ladybug-{VERSION}"
-RELEASE = f"https://github.com/LadybugDB/ladybug/releases/download/v{VERSION}"
-SOURCE = f"https://codeload.github.com/LadybugDB/ladybug/tar.gz/refs/tags/v{VERSION}"
+PATCH = pathlib.Path(__file__).with_name("ladybug_cloud.patch")
+SOURCE_DIR = ROOT / f"ladybug-{VERSION}"
+BUILD_DIR = ROOT / "native"
+
+SOURCES = (
+    ("source.tar.gz", f"https://codeload.github.com/LadybugDB/ladybug/tar.gz/refs/tags/v{VERSION}",
+     "06ce668379897537c9638da7bc27247dde79194807b07ac75e18b3dfdb12542d"),
+    ("extensions.tar.gz", f"https://codeload.github.com/LadybugDB/extensions/tar.gz/{EXTENSIONS_REVISION}",
+     "20aeae96c04b39d657cb2b3f33a34c934397969f90c867424e33c72c01e606bd"),
+)
 
 
 def verify(archive, digest):
@@ -19,61 +31,85 @@ def verify(archive, digest):
             raise ValueError(f"SHA-256 mismatch for {archive}")
 
 
-def install_archive(name, url, digest, subtree, marker):
+def archive_path(name, url, digest):
     archive = ROOT / name
+    if not archive.exists():
+        with tempfile.TemporaryDirectory(dir=ROOT) as directory:
+            staging = pathlib.Path(directory) / name
+            with urllib.request.urlopen(url, timeout=60) as source, staging.open("wb") as output:
+                shutil.copyfileobj(source, output)
+            verify(staging, digest)
+            staging.replace(archive)
+    else:
+        verify(archive, digest)
+    return archive
+
+
+def prepare_sources():
+    fingerprint = hashlib.sha256(PATCH.read_bytes()).hexdigest()
+    marker = SOURCE_DIR / ".quack-weave-ladybug-patch"
+    if marker.is_file() and marker.read_text(encoding="ascii") == fingerprint:
+        return
     with tempfile.TemporaryDirectory(dir=ROOT) as directory:
         staging = pathlib.Path(directory)
-        if not archive.exists():
-            download = staging / name
-            with urllib.request.urlopen(url, timeout=60) as source, download.open("wb") as output:
-                shutil.copyfileobj(source, output)
-            verify(download, digest)
-            download.replace(archive)
-        else:
-            verify(archive, digest)
-
-        installed = ROOT / subtree
-        if (installed / marker).is_file():
-            return
-
-        # Source has its own top-level directory. The library archive is flat.
-        is_source = subtree.startswith("ladybug-")
-        destination = staging if is_source else staging / subtree
-        with tarfile.open(archive) as contents:
-            contents.extractall(destination, filter="data")
-        if not (staging / subtree / marker).is_file():
-            raise ValueError(f"Unexpected archive layout for {name}")
+        for archive in (archive_path(*entry) for entry in SOURCES):
+            with tarfile.open(archive) as contents:
+                contents.extractall(staging, filter="data")
+        source = staging / SOURCE_DIR.name
+        extension = source / "extension"
+        extension.rmdir()
+        (staging / f"extensions-{EXTENSIONS_REVISION}").replace(extension)
+        subprocess.run(["patch", "--batch", "-p1", "-i", str(PATCH)], cwd=source, check=True)
+        (source / marker.name).write_text(fingerprint, encoding="ascii")
+        previous = staging / "previous"
+        if SOURCE_DIR.exists():
+            SOURCE_DIR.replace(previous)
         try:
-            (staging / subtree).replace(installed)
+            source.replace(SOURCE_DIR)
         except OSError:
-            if not (installed / marker).is_file():
-                raise
+            if previous.exists():
+                previous.replace(SOURCE_DIR)
+            raise
 
 
 def main():
     system = platform.system(), platform.machine()
-    if system == ("Darwin", "arm64"):
-        asset = "liblbug-static-osx-arm64.tar.gz"
-        checksum = "9a6e6903ed36ad58fbc31412cf4aae6d269b90219137a8e29b47472a89c350c8"
-    elif system == ("Linux", "aarch64"):
-        asset = "liblbug-static-linux-aarch64-compat.tar.gz"
-        checksum = "4bf57a7ccd46f96765aa10a9b797f2e01f4390fd40484d74110f943e766359d8"
-    else:
+    if system not in {("Darwin", "arm64"), ("Linux", "aarch64")}:
         raise SystemExit(f"Unsupported native target {system}")
 
     ROOT.mkdir(parents=True, exist_ok=True)
-    install_archive(
-        asset, f"{RELEASE}/{asset}", checksum,
-        "static-linux-aarch64" if system[0] == "Linux" else "static",
-        "liblbug.a",
-    )
-    install_archive(
-        "source.tar.gz",
-        SOURCE,
-        "af970748d21a20d5915f76b895272f8eda5b6b86a1cfb61e5b97f01f290f5036",
-        f"ladybug-{VERSION}",
-        "src/include/parser/parser.h",
-    )
+    with (ROOT / ".prepare.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        prepare_sources()
+        args = [
+            "cmake", "-S", str(SOURCE_DIR), "-B", str(BUILD_DIR),
+            "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_SHARED_LBUG=OFF",
+            "-DBUILD_STATIC_LBUG=ON", "-DBUILD_SINGLE_FILE_HEADER=OFF",
+            "-DAUTO_UPDATE_GRAMMAR=OFF", "-DEXTENSION_STATIC_LINK_LIST=httpfs",
+            "-DOPENSSL_USE_STATIC_LIBS=ON",
+        ]
+        openssl_root = os.environ.get("OPENSSL_ROOT_DIR")
+        openssl_lib = os.environ.get("OPENSSL_LIB_DIR")
+        if system[0] == "Darwin" and not openssl_root:
+            openssl_root = subprocess.check_output(
+                ["brew", "--prefix", "openssl@3"], text=True,
+            ).strip()
+        if openssl_root:
+            args.append(f"-DOPENSSL_ROOT_DIR={openssl_root}")
+            if not openssl_lib:
+                openssl_lib = pathlib.Path(openssl_root) / "lib"
+        if openssl_lib:
+            for library in ("ssl", "crypto"):
+                archive = pathlib.Path(openssl_lib) / f"lib{library}.a"
+                if not archive.is_file():
+                    raise FileNotFoundError(archive)
+                args.append(f"-DOPENSSL_{library.upper()}_LIBRARY={archive}")
+        subprocess.run(args, check=True)
+        jobs = os.environ.get("CMAKE_BUILD_PARALLEL_LEVEL") or str(os.cpu_count() or 1)
+        subprocess.run(
+            ["cmake", "--build", str(BUILD_DIR), "--target", "lbug_shell", "--parallel", jobs],
+            check=True,
+        )
 
 
 if __name__ == "__main__":

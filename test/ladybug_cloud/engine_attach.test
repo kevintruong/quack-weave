@@ -1,0 +1,16 @@
+query TIITT
+SELECT scheme, src, dst, ranged_get, only_reads
+FROM read_csv('{QW_ENGINE_ATTACH_OBSERVATIONS}')
+ORDER BY scheme, src, dst;
+----
+gs	10	20	true	true
+s3	10	20	true	true
+
+query TIT
+SELECT scheme, fault, rejected
+FROM read_csv('{QW_ENGINE_INVALID_RANGES}')
+ORDER BY scheme, fault;
+----
+s3	redirect	true
+s3	short_body	true
+s3	wrong_range	true

@@ -20,7 +20,7 @@ case "$(uname -s)" in
   Linux)  export DUCKDB_LIB="$PWD/build/benchmark-host/release/src/libduckdb.so" ;;
 esac
 export QW_EXT="$PWD/build/native/release/extension/quack_weave/quack_weave.duckdb_extension"
-export LBUG="$PWD/build/deps/ladybug-v0.22.3/lbug"
+export LBUG="$PWD/build/deps/ladybug-0.23.0/native/tools/shell/lbug"
 ```
 
 The host installer uses `gh` to retrieve a pinned GitHub release artifact when it is absent from the cache. For the scaled fixture, place the [pinned LSQB SF1 graph](../benchmarks/lsqb_sf1/watchlist.py) at `build/perf/lsqb-sf1/sf1.lbdb`, then run the preparation command below. The builder checks the source hash and creates both provider files, the shared edge CSV, and a fixture manifest.

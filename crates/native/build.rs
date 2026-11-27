@@ -6,6 +6,7 @@ use std::process::Command;
 const DUCKGQL_REVISION: &str = "b4421c5cb5e3a389f9658de591a0aa6d397da991";
 const DUCKDB_REVISION: &str = "8d78114e90a53823803660bf821f6073ac87da8c";
 const ANTLR_VERSION: &str = "4.13.2";
+const LADYBUG_VERSION: &str = "0.23.0";
 
 fn main() {
     if env::var_os("CARGO_FEATURE_TEMPLATE_COMPAT").is_some() {
@@ -13,20 +14,20 @@ fn main() {
     }
 
     let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-    let pinned = manifest_dir.join("../../build/deps/ladybug-0.22.3");
+    let pinned = manifest_dir.join(format!("../../build/deps/ladybug-{LADYBUG_VERSION}"));
     let native = manifest_dir.join("src/ladybug_admission.cpp");
-    let source = configured("LADYBUG_SOURCE_DIR", pinned.join("ladybug-0.22.3"));
-    let macos = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos");
-    let library = configured(
-        "LADYBUG_LIB_DIR",
-        pinned.join(if macos {
-            "static"
-        } else {
-            "static-linux-aarch64"
-        }),
+    let source = configured(
+        "LADYBUG_SOURCE_DIR",
+        pinned.join(format!("ladybug-{LADYBUG_VERSION}")),
     );
+    let library = configured("LADYBUG_LIB_DIR", pinned.join("native/src"));
+    let config_headers = library.join("include");
+    let engine_archive = library.join("liblbug.a");
+    let httpfs_archive = source.join("extension/httpfs/build/libhttpfs_static.lbug_extension");
+    let macos = env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos");
     let ssl = env::var_os("OPENSSL_LIB_DIR")
         .map(PathBuf::from)
+        .or_else(|| env::var_os("OPENSSL_ROOT_DIR").map(|root| PathBuf::from(root).join("lib")))
         .or_else(homebrew_openssl_lib)
         .expect("Set OPENSSL_LIB_DIR to the directory containing OpenSSL 3 static archives");
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
@@ -34,9 +35,11 @@ fn main() {
     for key in [
         "CXX",
         "AR",
+        "NM",
         "LADYBUG_SOURCE_DIR",
         "LADYBUG_LIB_DIR",
         "OPENSSL_LIB_DIR",
+        "OPENSSL_ROOT_DIR",
     ] {
         println!("cargo:rerun-if-env-changed={key}");
     }
@@ -44,24 +47,28 @@ fn main() {
 
     for path in [
         source.join("src/include/parser/parser.h"),
-        library.join("liblbug.a"),
+        config_headers.join("common/system_config.h"),
+        engine_archive.clone(),
+        httpfs_archive.clone(),
         ssl.join("libssl.a"),
         ssl.join("libcrypto.a"),
     ] {
+        println!("cargo:rerun-if-changed={}", path.display());
         require_file(
             &path,
             "Run make native-deps and ensure OpenSSL 3 is available.",
         );
     }
 
-    ladybug_config_header(&library, &out);
+    require_archive_symbol(&engine_archive, "qw_lbug_cloud_read_only_attach");
+    require_archive_symbol(&httpfs_archive, "qw_lbug_cloud_verified_transport");
     let object = out.join("ladybug_admission.o");
     run(
         Command::new(env::var_os("CXX").as_deref().unwrap_or(OsStr::new("c++")))
             .args(["-std=c++20", "-fPIC", "-fvisibility=hidden", "-I"])
             .arg(source.join("src/include"))
             .arg("-I")
-            .arg(&out)
+            .arg(&config_headers)
             .arg("-I")
             .arg(source.join("third_party/alp/include"))
             .arg("-I")
@@ -86,6 +93,8 @@ fn main() {
             Command::new(env::var_os("CXX").as_deref().unwrap_or(OsStr::new("c++")))
                 .args(["-std=c++20", "-fPIC", "-fvisibility=hidden", "-I"])
                 .arg(source.join("src/include"))
+                .arg("-I")
+                .arg(&config_headers)
                 .arg("-c")
                 .arg(probe)
                 .arg("-o")
@@ -103,8 +112,12 @@ fn main() {
 
     // Link these exact archives. Apple's linker can otherwise pick their dylib
     // siblings when resolving a library by bare name.
+    if !macos {
+        println!("cargo:rustc-link-arg=-Wl,--start-group");
+    }
     for archive in [
-        library.join("liblbug.a"),
+        engine_archive,
+        httpfs_archive,
         ssl.join("libssl.a"),
         ssl.join("libcrypto.a"),
     ] {
@@ -114,6 +127,9 @@ fn main() {
             println!("cargo:rustc-link-arg=-Xlinker");
         }
         println!("cargo:rustc-link-arg={}", archive.display());
+    }
+    if !macos {
+        println!("cargo:rustc-link-arg=-Wl,--end-group");
     }
     let cpp_runtime = if macos {
         println!(
@@ -131,30 +147,27 @@ fn main() {
     println!("cargo:rustc-link-lib=dylib={cpp_runtime}");
 }
 
-// The release ships its configured storage constants in the amalgamated C++
-// header. Supply exactly those constants when compiling against its private
-// storage headers, which otherwise require a local Ladybug CMake build.
-fn ladybug_config_header(library: &Path, out: &Path) {
-    let header = library.join("lbug.hpp");
-    println!("cargo:rerun-if-changed={}", header.display());
-    let release = std::fs::read_to_string(&header).expect("Ladybug release lbug.hpp");
-    let start = release
-        .find("#define BOTH_REL_STORAGE")
-        .expect("Ladybug storage config");
-    let end_marker = "#undef BWD_REL_STORAGE";
-    let end = start
-        + release[start..]
-            .find(end_marker)
-            .expect("end of storage config")
-        + end_marker.len();
-    let common = out.join("common");
-    std::fs::create_dir_all(&common).unwrap();
-    let includes = "#pragma once\n#include <algorithm>\n#include <cstdint>\n#include \"common/enums/extend_direction.h\"\n";
-    std::fs::write(
-        common.join("system_config.h"),
-        format!("{includes}{}\n", &release[start..end]),
-    )
-    .unwrap();
+fn require_archive_symbol(archive: &Path, name: &str) {
+    let output = Command::new(env::var_os("NM").as_deref().unwrap_or(OsStr::new("nm")))
+        .arg("-g")
+        .arg(archive)
+        .output()
+        .expect("Read the patched Ladybug archive symbols");
+    let symbols = String::from_utf8_lossy(&output.stdout);
+    let found = symbols.lines().any(|line| {
+        let mut words = line.split_ascii_whitespace().rev();
+        words
+            .next()
+            .is_some_and(|symbol| symbol.trim_start_matches('_') == name)
+            && words
+                .next()
+                .is_some_and(|kind| kind.eq_ignore_ascii_case("t"))
+    });
+    assert!(
+        output.status.success() && found,
+        "{} lacks the patched Ladybug symbol {name}. Run make native-deps.",
+        archive.display()
+    );
 }
 
 fn build_duckdb_shims(manifest: &Path, out: &Path, neo4j: bool) {

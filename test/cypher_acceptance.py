@@ -12,7 +12,7 @@ import tempfile
 
 
 DUCKDB_VERSION = "v2.0.1"
-LADYBUG_VERSION = "0.22.3"
+LADYBUG_VERSION = "0.23.0"
 TRAVERSAL = (
     "MATCH (src:Document {id: 100})-[:LINKS_TO]->(dst:Document) "
     "RETURN dst.id AS document_id"

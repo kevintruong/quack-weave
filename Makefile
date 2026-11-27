@@ -135,3 +135,7 @@ native-stabilization-test native-stabilization-test-prebuilt:
 	$(call record_stabilization,native-release,$(stabilization_slt) --extension '$(NATIVE_RELEASE_ARTIFACT)')
 	$(call record_stabilization,observer,$(stabilization_observer))
 	$(PYTHON_BIN) -B test/stabilization/check_coverage.py --report-dir '$(STABILIZATION_REPORT_DIR)'
+
+.PHONY: native-ladybug-engine-test
+native-ladybug-engine-test:
+	$(PYTHON_BIN) -B test/ladybug_cloud/engine.py --duckdb-unittest '$(DUCKDB_UNITTEST)' --lbug build/deps/ladybug-0.23.0/native/tools/shell/lbug

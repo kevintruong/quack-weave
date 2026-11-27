@@ -1,0 +1,334 @@
+--- a/src/main/attached_database.cpp
++++ b/src/main/attached_database.cpp
+@@ -65,8 +65,9 @@
+     }
+     catalog = std::make_unique<catalog::Catalog>();
+     validateEmptyWAL(path, clientContext);
++    // ATTACH reads an immutable snapshot even when the host database is writable.
+     storageManager = std::make_unique<storage::StorageManager>(path,
+-        clientContext->getDBConfig()->readOnly, clientContext->getDBConfig()->enableChecksums,
++        true /* readOnly */, clientContext->getDBConfig()->enableChecksums,
+         *storage::MemoryManager::Get(*clientContext),
+         clientContext->getDBConfig()->enableCompression,
+         clientContext->getDBConfig()->enableDefaultHashIndex, vfs);
+@@ -81,3 +82,5 @@
+ 
+ } // namespace main
+ } // namespace lbug
++
++extern "C" void qw_lbug_cloud_read_only_attach() {}
+--- a/extension/httpfs/src/s3fs_config.cpp
++++ b/extension/httpfs/src/s3fs_config.cpp
+@@ -41,8 +41,8 @@
+         .accessKeyIDOption = {common::Value{""}, true},
+         .secretAccessKeyOption = {common::Value{""}, true},
+         .sessionTokenOption = {common::Value{""}, true},
+-        .endpointOption = {common::Value{"storage.googleapis.com"}, false, false},
+-        .urlStyleOption = {{common::Value{"path"}}, false, false},
++        .endpointOption = {common::Value{"storage.googleapis.com"}},
++        .urlStyleOption = {{common::Value{"path"}}},
+         .regionOption = {common::Value{"us-east-1"}, false, false},
+         .disableSSLOption = {common::Value{false}}};
+ }
+--- a/extension/httpfs/src/include/httpfs.h
++++ b/extension/httpfs/src/include/httpfs.h
+@@ -61,6 +61,8 @@
+     int flags;
+     uint64_t length;
+     uint64_t fileOffset;
++    std::chrono::milliseconds socketTimeout;
++    bool requirePartialContent = false;
+     HTTPConfig httpConfig;
+     std::unique_ptr<common::FileInfo> cachedFileInfo;
+ 
+@@ -106,7 +108,8 @@
+ 
+     bool fileOrPathExists(const std::string& path, main::ClientContext* context = nullptr) override;
+ 
+-    static std::unique_ptr<httplib::Client> getClient(const std::string& host);
++    static std::unique_ptr<httplib::Client> getClient(const std::string& host,
++        std::chrono::milliseconds timeout = std::chrono::milliseconds{HTTPParams::DEFAULT_TIMEOUT});
+ 
+     static std::unique_ptr<httplib::Headers> getHTTPHeaders(HeaderMap& headerMap);
+ 
+--- a/extension/httpfs/src/httpfs.cpp
++++ b/extension/httpfs/src/httpfs.cpp
+@@ -2,11 +2,13 @@
+ 
+ #include <algorithm>
+ #include <cctype>
++#include <charconv>
+ #include <cstdlib>
+ #include <sstream>
+ #include <vector>
+ 
+ #include "common/cast.h"
++#include "common/exception/interrupt.h"
+ #include "common/exception/io.h"
+ #include "common/exception/not_implemented.h"
+ #include "common/string_utils.h"
+@@ -208,6 +210,9 @@
+ HTTPFileInfo::HTTPFileInfo(std::string path, FileSystem* fileSystem, int flags,
+     main::ClientContext* context)
+     : FileInfo{std::move(path), fileSystem}, flags{flags}, length{0}, fileOffset{0},
++      socketTimeout{context && context->hasTimeout() ?
++          std::min(context->getQueryTimeOut(), HTTPParams::DEFAULT_TIMEOUT) :
++          HTTPParams::DEFAULT_TIMEOUT},
+       httpConfig{context}, cachedFileInfo{nullptr} {}
+ 
+ void HTTPFileInfo::initMetadata() {
+@@ -243,7 +248,7 @@
+             }
+             length = 0;
+             return;
+-        } else if ((flags & FileFlags::READ_ONLY) && res->code != 404) {
++        } else if ((flags & FileFlags::READ_ONLY) && res->code != 404 && !requirePartialContent) {
+             // HEAD request fail, use Range request for another try (read only one byte).
+             auto rangeRequest =
+                 hfs->getRangeRequest(this, this->path, {}, 0, nullptr /* buffer */, 2);
+@@ -335,7 +340,7 @@
+ void HTTPFileInfo::initializeClient() {
+ #ifndef __WASM__
+     auto [host, hostPath] = HTTPFileSystem::parseUrl(path);
+-    httpClient = HTTPFileSystem::getClient(host.c_str());
++    httpClient = HTTPFileSystem::getClient(host.c_str(), socketTimeout);
+ #endif
+ }
+ 
+@@ -759,18 +764,31 @@
+     return httpFileInfo.length;
+ }
+ 
+-std::unique_ptr<httplib::Client> HTTPFileSystem::getClient(const std::string& host) {
++static void setSocketTimeout(httplib::Client& client, std::chrono::milliseconds timeout) {
++    client.set_write_timeout(timeout);
++    client.set_read_timeout(timeout);
++    client.set_connection_timeout(timeout);
++}
++
++static void applyRequestDeadline(httplib::Client& client,
++    std::chrono::steady_clock::time_point deadline) {
++    const auto remaining = deadline - std::chrono::steady_clock::now();
++    if (remaining <= std::chrono::steady_clock::duration::zero()) {
++        throw common::InterruptException();
++    }
++    setSocketTimeout(client, std::chrono::ceil<std::chrono::milliseconds>(remaining));
++}
++
++std::unique_ptr<httplib::Client> HTTPFileSystem::getClient(const std::string& host,
++    std::chrono::milliseconds timeout) {
+     auto client = std::make_unique<httplib::Client>(host);
+-    client->set_follow_location(true);
++    // Cloud graph credentials belong to the configured origin.
++    client->set_follow_location(false);
+     client->set_keep_alive(HTTPParams::DEFAULT_KEEP_ALIVE);
+-    // TODO(Chang): Windows CI is missing some certificates, which causes tests to fail. Enable the
+-    // certificate verification after fixing the certificate issue.
+ #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+-    client->enable_server_certificate_verification(false);
+-#endif
+-    client->set_write_timeout(HTTPParams::DEFAULT_TIMEOUT);
+-    client->set_read_timeout(HTTPParams::DEFAULT_TIMEOUT);
+-    client->set_connection_timeout(HTTPParams::DEFAULT_TIMEOUT);
++    client->enable_server_certificate_verification(true);
++#endif
++    setSocketTimeout(*client, timeout);
+     client->set_decompress(false);
+     return client;
+ }
+@@ -888,7 +906,7 @@
+             exception = std::current_exception();
+         }
+ 
+-        if (err == httplib::Error::Success) {
++        if (!exception && err == httplib::Error::Success) {
+             switch (status) {
+             case 408: // Request Timeout
+             case 418: // Server is pretending to be a teapot
+@@ -947,14 +965,41 @@
+     auto hostPath = parsedURL.second;
+     auto headers = getHTTPHeaders(headerMap);
+ 
+-    std::function<httplib::Result(void)> request(
+-        [&]() { return httpFileInfo->httpClient->Head(hostPath.c_str(), *headers); });
++    const auto deadline = std::chrono::steady_clock::now() + httpFileInfo->socketTimeout;
++    std::function<httplib::Result(void)> request([&]() {
++        applyRequestDeadline(*httpFileInfo->httpClient, deadline);
++        return httpFileInfo->httpClient->Head(hostPath.c_str(), *headers);
++    });
+ 
+     std::function<void(void)> retry([&]() { httpFileInfo->httpClient = getClient(host); });
+ 
+     return runRequestWithRetry(request, url, "HEAD", retry);
+ #endif
+ }
++
++#ifndef __WASM__
++static void validateRangeStatus(int status, bool requirePartialContent) {
++    if (status != 206 && (requirePartialContent || status != 200)) {
++        throw IOException(std::format("Unexpected HTTP {} from range GET", status));
++    }
++}
++
++static void validateContentRange(const httplib::Response& response, uint64_t fileOffset,
++    uint64_t bufferLen, uint64_t objectLength) {
++    const auto prefix = std::format("bytes {}-{}/", fileOffset, fileOffset + bufferLen - 1);
++    const auto value = response.get_header_value("Content-Range");
++    if (!value.starts_with(prefix)) {
++        throw IOException("Unexpected HTTP Content-Range");
++    }
++    uint64_t total = 0;
++    const auto end = value.data() + value.size();
++    const auto parsed = std::from_chars(value.data() + prefix.size(), end, total);
++    if (parsed.ec != std::errc{} || parsed.ptr != end || total < fileOffset + bufferLen ||
++        (objectLength != 0 && total != objectLength)) {
++        throw IOException("Unexpected HTTP Content-Range");
++    }
++}
++#endif
+ 
+ std::unique_ptr<HTTPResponse> HTTPFileSystem::getRangeRequest(FileInfo* fileInfo,
+     const std::string& url, HeaderMap headerMap, uint64_t fileOffset, char* buffer,
+@@ -992,55 +1037,46 @@
+     headers->insert(std::make_pair("Range",
+         std::format("bytes={}-{}", fileOffset, fileOffset + bufferLen - 1)));
+ 
+-    uint64_t bufferOffset = 0;
+-
++    uint64_t received = 0;
++    const auto deadline = std::chrono::steady_clock::now() + httpFileInfo->socketTimeout;
+     std::function<httplib::Result(void)> request([&]() {
++        applyRequestDeadline(*httpFileInfo->httpClient, deadline);
++        received = 0;
+         return httpFileInfo->httpClient->Get(
+             hostPath.c_str(), *headers,
+             [&](const httplib::Response& response) {
+-                if (response.status >= 400) {
+-                    // LCOV_EXCL_START
+-                    auto error =
+-                        std::format("HTTP GET error on '{}' (HTTP {})", url, response.status);
+-                    if (response.status == 416) {
+-                        error += "Try confirm the server supports range requests.";
+-                    }
+-                    throw IOException(error);
+-                    // LCOV_EXCL_STOP
+-                }
+-                if (response.status < 300) {
+-                    bufferOffset = 0;
+-                    if (response.has_header("Content-Length")) {
+-                        auto contentLen = stoll(response.get_header_value("Content-Length", 0));
+-                        if ((uint64_t)contentLen != bufferLen) {
+-                            // LCOV_EXCL_START
+-                            throw IOException(std::format(
+-                                "Server returned: {}, HTTP GET error: Content-Length from server "
+-                                "mismatches requested "
+-                                "range, server may not support range requests.",
+-                                response.status));
+-                            // LCOV_EXCL_STOP
+-                        }
+-                    }
++                validateRangeStatus(response.status, httpFileInfo->requirePartialContent);
++                if (httpFileInfo->requirePartialContent) {
++                    validateContentRange(response, fileOffset, bufferLen, httpFileInfo->length);
++                }
++                if (response.has_header("Content-Length") &&
++                    response.get_header_value("Content-Length") != std::to_string(bufferLen)) {
++                    throw IOException("Unexpected HTTP Content-Length for requested range");
+                 }
+                 return true;
+             },
+             [&](const char* data, size_t dataLen) {
++                if (std::chrono::steady_clock::now() >= deadline) {
++                    throw common::InterruptException();
++                }
++                if (dataLen > bufferLen - received) {
++                    throw IOException("Server sent back more data than expected.");
++                }
+                 if (buffer != nullptr) {
+-                    if (dataLen + bufferOffset > bufferLen) {
+-                        // LCOV_EXCL_START
+-                        // To avoid corruption of memory, we bail out.
+-                        throw IOException("Server sent back more data than expected.");
+-                        // LCOV_EXCL_STOP
+-                    }
+-                    memcpy(buffer + bufferOffset, data, dataLen);
+-                    bufferOffset += dataLen;
+-                }
++                    memcpy(buffer + received, data, dataLen);
++                }
++                received += dataLen;
+                 return true;
+             });
+     });
+     std::function<void(void)> retryFunc([&]() { httpFileInfo->httpClient = getClient(host); });
+-    return runRequestWithRetry(request, url, "GET Range", retryFunc);
++    auto response = runRequestWithRetry(request, url, "GET Range", retryFunc);
++    // cpp-httplib can skip the response handler on redirects.
++    validateRangeStatus(response->code, httpFileInfo->requirePartialContent);
++    if (received != bufferLen) {
++        throw IOException("Incomplete HTTP range response");
++    }
++    return response;
+ #endif
+ }
+ 
+@@ -1133,3 +1169,5 @@
+ 
+ } // namespace httpfs_extension
+ } // namespace lbug
++
++extern "C" void qw_lbug_cloud_verified_transport() {}
+--- a/extension/httpfs/src/s3fs.cpp
++++ b/extension/httpfs/src/s3fs.cpp
+@@ -24,7 +24,9 @@
+     main::ClientContext* context, S3AuthParams authParams, S3UploadParams uploadParams)
+     : HTTPFileInfo{path, fileSystem, flags, context}, authParams{std::move(authParams)},
+       uploadParams{uploadParams}, partSize(0), uploadsInProgress{0}, numPartsUploaded{0},
+-      uploadFinalized{false}, uploaderHasException{false} {}
++      uploadFinalized{false}, uploaderHasException{false} {
++    requirePartialContent = true;
++}
+ 
+ S3FileInfo::~S3FileInfo() {
+     auto s3FS = fileSystem->ptrCast<S3FileSystem>();
+@@ -51,7 +53,7 @@
+ void S3FileInfo::initializeClient() {
+     auto parsedURL = fileSystem->constPtrCast<S3FileSystem>()->parseS3URL(path, authParams);
+     auto protoHostPort = parsedURL.httpProto + parsedURL.host;
+-    httpClient = HTTPFileSystem::getClient(protoHostPort);
++    httpClient = HTTPFileSystem::getClient(protoHostPort, socketTimeout);
+ }
+ 
+ std::shared_ptr<S3WriteBuffer> S3FileInfo::getBuffer(uint16_t writeBufferIdx) {
+@@ -577,6 +579,20 @@
+     return res;
+ }
+ 
++bool S3FileSystem::fileOrPathExists(const std::string& path, main::ClientContext* context) {
++    S3FileInfo metadata{path, this, FileFlags::READ_ONLY, context,
++        fsConfig.getAuthParams(context), {}};
++    metadata.initializeClient();
++    const auto response = headRequest(&metadata, path, {});
++    if (response->code == 404) {
++        return false;
++    }
++    if (response->code != 200) {
++        throw IOException(std::format("Unable to stat cloud object (HTTP {})", response->code));
++    }
++    return true;
++}
++
+ std::unique_ptr<HTTPResponse> S3FileSystem::headRequest(common::FileInfo* fileInfo,
+     const std::string& url, HeaderMap /*headerMap*/) const {
+     auto& authParams = fileInfo->ptrCast<S3FileInfo>()->authParams;
+--- a/extension/httpfs/src/include/s3fs.h
++++ b/extension/httpfs/src/include/s3fs.h
+@@ -104,6 +104,8 @@
+ 
+     bool canHandleFile(const std::string_view path) const override;
+ 
++    bool fileOrPathExists(const std::string& path, main::ClientContext* context) override;
++
+     static std::string decodeURL(std::string input);
+ 
+     ParsedS3URL parseS3URL(std::string url, S3AuthParams& params) const;
