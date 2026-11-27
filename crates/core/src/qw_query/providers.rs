@@ -404,6 +404,7 @@ impl CustomOptionCallbacks for GraphConfig {
                 observed_catalog: false,
                 single_pattern_row_bound: None,
                 populations: None,
+                feedback: Default::default(),
             };
             return self.publish(context, expected_revision, snapshot, || None);
         }
@@ -447,6 +448,7 @@ impl CustomOptionCallbacks for GraphConfig {
             observed_catalog,
             single_pattern_row_bound: prepared.single_pattern_row_bound,
             populations: prepared.populations,
+            feedback: Default::default(),
         };
         self.publish(context, expected_revision, snapshot, prepared.activate)
     }
@@ -578,6 +580,7 @@ mod tests {
             observed_catalog: false,
             single_pattern_row_bound: None,
             populations: None,
+            feedback: Default::default(),
         })
     }
 

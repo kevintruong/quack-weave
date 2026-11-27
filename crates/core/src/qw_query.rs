@@ -38,6 +38,7 @@ mod graph_value;
 pub use graph_value::{GraphColumn, GraphValue};
 mod parameters;
 mod projection;
+mod route_feedback;
 use projection::ScanProjection;
 mod providers;
 pub use providers::{
@@ -496,6 +497,8 @@ struct ConfigSnapshot {
     single_pattern_row_bound: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     populations: Option<GraphPopulations>,
+    #[serde(skip)]
+    feedback: route_feedback::Feedback,
 }
 
 fn admit_local_path(context: &Context, path: &str) -> Result<String> {
@@ -899,7 +902,13 @@ impl TableFunctionCallbacks for GraphQuery {
         let (scan, projection) =
             scan.ok_or_else(|| Error::internal("qw_query: missing scan state"))?;
         let capacity = output.capacity()?;
-        let Some(batch) = scan.next(
+        // Time active provider/bridge work only, excluding the intervals between
+        // DuckDB pulls and output materialization.
+        let started = projection
+            .feedback
+            .as_ref()
+            .map(|_| std::time::Instant::now());
+        let next = scan.next(
             projection.schema(bound),
             capacity,
             bound.config.config.max_batch_bytes(),
@@ -974,13 +983,32 @@ impl TableFunctionCallbacks for GraphQuery {
                 }
                 Ok(reader)
             },
-        )?
-        else {
+        );
+        if let (Some(started), Some(observation)) = (started, projection.feedback.as_mut()) {
+            observation.elapsed += started.elapsed();
+        }
+        let next = match next {
+            Ok(next) => next,
+            Err(error) => {
+                projection.feedback = None;
+                return Err(error);
+            }
+        };
+        let Some(batch) = next else {
+            if let Some(observation) = projection.feedback.take()
+                && self
+                    .providers
+                    .check_generation(bound.provider.descriptor.id, bound.config.generation.id())
+                    .unwrap_or(false)
+            {
+                observation.finish(&bound.config.feedback, context);
+            }
             return Ok(());
         };
         for (index, &provider_column) in projection.output_columns.iter().enumerate() {
             if let Err(error) = batch.columns[provider_column].write(context, output, index) {
                 *scan = Scan::Finished;
+                projection.feedback = None;
                 return Err(error);
             }
         }
@@ -997,6 +1025,7 @@ pub fn register_query(
     let providers = ProviderRegistry::new(providers)?;
     remote::register(extension)?;
     runtime_watch::register(extension)?;
+    route_feedback::register(extension)?;
     providers.register_options(extension)?;
     TableFunctionBuilder::new(
         "qw_graph_providers",

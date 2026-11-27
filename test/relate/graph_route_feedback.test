@@ -1,0 +1,215 @@
+# name: test/relate/graph_route_feedback.test
+# description: Compare completed graph routes only within the same registration and exact offer.
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_RELATE UNSET_QW_RELATE
+
+test-env QW_LADYBUG UNSET_QW_LADYBUG
+
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"routes","path":"{QW_RELATE}"}';
+
+statement ok
+SET threads = 1;
+
+statement ok
+SET disabled_optimizers = 'build_side_probe_side,join_order';
+
+statement ok
+CREATE TEMP TABLE watch(k BIGINT);
+
+statement ok
+INSERT INTO watch VALUES (202), (202), (NULL);
+
+query T
+SELECT current_setting('qw_graph_route_feedback');
+----
+off
+
+statement ok
+CALL enable_logging('QuackWeaveGraphFeedback', level = 'info');
+
+statement ok
+PREPARE watched AS SELECT sum(g.distance) FROM GRAPH_TABLE (
+    routes MATCH (a:airport)-[r:route]->(b:airport) COLUMNS(r.rid AS k, r.dist AS distance)
+) g JOIN watch USING (k);
+
+query I
+EXECUTE watched;
+----
+1200
+
+query I
+SELECT count(*) FROM duckdb_logs() WHERE type = 'QuackWeaveGraphFeedback';
+----
+0
+
+statement ok
+SET SESSION qw_graph_route_feedback = 'shadow';
+
+query I
+EXECUTE watched;
+----
+1200
+
+query T
+SELECT message FROM duckdb_logs() WHERE type = 'QuackWeaveGraphFeedback';
+----
+sample_exact
+
+statement error
+SET SESSION qw_graph_route_feedback = 'apply';
+----
+qw_graph_route_feedback accepts off, shadow, or host_sample
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"lady_routes","path":"{QW_LADYBUG}"}';
+
+statement ok
+CREATE TEMP TABLE lady_watch(k BIGINT);
+
+statement ok
+INSERT INTO lady_watch VALUES (101), (101), (102), (103), (105), (NULL);
+
+statement ok
+PREPARE lady_top AS SELECT g.distance FROM GRAPH_TABLE (
+    lady_routes MATCH (a:airport)-[r:route]->(b:airport) COLUMNS(r.rid AS k, r.dist AS distance)
+) g JOIN lady_watch USING (k) ORDER BY g.distance ASC NULLS LAST LIMIT 3;
+
+statement ok
+CALL truncate_duckdb_logs();
+
+query I
+EXECUTE lady_top;
+----
+946
+946
+946
+
+statement ok
+SET SESSION qw_enable_ordered_watchlist_limit = true;
+
+query I
+EXECUTE lady_top;
+----
+946
+946
+946
+
+query III
+SELECT count(*) FILTER (WHERE message = 'sample_exact'),
+       count(*) FILTER (WHERE message = 'sample_bounded'),
+       count(*) FILTER (WHERE message LIKE 'comparison_ready_%')
+FROM duckdb_logs() WHERE type = 'QuackWeaveGraphFeedback';
+----
+1	1	1
+
+statement ok
+RESET SESSION qw_enable_ordered_watchlist_limit;
+
+statement ok
+CALL truncate_duckdb_logs();
+
+statement ok
+SET SESSION qw_graph_route_feedback = 'host_sample';
+
+query I
+EXECUTE watched;
+----
+1200
+
+statement ok
+SET SESSION qw_graph_route_feedback = 'shadow';
+
+query I
+EXECUTE watched;
+----
+1200
+
+query II
+SELECT count(*) FILTER (WHERE message = 'sample_host'),
+       count(*) FILTER (WHERE message LIKE 'comparison_ready_%')
+FROM duckdb_logs() WHERE type = 'QuackWeaveGraphFeedback';
+----
+1	1
+
+statement ok
+CALL truncate_duckdb_logs();
+
+statement ok
+SET SESSION qw_enable_runtime_watchlist = false;
+
+query I
+EXECUTE watched;
+----
+1200
+
+query I
+SELECT count(*) FROM duckdb_logs() WHERE type = 'QuackWeaveGraphFeedback';
+----
+0
+
+statement ok
+RESET SESSION qw_enable_runtime_watchlist;
+
+statement ok
+CALL truncate_duckdb_logs();
+
+statement ok
+UPDATE watch SET k = 201 WHERE k = 202;
+
+query I
+EXECUTE watched;
+----
+1190
+
+query T
+SELECT message FROM duckdb_logs() WHERE type = 'QuackWeaveGraphFeedback';
+----
+sample_exact
+
+statement ok
+SET SESSION qw_graph_route_feedback = 'host_sample';
+
+query I
+EXECUTE watched;
+----
+1190
+
+statement ok
+SET SESSION qw_graph_route_feedback = 'shadow';
+
+statement ok
+RESET GLOBAL qw_relate_config;
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"routes","path":"{QW_RELATE}"}';
+
+statement ok
+CALL enable_logging(level = 'info');
+
+statement ok
+CALL truncate_duckdb_logs();
+
+# This SQL/PGQ statement rebinds to the replacement. Its first sample must
+# start a new comparison even when the graph file and watchlist are identical.
+query I
+EXECUTE watched;
+----
+1190
+
+query I
+SELECT count(*) FROM duckdb_logs() WHERE type = 'QuackWeaveGraphAdmission'
+    AND message = regexp_extract(current_setting('qw_relate_config'), '"generation":\{"id":([0-9]+)', 1);
+----
+1
+
+query T
+SELECT message FROM duckdb_logs() WHERE type = 'QuackWeaveGraphFeedback';
+----
+sample_exact

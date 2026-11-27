@@ -7,6 +7,7 @@ use duckdb_neo::table_function::InitColumnData;
 
 use super::{
     BoundRead, ColumnSpec, Context, Error, Result, ScalarType,
+    route_feedback::{Mode, Observation, Route, Shape},
     runtime_watch::{self, WatchlistRoute},
 };
 
@@ -15,6 +16,7 @@ pub(super) struct ScanProjection {
     schema: Option<Vec<ColumnSpec>>,
     pub(super) output_columns: Vec<usize>,
     pub(super) watchlist_route: WatchlistRoute,
+    pub(super) feedback: Option<Observation>,
 }
 
 impl ScanProjection {
@@ -39,6 +41,7 @@ impl ScanProjection {
                 schema: None,
                 output_columns,
                 watchlist_route,
+                feedback: None,
             })
         };
         // Both candidate sources are optional until this execution initializes.
@@ -74,7 +77,7 @@ impl ScanProjection {
             None
         };
         let static_predicate = bound.static_predicate_sql()?;
-        let runtime_sql = runtime_predicate
+        let mut runtime_sql = runtime_predicate
             .as_ref()
             .and_then(|exact| exact.predicate(fragment));
         let backend = &bound.provider.backend;
@@ -90,12 +93,23 @@ impl ScanProjection {
                         && col.name == format!("qw_col{}", offer.order_column)
                 })
         });
+        let mode = if static_predicate.is_none() && runtime_sql.is_some() {
+            Mode::read(context)?
+        } else {
+            Mode::Off
+        };
         let bounded_suffix = match ordered_offer {
-            Some(offer) if runtime_watch::ordered_limit_enabled(context)? => {
+            Some(offer)
+                if mode != Mode::HostSample && runtime_watch::ordered_limit_enabled(context)? =>
+            {
                 backend.ordered_watchlist_suffix(offer.order_column, offer.limit)
             }
             _ => None,
         };
+        // Explicit host samples still require a real exact join offer.
+        if mode == Mode::HostSample {
+            runtime_sql = None;
+        }
         let watchlist_route = if bounded_suffix.is_some() {
             WatchlistRoute::BoundedExact
         } else if runtime_sql.is_some() {
@@ -103,12 +117,41 @@ impl ScanProjection {
         } else {
             WatchlistRoute::Host
         };
+        let feedback = runtime_predicate
+            .filter(|_| mode != Mode::Off)
+            .map(|mut exact| {
+                exact.keys.sort_unstable();
+                exact.keys.dedup();
+                let route = match watchlist_route {
+                    WatchlistRoute::Host => Route::Host,
+                    WatchlistRoute::BoundedExact => Route::Bounded,
+                    _ => Route::Exact,
+                };
+                Observation {
+                    shape: Shape {
+                        base: bound.cypher.clone(),
+                        output_slots: requested.clone(),
+                        key_slot: exact.column,
+                        exact_keys: exact.keys,
+                        top: ordered_offer.map(|offer| (offer.order_column, offer.limit)),
+                    },
+                    route,
+                    mode,
+                    elapsed: std::time::Duration::ZERO,
+                }
+            });
         let predicates: Vec<_> = [static_predicate, runtime_sql]
             .into_iter()
             .flatten()
             .collect();
         if requested.iter().copied().eq(0..bound.schema.len()) && predicates.is_empty() {
-            return original(requested, None, watchlist_route);
+            return Ok(Self {
+                query: None,
+                schema: None,
+                output_columns: requested,
+                watchlist_route,
+                feedback,
+            });
         }
         let mut query = fragment.pattern().to_owned();
         if !predicates.is_empty() {
@@ -147,6 +190,7 @@ impl ScanProjection {
             schema: Some(schema),
             output_columns,
             watchlist_route,
+            feedback,
         })
     }
 

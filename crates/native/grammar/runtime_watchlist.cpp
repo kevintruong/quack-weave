@@ -183,6 +183,7 @@ void QwRegisterRuntimeWatchlist(DatabaseInstance &db) {
 	db.GetLogManager().RegisterLogType(make_uniq<LogType>(WATCHLIST_LOG_TYPE, LogLevel::LOG_INFO));
 	db.GetLogManager().RegisterLogType(make_uniq<LogType>("QuackWeaveGraphRoute", LogLevel::LOG_INFO));
 	db.GetLogManager().RegisterLogType(make_uniq<LogType>("QuackWeaveGraphAdmission", LogLevel::LOG_INFO));
+	db.GetLogManager().RegisterLogType(make_uniq<LogType>("QuackWeaveGraphFeedback", LogLevel::LOG_INFO));
 	OptimizerExtension ext;
 	ext.optimize_function = [](OptimizerExtensionInput &input, unique_ptr<LogicalOperator> &plan) {
 		if (input.optimizer.OptimizerDisabled(OptimizerType::JOIN_FILTER_PUSHDOWN))
