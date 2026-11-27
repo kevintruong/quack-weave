@@ -2,7 +2,9 @@
 
 Use this tracker to compare graph-engine execution, connection bootstrap and warm client latency on the same frozen graph. Compare direct and QuackWeave timings within the same provider. Each provider defines its own native execution timer. [Runner](../tracker.py) · [SF1 observations](sf1.json)
 
-| Workloads | QuackWeave route | Reference |
+The default tracker run covers the workloads below. For the `--micro` and `--hybrid` suites, use the shared setup and replay commands in the [Hybrid Query bench guide](../../../docs/hybrid-test-bench-guide.md).
+
+| Default workloads | QuackWeave route | Reference |
 |---|---|---|
 | Indexed person lookup, lookup with no match, message-creator fanout | Bare GQL and bare Cypher, measured independently | The identical statement through the same provider's native Cypher client |
 | Graph-local equality, outer SQL equality, equality through a view | DuckDB SQL with `GRAPH_TABLE` | CSV result oracle and prior QuackWeave snapshots |
@@ -86,7 +88,7 @@ phase=build/benchmark-engine-timing/quack_weave.duckdb_extension
 
 Direct Ladybug reads its query summary. Direct RelateDB uses the verified result from its `execute` API for diagnostic sampling and retains `execute_arrow` for client latency. The QuackWeave companion reads the corresponding timer from the provider result for each submission.
 
-The default output is a timestamped JSON file under `build/perf/provider-comparison/tracker/`. Use `--out` to choose a new filename. Existing snapshots are protected from replacement. Repeat `--case` or `--provider` for a focused run. For example, `--case fanout --provider relate` exercises all three standalone routes, while `--case table_watchlist` exercises the two QuackWeave hybrid routes.
+The default output is a timestamped JSON file under `build/perf/provider-comparison/tracker/`. Use `--out` to choose a new filename. Existing snapshots are protected from replacement. Repeat `--case` or `--provider` for a focused run. For example, `--case fanout --provider relate` exercises all three standalone routes, while `--case table_watchlist` exercises the table-backed join through QuackWeave.
 
 ### Prepared lookups
 
@@ -269,26 +271,14 @@ python3 -B -m unittest discover -s benchmarks/provider_comparison/tracker -p 'te
 
 ### Application Hybrid Query workloads
 
-Use `tracker.py run --hybrid --case directory_join_topk` with the pinned host,
-extension and `mod32` input. Omit `--case` to run the application suite. The
-runner checks exact ordered Arrow results on both providers, replays the same
-SQL in the pinned SQLLogic runner, and verifies the workload and observed call
-order before writing the snapshot. The airport SQLLogic witness covers the
-public route-directory query. The scaled case uses the matched creator graph as
-a route/destination projection and joins it to a generated, hashed Parquet file.
+Run `tracker.py run --hybrid` for the application suite. The workflow validates every ordered Arrow result and replays each workload in pinned SQLLogic before publication. See the case table and matched replay commands in the [Hybrid Query bench guide](../../../docs/hybrid-test-bench-guide.md#choose-a-suite).
 
-`prepared_watchlist_churn` reuses one DuckDB prepared join across 63, 64 and
-65 distinct keys. Each sample includes replacing the watchlist and fetching
-each epoch. Untimed `scan_diagnostics.steps` records rows, offers and the applied
-route per epoch. The top-level scan count is the sum across the three executions.
+### Source map
 
-`creator_sales_top_channels` uses a seeded million-order Parquet ledger and
-ranks channels by seven- and 30-day settled net sales. The `qw_sql_staged` arm
-fetches the graph portfolio into Arrow once per connection and ingests it into
-DuckDB. `setup.application_setup_ms` includes that work, and the warm samples
-time the same ranking SQL on the staged portfolio with zero graph rows scanned.
-
-`two_hop_enriched` uses a bound, explicit-schema `qw_query` to reach sibling
-messages through their creator. DuckDB joins the path bag to host attributes
-and orders the grouped results. This route emits graph scan and admission
-metrics. The watchlist switch has no effect on these explicit Cypher reads.
+| Responsibility | Source |
+| --- | --- |
+| CLI, worker scheduling, and paired replay | [tracker.py](../tracker.py) |
+| Fixture checks, ADBC connections, percentiles, and immutable report writes | [run.py](../run.py) |
+| Suite inputs, SQLLogic gates, and versioned workload identity | [application workloads](../application_workloads.py) · [CM-LDBC workloads](../micro_workloads.py) · [manifest](../hybrid_workloads.json) |
+| Sales ledger generation and settlement oracle | [creator_sales_workload.py](../creator_sales_workload.py) |
+| CI verification, archive, and chart data export | [measure_ci.sh](measure_ci.sh) · [archive.py](archive.py) · [export_page.py](export_page.py) |

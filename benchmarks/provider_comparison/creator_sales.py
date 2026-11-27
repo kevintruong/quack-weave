@@ -2,7 +2,7 @@
 import argparse
 from collections import defaultdict
 from contextlib import ExitStack
-from datetime import date, timedelta
+from datetime import timedelta
 from importlib.metadata import version
 import json
 from pathlib import Path
@@ -14,27 +14,25 @@ import sys
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
-import numpy as np
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.csv as csv
 import pyarrow.parquet as pq
 
 import run
+from creator_sales_workload import (
+    CLOSE, CREATOR_ID, LEDGER_FILE, MIN_SALES, ORDERS, SEED, TOP_K, WINDOWS, make_ledger, summarize_ledger,
+)
 from engine_timing import attach_trace, check_uninstrumented, ns
-from tracker import percentiles, publish, verify_fixture
+from run import percentiles, publish, verify_fixture
 
 
-CLOSE = date(2025, 4, 1)  # Exclusive, for both reporting windows.
-WINDOWS = (7, 30)
-CHANNELS = ("affiliate", "email", "livestream", "marketplace", "paid_social", "storefront")
-FACTS = {"parquet": "read_parquet('sales.parquet')", "memory": "sales_memory"}
+FACTS = {"parquet": f"read_parquet('{LEDGER_FILE}')", "memory": "sales_memory"}
 ROUTES = ("gql", "cypher", "native_arrow", "cached_arrow")
 GRAPH = ("MATCH (m:Message)-[:Message_hasCreator_Person]->(p:Person) "
-         f"WHERE p.PersonId = {run.KEYS[0]} RETURN m.MessageId AS content_id")
+         f"WHERE p.PersonId = {CREATOR_ID} RETURN m.MessageId AS content_id")
 BRIDGE = ("qw_query(current_setting('qw_selected_graph'), current_setting('qw_graph_dialect'), "
           + run.sql_literal(GRAPH) + ", schema := 'content_id BIGINT')")
-SEED = 40261
 
 
 def sql(graph, storage, days):
@@ -45,63 +43,14 @@ JOIN {FACTS[storage]} AS s USING (content_id)
 WHERE s.status = 'settled' AND s.booked_on >= DATE '{CLOSE - timedelta(days=days)}'
   AND s.booked_on < DATE '{CLOSE}'
 GROUP BY s.channel
-HAVING count(*) FILTER (WHERE s.kind = 'sale') >= 5 AND sum(s.amount_cents) > 0
+HAVING count(*) FILTER (WHERE s.kind = 'sale') >= {MIN_SALES} AND sum(s.amount_cents) > 0
 ORDER BY net_sales_cents DESC, s.channel ASC
-LIMIT 3"""
-
-
-def make_ledger(path, mids, orders):
-    """Each purchase has one post. A settled purchase can later have one partial refund."""
-    rng = np.random.default_rng(SEED)
-    content = rng.choice(mids, orders)
-    channel = rng.choice(CHANNELS, orders, p=[.12, .21, .17, .19, .23, .08])
-    day = rng.integers(0, 90, orders)
-    cents = rng.integers(500, 25_001, orders)
-    status = rng.choice(["settled", "pending", "void"], orders, p=[.88, .08, .04])
-    refunds = np.flatnonzero((status == "settled") & (rng.random(orders) < .14))
-    n = len(refunds)
-    days = np.concatenate([day, day[refunds] + rng.integers(1, 15, n)])
-    ids = np.arange(orders, dtype=np.int64)
-    table = pa.table({
-        "order_id": np.concatenate([ids, ids[refunds]]),
-        "content_id": np.concatenate([content, content[refunds]]),
-        "channel": np.concatenate([channel, channel[refunds]]),
-        "booked_on": np.datetime64(CLOSE - timedelta(days=90)) + days.astype("timedelta64[D]"),
-        "kind": np.concatenate([np.full(orders, "sale"), np.full(n, "refund")]),
-        "status": np.concatenate([status, rng.choice(["settled", "pending"], n, p=[.9, .1])]),
-        "amount_cents": np.concatenate([cents, -rng.integers(1, cents[refunds] + 1)]),
-    })
-    # Daily clustering lets a Parquet reader skip row groups outside the reporting period.
-    pq.write_table(table.take(np.argsort(days, kind="stable")), path, compression="zstd", row_group_size=32768)
+LIMIT {TOP_K}"""
 
 
 def oracle(path, portfolio):
-    groups = {days: defaultdict(lambda: [0, 0]) for days in WINDOWS}
-    funnel = {days: {"sales": 0, "refunds": 0, "gross_cents": 0, "refunded_cents": 0} for days in WINDOWS}
-    matched = 0
-    for batch in pq.ParquetFile(path).iter_batches():
-        selected = batch.filter(pc.is_in(batch["content_id"], value_set=portfolio))
-        matched += len(selected)
-        for row in selected.to_pylist():
-            if row["status"] != "settled":
-                continue
-            age = (CLOSE - row["booked_on"]).days
-            for days, totals in groups.items():
-                if 1 <= age <= days:
-                    values = totals[row["channel"]]
-                    values[0] += row["kind"] == "sale"
-                    values[1] += row["amount_cents"]
-                    if row["kind"] == "sale":
-                        funnel[days]["sales"] += 1
-                        funnel[days]["gross_cents"] += row["amount_cents"]
-                    else:
-                        funnel[days]["refunds"] += 1
-                        funnel[days]["refunded_cents"] -= row["amount_cents"]
-    expected = {}
-    for days, totals in groups.items():
-        eligible = [[c, sales, net] for c, (sales, net) in totals.items() if sales >= 5 and net > 0]
-        expected[str(days)] = sorted(eligible, key=lambda row: (-row[2], row[0]))[:3]
-    return expected, {"portfolio_ledger_events": matched, "settled_by_window": funnel}
+    ranked, funnel = summarize_ledger(path, portfolio)
+    return {str(days): rows for days, rows in ranked.items()}, funnel
 
 
 def direct_reader(stack, a, diagnostic):
@@ -144,7 +93,7 @@ def worker(request):
             setup["native_open_ms"] = (ns() - start) / 1e6
         bootstrap = sum(setup.values())
         start = ns()
-        cur.execute("CREATE TEMP TABLE sales_memory AS FROM read_parquet('sales.parquet')")
+        cur.execute("CREATE TEMP TABLE sales_memory AS FROM " + FACTS["parquet"])
         preload = (ns() - start) / 1e6
         cache_ms = None
         if a.route == "cached_arrow":
@@ -270,16 +219,16 @@ def collect(a, folder):
     manifest = json.loads((a.fixture / "fixture.json").read_text())
     verify_fixture(a.fixture, manifest)
     edges = csv.read_csv(a.fixture / "edges.csv")
-    portfolio = edges["mid"].filter(pc.equal(edges["author"], run.KEYS[0])).combine_chunks()
+    portfolio = edges["mid"].filter(pc.equal(edges["author"], CREATOR_ID)).combine_chunks()
     if not len(portfolio) or pc.count_distinct(portfolio).as_py() != len(portfolio):
         raise ValueError("Expected a nonempty portfolio with one creator edge per post")
-    path = folder / "sales.parquet"
+    path = folder / LEDGER_FILE
     make_ledger(path, edges["mid"].to_numpy(), a.orders)
     expected, funnel = oracle(path, portfolio)
     signature = run.signature([portfolio.to_numpy()])
     versions = {p: version(p) for p in ("numpy", "pyarrow", "adbc-driver-manager", "ladybug", "relate-db")}
     report = {"scenario": "creator_channel_review", "platform": platform.platform(), "versions": versions,
-              "fixture": manifest, "graph_edges": len(edges), "creator_id": run.KEYS[0], "portfolio": signature,
+              "fixture": manifest, "graph_edges": len(edges), "creator_id": CREATOR_ID, "portfolio": signature,
               "ledger": {"orders": a.orders, "events": pq.ParquetFile(path).metadata.num_rows, "sha256": run.digest(path),
                          "bytes": path.stat().st_size, "seed": SEED, "close_exclusive": CLOSE.isoformat()},
               "expected": expected, "funnel": funnel, "graph_query": GRAPH, "hybrid_sql": {
@@ -314,7 +263,7 @@ if __name__ == "__main__":
     parser.add_argument("--library", type=Path, default=run.LIB)
     parser.add_argument("--extension", type=Path, default=run.EXT)
     parser.add_argument("--phase-extension", type=Path, help="Matching diagnostic build for native execution counters")
-    parser.add_argument("--orders", type=int, default=1_000_000)
+    parser.add_argument("--orders", type=int, default=ORDERS)
     parser.add_argument("--blocks", type=int, default=4)
     parser.add_argument("--runs", type=int, default=5)
     parser.add_argument("--out", type=Path, help="New directory for sales.parquet, report.json and report.md")

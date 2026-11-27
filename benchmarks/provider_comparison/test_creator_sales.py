@@ -9,9 +9,13 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 import creator_sales as bench
+import creator_sales_workload as workload
 
 
 class CreatorSales(unittest.TestCase):
+    def test_standalone_and_tracker_share_the_ledger_generator(self):
+        self.assertIs(bench.make_ledger, workload.make_ledger)
+
     def test_net_sales_windows_and_portfolio_membership(self):
         rows = []
 
@@ -40,7 +44,13 @@ class CreatorSales(unittest.TestCase):
             pq.write_table(pa.Table.from_pylist(rows), path)
             answer, funnel = bench.oracle(path, pa.array([10]))
             self.assertEqual(answer, expected)
-            self.assertEqual(funnel["settled_by_window"][7]["refunds"], 2)
+            self.assertEqual(funnel, {
+                "portfolio_ledger_events": 32,
+                "settled_by_window": {
+                    7: {"sales": 26, "refunds": 2, "gross_cents": 12050, "refunded_cents": 600},
+                    30: {"sales": 27, "refunds": 2, "gross_cents": 12650, "refunded_cents": 600},
+                },
+            })
             with bench.run.duckdb_cursor(SimpleNamespace(library=bench.run.LIB)) as (cur, _):
                 parquet = "read_parquet(" + bench.run.sql_literal(path) + ")"
                 cur.execute("CREATE TEMP TABLE sales_memory AS FROM " + parquet)

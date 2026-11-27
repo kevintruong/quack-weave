@@ -15,7 +15,7 @@ import resource
 from statistics import median
 import subprocess
 import sys
-from tempfile import NamedTemporaryFile, TemporaryDirectory
+from tempfile import TemporaryDirectory
 from time import perf_counter_ns, process_time_ns
 from uuid import uuid4
 
@@ -28,6 +28,7 @@ import run
 import session_lookups as lookup
 import workload_manifest
 from planning.compare import OUTER, VIA_VIEW
+from run import percentiles, publish, verify_fixture
 from watchlist import SQL as VALUES_JOIN
 
 
@@ -299,11 +300,6 @@ def measure_worker(a, provider, route, block, cases, expected):
     return {"block": block, "provider": provider, "route": route, **measured}
 
 
-def percentiles(values):
-    values = sorted(values)
-    return {"n": len(values), "p50_ms": median(values), "p95_ms": values[math.ceil(.95 * len(values)) - 1]}
-
-
 def summarize_bootstrap(workers):
     groups = {}
     for w in workers:
@@ -350,22 +346,6 @@ def summarize(workers):
                 row["matched_direct_route"] = reference
                 row["qw_over_matched_direct"] = row["p50_ms"] / medians[row["provider"], reference, row["case"]]
     return rows
-
-
-def verify_fixture(folder, manifest):
-    for filename in ("edges.csv", *run.ENGINES.values()):
-        if run.digest(folder / filename) != manifest["files"][filename]["sha256"]:
-            raise ValueError(f"Fixture checksum mismatch: {filename}")
-
-
-def publish(path, report):
-    # A failed run or simultaneous publisher cannot replace a verified baseline.
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with NamedTemporaryFile(mode="w", dir=path.parent, encoding="utf-8") as tmp:
-        json.dump(report, tmp, indent=2, allow_nan=False)
-        tmp.write("\n")
-        tmp.flush()
-        os.link(tmp.name, path)
 
 
 def release_metadata(a, common, binaries):

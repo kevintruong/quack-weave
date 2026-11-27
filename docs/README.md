@@ -10,6 +10,8 @@ The architecture notebook traces a graph query from DuckDB's native grammar and 
 
 ## Performance benchmarks
 
+Use the Hybrid Query guide to run the SQLLogic witness, choose a scaled workload, and compare two verified snapshots. The design notebook records the workload, oracle, and replay contracts. The tracker reference covers standalone experiments and the CI archive. [Hybrid Query guide](hybrid-test-bench-guide.md) · [Design notebook](hybrid-test-bench-design.ipynb) · [Tracker reference](../benchmarks/provider_comparison/tracker/README.md)
+
 The [benchmark page](benchmarks.html) compares Ladybug and RelateDB on the archived full SF1 baseline, the SQLLogic-verified CM-LDBC adaptation, and two runs of the synthetic fanout experiment. Each view identifies its fixture, latency boundary, source revision, and artifact hashes. The page includes a download of the chart observations for the selected run.
 
 Regenerate the chart data from existing tracker and notebook reports. The exporter recomputes the plotted percentiles from the warm samples before writing the public summary.

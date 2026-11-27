@@ -7,6 +7,7 @@ import hashlib
 from importlib.metadata import version
 import json
 import math
+import os
 from pathlib import Path
 import platform
 import random
@@ -14,6 +15,7 @@ import resource
 from statistics import median
 import subprocess
 import sys
+from tempfile import NamedTemporaryFile
 from time import perf_counter_ns, process_time_ns
 
 from adbc_driver_manager import dbapi
@@ -50,6 +52,27 @@ CASES = {
     "full_scan_aggregate": ("gql", "SELECT count(*), sum(mid % 1000003) FROM " + graph("m.MessageId AS mid")),
 }
 ENGINES = {"ladybug": "social.lbdb", "relate": "social.rl"}
+
+
+def percentiles(values):
+    values = sorted(values)
+    return {"n": len(values), "p50_ms": median(values), "p95_ms": values[math.ceil(.95 * len(values)) - 1]}
+
+
+def verify_fixture(folder, manifest):
+    for filename in ("edges.csv", *ENGINES.values()):
+        if digest(folder / filename) != manifest["files"][filename]["sha256"]:
+            raise ValueError(f"Fixture checksum mismatch: {filename}")
+
+
+def publish(path, report):
+    # A failed run or simultaneous publisher cannot replace a verified baseline.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with NamedTemporaryFile(mode="w", dir=path.parent, encoding="utf-8") as tmp:
+        json.dump(report, tmp, indent=2, allow_nan=False)
+        tmp.write("\n")
+        tmp.flush()
+        os.link(tmp.name, path)
 
 
 def signature(columns):
@@ -213,8 +236,7 @@ def summarize(workers):
             if not samples:
                 row[engine] = {"n": 0, "p50_ms": None, "p95_ms": None, "median_cpu_ms": None}
                 continue
-            wall = sorted(s["wall_ms"] for s in samples)
-            row[engine] = {"n": len(wall), "p50_ms": median(wall), "p95_ms": wall[math.ceil(len(wall)*.95)-1],
+            row[engine] = {**percentiles(s["wall_ms"] for s in samples),
                            "median_cpu_ms": median(s["cpu_ms"] for s in samples)}
         row["relate_over_ladybug"] = (row["relate"]["p50_ms"] / row["ladybug"]["p50_ms"]
                                       if row["relate"]["n"] and row["ladybug"]["n"] else None)

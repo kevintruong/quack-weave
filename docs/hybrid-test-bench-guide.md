@@ -1,6 +1,6 @@
 # Run the Hybrid Query test bench
 
-Use the native SQLLogic suite for correctness and the provider tracker for performance. Both use the same versioned SQL for `micro_creator_selective`. The tiny fixture exercises duplicate and NULL keys in seconds. The `mod32` fixture exercises the same query on Ladybug and RelateDB with graph prefiltering enabled and disabled.
+Use the native SQLLogic suite for correctness and the provider tracker for performance. The tiny `micro_creator_selective` fixture exercises duplicate and NULL keys. The scaled `mod32` replay runs the same versioned SQL on Ladybug and RelateDB with graph prefiltering enabled and disabled.
 
 ## Set up the host and fixture
 
@@ -41,7 +41,24 @@ python3 -B test/stabilization/run_sqllogictest.py \
 
 The [workload manifest](../benchmarks/provider_comparison/hybrid_workloads.json) maps cases to the shared SQL template, oracle, and SQLLogic files. The provider suite also covers [applied watchlist routes](../test/relate/watchlist_applied_route.test) and [ordered LIMIT behavior](../test/relate/ordered_watchlist_limit.test).
 
-## Replay the scaled workload twice
+## Choose a suite
+
+| Command | Workload |
+| --- | --- |
+| `run --micro --case micro_creator_selective` | Release smoke with one selective creator join. |
+| `run --micro` | All four endpoint join shapes adapted from CM-LDBC. |
+| `run --hybrid` | All four application workloads below. |
+
+Both suites default to `mod32`. Run `tracker.py list` for case names and supported arms. Repeat `--case` to select a subset or use `--provider ladybug` or `--provider relate` to focus on one provider.
+
+| Application case | What it checks |
+| --- | --- |
+| `directory_join_topk` | Rank after the Parquet directory join. The native witness uses airport routes. The scaled replay uses the SF1 creator projection. |
+| `prepared_watchlist_churn` | Reuse one prepared statement with 63, 64, and 65 distinct keys. The timed sample includes all replacements and fetches. Find per-epoch rows, offers, and applied routes in `scan_diagnostics.steps`. |
+| `creator_sales_top_channels` | Rank seven- and 30-day settled sales from a seeded Parquet ledger. The `qw_sql_staged` arm captures the portfolio once through Arrow. Its transfer is included in `setup.application_setup_ms`. |
+| `two_hop_enriched` | Join sibling message paths to SQL attributes and preserve path multiplicity. Its explicit Cypher read records scan and admission metrics under either watchlist setting. |
+
+## Replay and compare
 
 This smoke run uses two matched blocks and two measured calls per block for each provider and route. Each block first runs a verified warmup. Each run gets its own output file.
 
@@ -50,18 +67,21 @@ tracker=benchmarks/provider_comparison/tracker.py
 qw_replays=$(mktemp -d "${TMPDIR:-/tmp}/qw-hybrid.XXXXXX")
 
 run_replay() {
-  "$tracker_python" -B "$tracker" run --micro --case micro_creator_selective \
+  snapshot_name=$1
+  shift
+  "$tracker_python" -B "$tracker" run "$@" \
     --fixture build/perf/provider-comparison/mod32 \
     --extension "$QW_EXT" --library "$DUCKDB_LIB" \
     --duckdb-unittest "$DUCKDB_UNITTEST" --blocks 2 --runs 2 \
-    --out "$qw_replays/$1.json"
+    --out "$qw_replays/$snapshot_name.json"
 }
 
-run_replay first && run_replay second &&
+run_replay first --micro --case micro_creator_selective &&
+  run_replay second --micro --case micro_creator_selective &&
   "$tracker_python" -B "$tracker" compare "$qw_replays/first.json" "$qw_replays/second.json"
 ```
 
-Repeat `--case` to select more cases, omit it to run all four MICRO workloads, or pass `--provider ladybug` or `--provider relate` to focus one provider. The `qw_pgq` arm enables the watchlist prefilter. The `qw_pgq_host` arm disables it. Check `scan_diagnostics.applied_route` for the route actually taken. Both arms must produce the exact oracle result. A failed result or SQLLogic check prevents snapshot publication.
+Use `--hybrid` in both replay calls for the application suite. The `qw_pgq` arm enables the watchlist prefilter. The `qw_pgq_host` arm disables it. Check `scan_diagnostics.applied_route` for the route actually taken. Both arms must produce the exact oracle result. A failed result or SQLLogic check prevents snapshot publication.
 
 The two snapshots should agree on `workload_evidence`, `schedule_sha256`, the result signature, and the SQLLogic receipts. The comparison prints warm p50 and p95 from verified full fetches. Use more matched samples before interpreting the tails. For a release-to-release comparison, use the same `run` command with `--source-revision`, plus `--baseline-extension`, `--baseline-revision`, and a fresh `--baseline-out`. The tracker alternates release order within the run.
 

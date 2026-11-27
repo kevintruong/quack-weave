@@ -72,30 +72,47 @@ def make_ledger(path, mids, orders):
     pq.write_table(table.take(np.argsort(days, kind="stable")), path, compression="zstd", row_group_size=32768)
 
 
-def oracle(path, portfolio):
-    """Calculate ranked settled sales and signed net cents without executing SQL."""
+def summarize_ledger(path, portfolio):
+    """Calculate channel rankings and settlement totals independently of SQL."""
     import pyarrow.compute as pc
     import pyarrow.parquet as pq
 
     groups = {days: defaultdict(lambda: [0, 0]) for days in WINDOWS}
+    funnel = {days: {"sales": 0, "refunds": 0, "gross_cents": 0, "refunded_cents": 0} for days in WINDOWS}
+    matched = 0
     for batch in pq.ParquetFile(path).iter_batches():
         selected = batch.filter(pc.is_in(batch["content_id"], value_set=portfolio))
+        matched += len(selected)
         for row in selected.to_pylist():
             if row["status"] != "settled":
                 continue
             age = (CLOSE - row["booked_on"]).days
+            is_sale = row["kind"] == "sale"
+            cents = row["amount_cents"]
             for days, totals in groups.items():
                 if 1 <= age <= days:
                     counts = totals[row["channel"]]
-                    counts[0] += row["kind"] == "sale"
-                    counts[1] += row["amount_cents"]
+                    counts[0] += is_sale
+                    counts[1] += cents
+                    window = funnel[days]
+                    if is_sale:
+                        window["sales"] += 1
+                        window["gross_cents"] += cents
+                    else:
+                        window["refunds"] += 1
+                        window["refunded_cents"] -= cents
 
-    ordered = []
+    ranked = {}
     for days, totals in groups.items():
-        eligible = [[days, channel, sales, net] for channel, (sales, net) in totals.items()
+        eligible = [[channel, sales, net] for channel, (sales, net) in totals.items()
                     if sales >= MIN_SALES and net > 0]
-        ordered.extend(sorted(eligible, key=lambda row: (-row[3], row[1]))[:TOP_K])
-    return ordered
+        ranked[days] = sorted(eligible, key=lambda row: (-row[2], row[0]))[:TOP_K]
+    return ranked, {"portfolio_ledger_events": matched, "settled_by_window": funnel}
+
+
+def oracle(path, portfolio):
+    ranked, _ = summarize_ledger(path, portfolio)
+    return [[days, *row] for days in WINDOWS for row in ranked[days]]
 
 
 def ledger_digest(path: Path):

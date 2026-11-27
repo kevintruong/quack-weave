@@ -18,7 +18,7 @@ import pyarrow as pa
 
 import run
 from engine_timing import attach_trace, check_uninstrumented, ns
-from tracker import percentiles, publish
+from run import percentiles, publish
 from watchlist import GRAPH_SHA, provision
 
 
@@ -202,8 +202,7 @@ def collect(args):
             workers = [w for w in report["workers"] if w["route"] == route and name in w["digests"]]
             series = [[s for s in w["samples"] if s["case"] == name] for w in workers]
             hot = [s for observations in series for s in observations[2:]]
-            wall = sorted(s["wall_ms"] for s in hot)
-            summary = {"n": len(hot), "p50_ms": median(wall), "p95_ms": wall[math.ceil(.95*len(wall))-1],
+            summary = {**percentiles(s["wall_ms"] for s in hot),
                        "setup_ms": median(w["setup"]["total_ms"] for w in workers),
                        "first_query_ms": median(observations[0]["wall_ms"] for observations in series)}
             for field in ("engine_ms", "compile_ms", "before_native_ms", "native_call_ms", "after_native_ms"):
