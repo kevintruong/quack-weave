@@ -1,4 +1,5 @@
 #include "watchlist.hpp"
+#include "ordered_watchlist.hpp"
 
 #include "duckdb/execution/operator/scan/physical_table_scan.hpp"
 #include "duckdb/logging/log_manager.hpp"
@@ -27,6 +28,7 @@ enum class KeyOffer { NotRequested, NoExactKeys, OverCap, ExactKeys };
 
 struct WatchInit {
 	const TableFunctionInitInput &input;
+	const QwOrderedWatchlistOffer *ordered_limit;
 	KeyOffer offer = KeyOffer::NotRequested;
 
 	void Observe(KeyOffer next) {
@@ -59,7 +61,8 @@ unique_ptr<LocalTableFunctionState> InitWatch(ExecutionContext &context, TableFu
                                               GlobalTableFunctionState *global) {
 	const auto &scan = input.op->Cast<PhysicalTableScan>();
 	const auto original_init = scan.function.GetDefinition()->init_local;
-	WatchInit watch {input};
+	const auto *offer = dynamic_cast<const QwOrderedWatchlistOffer *>(scan.function.function_info.get());
+	WatchInit watch {input, offer};
 	unique_ptr<LocalTableFunctionState> result;
 	{
 		struct Restore {
@@ -190,6 +193,8 @@ void QwRegisterRuntimeWatchlist(DatabaseInstance &db) {
 			pending.pop_back();
 			if (op.type == LogicalOperatorType::LOGICAL_RECURSIVE_CTE)
 				continue;
+			if (op.type == LogicalOperatorType::LOGICAL_TOP_N)
+				qw_ordered_watchlist::Offer(op.Cast<LogicalTopN>());
 			AttachWatch(input, op);
 			for (auto &child : op.children)
 				pending.push_back(*child);
@@ -223,4 +228,14 @@ extern "C" size_t qw_runtime_watch_keys(size_t column, int64_t *out, size_t cap)
 		// This read is an optional prefilter; the unchanged join enforces correctness.
 	}
 	return 0;
+}
+
+extern "C" uint64_t qw_runtime_ordered_watchlist_limit(size_t *order_column, size_t *join_column) noexcept {
+	using namespace duckdb;
+	if (!active_watch || !active_watch->ordered_limit)
+		return 0;
+	const auto &offer = *active_watch->ordered_limit;
+	*order_column = offer.order_column;
+	*join_column = offer.join_column;
+	return offer.limit;
 }

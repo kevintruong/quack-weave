@@ -1,0 +1,163 @@
+# name: test/relate/ordered_watchlist_limit.test
+# description: Delegate an ordered limit only for an exact, eligible graph join
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_LADYBUG UNSET_QW_LADYBUG
+
+test-env QW_RELATE UNSET_QW_RELATE
+
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"lg","path":"{QW_LADYBUG}"}';
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"rl","path":"{QW_RELATE}"}';
+
+statement ok
+SET threads=1;
+
+# Keep the graph on the probe side regardless of the tiny fixture estimates.
+statement ok
+SET disabled_optimizers='build_side_probe_side,join_order';
+
+statement ok
+CREATE TEMP TABLE watch(k BIGINT);
+
+statement ok
+INSERT INTO watch VALUES (101), (101), (102), (103), (105), (NULL);
+
+statement ok
+CREATE TEMP VIEW LadybugRoutes AS SELECT g.k, g.distance FROM GRAPH_TABLE (
+    lg MATCH (a:airport)-[r:route]->(b:airport) COLUMNS(r.rid AS k, r.dist AS distance)
+) g JOIN watch w ON g.k=w.k;
+
+statement ok
+PREPARE ordered AS SELECT distance FROM LadybugRoutes ORDER BY distance ASC NULLS LAST LIMIT 3;
+
+query I
+EXECUTE ordered;
+----
+946
+946
+946
+
+# The incumbent exact prefilter supplies four graph rows without the opt-in.
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE ordered;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 4,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+statement ok
+SET SESSION qw_enable_ordered_watchlist_limit=true;
+
+statement ok
+CALL enable_logging('QuackWeaveGraphRoute', level='info');
+
+query I
+EXECUTE ordered;
+----
+946
+946
+946
+
+query T
+SELECT message FROM duckdb_logs() WHERE type='QuackWeaveGraphRoute';
+----
+bounded_exact
+
+statement ok
+CALL disable_logging();
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE ordered;
+----
+analyzed_plan	<REGEX>:.*"name": "TOP_N".*"name": "HASH_JOIN".*"intermediate_rows": 3,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+# A residual filter can reject early graph rows before the host limit.
+query I
+SELECT distance FROM LadybugRoutes WHERE distance > 1000 ORDER BY distance ASC NULLS LAST LIMIT 1;
+----
+1946
+
+# The rejected order forms and multiple visible output columns use the exact route.
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON)
+SELECT distance FROM LadybugRoutes ORDER BY distance ASC NULLS FIRST LIMIT 1;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 4,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+query I
+SELECT distance FROM LadybugRoutes ORDER BY distance ASC NULLS FIRST LIMIT 1;
+----
+NULL
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON)
+SELECT distance FROM LadybugRoutes ORDER BY distance DESC NULLS LAST LIMIT 1;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 4,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON)
+SELECT distance FROM LadybugRoutes ORDER BY distance ASC NULLS LAST LIMIT 1 OFFSET 3;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 4,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON)
+SELECT k, distance FROM LadybugRoutes ORDER BY distance ASC NULLS LAST LIMIT 1;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 4,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+# An unverified literal candidate cannot serve as the runtime join certificate.
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON)
+SELECT g.distance FROM GRAPH_TABLE (
+    lg MATCH (a:airport)-[r:route]->(b:airport) COLUMNS(r.rid AS k, r.dist AS distance)
+) g JOIN (VALUES (101::BIGINT), (102::BIGINT), (103::BIGINT), (105::BIGINT)) w(k)
+    ON g.k=w.k ORDER BY g.distance ASC NULLS LAST LIMIT 1;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 4,[^{}]*"name": "QW_GRAPH_QUERY_FILTERED".*
+
+statement ok
+SET SESSION qw_enable_runtime_watchlist=false;
+
+# Taking top-k before the exact join could discard required graph rows.
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE ordered;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 5,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+statement ok
+RESET SESSION qw_enable_runtime_watchlist;
+
+statement ok
+DELETE FROM watch;
+
+statement ok
+INSERT INTO watch VALUES (101), (102), (103);
+
+# DuckDB's dense min/max offer is not an exact key set at this boundary.
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE ordered;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 5,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+statement ok
+DELETE FROM watch;
+
+statement ok
+INSERT INTO watch VALUES (201), (203), (NULL);
+
+# RelateDB kept the unbounded exact route in the provider benchmark.
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON)
+SELECT g.distance FROM GRAPH_TABLE (
+    rl MATCH (a:airport)-[r:route]->(b:airport) COLUMNS(r.rid AS k, r.dist AS distance)
+) g JOIN watch w ON g.k=w.k ORDER BY g.distance ASC NULLS LAST LIMIT 1;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 2,[^{}]*"name": "QW_GRAPH_QUERY".*

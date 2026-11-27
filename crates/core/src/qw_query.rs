@@ -82,6 +82,14 @@ pub struct PreparedRegistration<'a> {
     pub activate: Box<dyn FnOnce() -> Option<RetiredRegistration> + 'a>,
 }
 
+/// A host proof for a bounded graph prefix on an exact execution-local join.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OrderedWatchlistLimit {
+    pub order_column: usize,
+    pub join_column: usize,
+    pub limit: u64,
+}
+
 /// A backend that exclusively opens read-only database handles.
 pub trait ReadBackend: Send + Sync {
     /// Read only catalog metadata while registering a graph generation.
@@ -128,6 +136,16 @@ pub trait ReadBackend: Send + Sync {
     /// Optional exact integer key filter issued by DuckDB's completed hash join.
     fn runtime_watch_keys(&self, _column: usize) -> Vec<i64> {
         Vec::new()
+    }
+
+    /// Plan-local offer for providers that implement a native ordered prefix.
+    fn ordered_watchlist_limit(&self) -> Option<OrderedWatchlistLimit> {
+        None
+    }
+
+    /// Translate the ordered prefix with DuckDB's ASC NULLS LAST semantics.
+    fn ordered_watchlist_suffix(&self, _order_column: usize, _limit: u64) -> Option<String> {
+        None
     }
 
     /// Swap the active native cache owner without opening or dropping resources.

@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 
 use rusty_quack_core::qw_query::{
     BackendError, Batch, BatchReader, ColumnData, ColumnSpec, GraphCatalog, GraphGeneration,
-    GraphParameter, GraphPopulations, PreparedRegistration, ReadBackend, ReadSession,
-    RetiredRegistration, ScalarType,
+    GraphParameter, GraphPopulations, OrderedWatchlistLimit, PreparedRegistration, ReadBackend,
+    ReadSession, RetiredRegistration, ScalarType,
 };
 
 mod arrow;
@@ -57,6 +57,19 @@ impl LadybugBackend {
 impl ReadBackend for LadybugBackend {
     fn runtime_watch_keys(&self, column: usize) -> Vec<i64> {
         crate::graph_entry::runtime_watch_keys(column)
+    }
+
+    fn ordered_watchlist_limit(&self) -> Option<OrderedWatchlistLimit> {
+        crate::graph_entry::ordered_watchlist_limit()
+    }
+
+    fn ordered_watchlist_suffix(&self, order_column: usize, limit: u64) -> Option<String> {
+        // Ladybug accepts an alias null test as a sort key. The grammar's
+        // private aliases are built exclusively from trusted projection slots.
+        let alias = format!("qw_col{order_column}");
+        Some(format!(
+            " ORDER BY ({alias} IS NULL), {alias} ASC LIMIT {limit}"
+        ))
     }
 
     fn set_generation(&self, generation: Option<u64>) -> Option<RetiredRegistration> {

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use duckdb_neo::table_function::InitColumnData;
 
 use super::{
-    BoundRead, ColumnSpec, Context, Error, Result,
+    BoundRead, ColumnSpec, Context, Error, Result, ScalarType,
     runtime_watch::{self, WatchlistRoute},
 };
 
@@ -73,12 +73,37 @@ impl ScanProjection {
         } else {
             None
         };
-        let watchlist_route = if runtime_predicate.is_some() {
+        let static_predicate = bound.static_predicate_sql()?;
+        let runtime_sql = runtime_predicate
+            .as_ref()
+            .and_then(|exact| exact.predicate(fragment));
+        let backend = &bound.provider.backend;
+        let ordered_offer = backend.ordered_watchlist_limit().filter(|offer| {
+            static_predicate.is_none()
+                && runtime_sql.is_some()
+                && runtime_predicate
+                    .as_ref()
+                    .is_some_and(|exact| exact.column == offer.join_column)
+                && requested.contains(&offer.order_column)
+                && bound.schema.get(offer.order_column).is_some_and(|col| {
+                    col.data_type == ScalarType::BigInt
+                        && col.name == format!("qw_col{}", offer.order_column)
+                })
+        });
+        let bounded_suffix = match ordered_offer {
+            Some(offer) if runtime_watch::ordered_limit_enabled(context)? => {
+                backend.ordered_watchlist_suffix(offer.order_column, offer.limit)
+            }
+            _ => None,
+        };
+        let watchlist_route = if bounded_suffix.is_some() {
+            WatchlistRoute::BoundedExact
+        } else if runtime_sql.is_some() {
             WatchlistRoute::RuntimeExact
         } else {
             WatchlistRoute::Host
         };
-        let predicates: Vec<_> = [bound.static_predicate_sql()?, runtime_predicate]
+        let predicates: Vec<_> = [static_predicate, runtime_sql]
             .into_iter()
             .flatten()
             .collect();
@@ -114,6 +139,9 @@ impl ScanProjection {
         }
         query.push_str(" RETURN ");
         query.push_str(&expressions.join(", "));
+        if let Some(suffix) = bounded_suffix {
+            query.push_str(&suffix);
+        }
         Ok(Self {
             query: Some(query),
             schema: Some(schema),

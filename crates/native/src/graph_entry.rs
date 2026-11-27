@@ -1,6 +1,6 @@
 use std::ffi::{CStr, c_char, c_void};
 
-use rusty_quack_core::qw_query::ProviderRegistry;
+use rusty_quack_core::qw_query::{OrderedWatchlistLimit, ProviderRegistry};
 
 use duckdb_neo::{
     AsRaw, DuckDBType, FromValue, Result, ToValue,
@@ -14,6 +14,8 @@ use duckdb_neo::{
 unsafe extern "C" {
     fn qw_register_graph_grammar(factory: *mut c_void) -> *const c_char;
     fn qw_runtime_watch_keys(column: usize, keys: *mut i64, capacity: usize) -> usize;
+    fn qw_runtime_ordered_watchlist_limit(order_column: *mut usize, join_column: *mut usize)
+    -> u64;
 }
 
 pub(crate) fn runtime_watch_keys(column: usize) -> Vec<i64> {
@@ -21,6 +23,17 @@ pub(crate) fn runtime_watch_keys(column: usize) -> Vec<i64> {
     // The grammar shim copies at most capacity BIGINTs during init_local.
     let n = unsafe { qw_runtime_watch_keys(column, keys.as_mut_ptr(), keys.len()) };
     keys[..n].to_vec()
+}
+
+pub(crate) fn ordered_watchlist_limit() -> Option<OrderedWatchlistLimit> {
+    let (mut order_column, mut join_column) = (0, 0);
+    // The optimizer's typed offer is available only during scan initialization.
+    let limit = unsafe { qw_runtime_ordered_watchlist_limit(&mut order_column, &mut join_column) };
+    (limit != 0).then_some(OrderedWatchlistLimit {
+        order_column,
+        join_column,
+        limit,
+    })
 }
 
 enum GraphOption {

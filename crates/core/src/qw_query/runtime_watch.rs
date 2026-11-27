@@ -15,12 +15,14 @@ use super::{BoundRead, ScalarType, is_identifier};
 
 pub(super) const MAX_KEYS: usize = 64;
 const ENABLE_WATCHLIST: &str = "qw_enable_runtime_watchlist";
+const ENABLE_ORDERED_LIMIT: &str = "qw_enable_ordered_watchlist_limit";
 
 #[derive(Clone, Copy)]
 pub(super) enum WatchlistRoute {
     Host,
     LiteralExact,
     RuntimeExact,
+    BoundedExact,
 }
 
 impl WatchlistRoute {
@@ -29,13 +31,17 @@ impl WatchlistRoute {
             Self::Host => "host",
             Self::LiteralExact => "literal_exact",
             Self::RuntimeExact => "runtime_exact",
+            Self::BoundedExact => "bounded_exact",
         };
         // The route was dispatched. Logging must never affect read execution.
         let _ = Log::log_on_context(context, LogLevel::Info, route, "QuackWeaveGraphRoute");
     }
 }
 
-struct WatchlistOption;
+struct WatchlistOption {
+    name: &'static str,
+    default: bool,
+}
 
 impl CustomOptionCallbacks for WatchlistOption {
     fn update(
@@ -46,43 +52,84 @@ impl CustomOptionCallbacks for WatchlistOption {
         is_reset: bool,
     ) -> Result<Value> {
         if !matches!(scope, SettingScope::Session) {
-            return Err(Error::invalid_input(
-                "QW_CONFIG: Use SET SESSION for qw_enable_runtime_watchlist",
-            ));
+            return Err(Error::invalid_input(format!(
+                "QW_CONFIG: Use SET SESSION for {}",
+                self.name
+            )));
         }
         if is_reset {
-            return true.value(context);
+            return self.default.value(context);
         }
         if bool::from_value(&value)?.is_none() {
-            return Err(Error::invalid_input(
-                "QW_CONFIG: Expected a boolean for qw_enable_runtime_watchlist",
-            ));
+            return Err(Error::invalid_input(format!(
+                "QW_CONFIG: Expected a boolean for {}",
+                self.name
+            )));
         }
         Ok(value)
     }
 }
 
 pub(super) fn register(extension: &Extension) -> Result<()> {
-    CustomOptionBuilder::new(
-        ENABLE_WATCHLIST,
-        "Apply exact literal or execution-local watchlist keys to QuackWeave graph reads",
-        bool::logical_type(extension)?,
-        WatchlistOption,
-    )
-    .default_value(true.value(extension)?)
-    .default_scope(SettingScope::Session)
-    .register(extension)
+    for (name, description, default) in [
+        (
+            ENABLE_WATCHLIST,
+            "Apply exact literal or execution-local watchlist keys to QuackWeave graph reads",
+            true,
+        ),
+        (
+            ENABLE_ORDERED_LIMIT,
+            "Allow a verified ordered graph prefix for an exact Ladybug watchlist join",
+            false,
+        ),
+    ] {
+        CustomOptionBuilder::new(
+            name,
+            description,
+            bool::logical_type(extension)?,
+            WatchlistOption { name, default },
+        )
+        .default_value(default.value(extension)?)
+        .default_scope(SettingScope::Session)
+        .register(extension)?;
+    }
+    Ok(())
+}
+
+fn enabled_option(context: &Context, name: &str) -> Result<bool> {
+    let (value, _) = context.config()?.get_value(name)?;
+    Ok(bool::from_value(&value)? == Some(true))
 }
 
 pub(super) fn enabled(context: &Context) -> Result<bool> {
-    let (value, _) = context.config()?.get_value(ENABLE_WATCHLIST)?;
-    Ok(bool::from_value(&value)? == Some(true))
+    enabled_option(context, ENABLE_WATCHLIST)
+}
+
+pub(super) fn ordered_limit_enabled(context: &Context) -> Result<bool> {
+    enabled_option(context, ENABLE_ORDERED_LIMIT)
+}
+
+pub(super) struct ExactRuntimeKeys {
+    pub(super) column: usize,
+    pub(super) keys: Vec<i64>,
+}
+
+impl ExactRuntimeKeys {
+    pub(super) fn predicate(&self, fragment: &super::GraphFragment) -> Option<String> {
+        let values = self
+            .keys
+            .iter()
+            .map(i64::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        Some(format!("{} IN [{values}]", fragment.expr(self.column)?))
+    }
 }
 
 impl BoundRead {
     /// DuckDB supplies optional filters only during initialization of this
     /// physical scan. Key values never become part of a reusable bound plan.
-    pub(super) fn runtime_predicate(&self) -> Option<String> {
+    pub(super) fn runtime_predicate(&self) -> Option<ExactRuntimeKeys> {
         let fragment = self.fragment.as_ref()?;
         for (index, col) in self.schema.iter().enumerate() {
             if col.data_type != ScalarType::BigInt || fragment.property(index).is_none() {
@@ -92,12 +139,10 @@ impl BoundRead {
             if keys.is_empty() || keys.len() > MAX_KEYS {
                 continue;
             }
-            let values = keys
-                .iter()
-                .map(i64::to_string)
-                .collect::<Vec<_>>()
-                .join(",");
-            return Some(format!("{} IN [{values}]", fragment.expr(index)?));
+            return Some(ExactRuntimeKeys {
+                column: index,
+                keys,
+            });
         }
         None
     }
