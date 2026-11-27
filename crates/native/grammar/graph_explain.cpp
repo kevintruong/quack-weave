@@ -9,7 +9,9 @@ namespace duckdb {
 namespace {
 // to_string receives no ClientContext. Select a fixed callback on this bound
 // scan and leave the C-v2 table function's own function_info and bind_data intact.
-enum class Decision { Native, Base, Static, Runtime, Both, Aggregate, Limit, Catalog, Unsupported, Literal, HostJoin };
+enum class Decision {
+	Native, Base, Static, Runtime, Both, Aggregate, Limit, Catalog, Unsupported, Literal, HostJoin, Cloud
+};
 
 struct Description {
 	const char *operation;
@@ -28,6 +30,7 @@ constexpr Description DESCRIPTIONS[] = {
     {"Pattern scan", nullptr, "Unsupported relational operation"},
     {"Optional literal prefilter", "SQL join or predicate", nullptr},
     {"Pattern scan", "SQL join", "No eligible runtime key filter"},
+    {"Pattern scan", nullptr, "Cloud snapshots use host SQL"},
 };
 
 constexpr char LADYBUG[] = "Ladybug";
@@ -56,7 +59,7 @@ table_function_to_string_t Select(Decision decision) {
 	    Describe<PROVIDER, Decision::Both>, Describe<PROVIDER, Decision::Aggregate>,
 	    Describe<PROVIDER, Decision::Limit>, Describe<PROVIDER, Decision::Catalog>,
 	    Describe<PROVIDER, Decision::Unsupported>, Describe<PROVIDER, Decision::Literal>,
-	    Describe<PROVIDER, Decision::HostJoin>};
+	    Describe<PROVIDER, Decision::HostJoin>, Describe<PROVIDER, Decision::Cloud>};
 	return CALLBACKS[static_cast<size_t>(decision)];
 }
 
@@ -82,6 +85,8 @@ void DescribeScan(OptimizerExtensionInput &input, LogicalGet &get, LogicalOperat
 		decision = Decision::Limit;
 	else if (mode == "catalog")
 		decision = Decision::Catalog;
+	else if (mode == "cloud")
+		decision = Decision::Cloud;
 	else if (mode == "literal")
 		decision = Decision::Literal;
 	else if (mode == "static")

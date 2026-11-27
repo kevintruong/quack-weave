@@ -44,7 +44,7 @@ pub fn entrypoint(extension: &Extension) -> Result<()> {
             id: "ladybug",
             name: "Ladybug",
             option: "qw_ladybug_config",
-            source: ProviderSource::LocalFile,
+            source: ProviderSource::LocalOrCloudFile,
             unknown_alias_error: Some("QW_CONFIG: Unknown Ladybug graph alias"),
             accepts_declared_catalog: false,
             supports_timeout: true,

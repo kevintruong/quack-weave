@@ -55,6 +55,8 @@ gql_compat.host_result,gql_compatibility.test,native-debug|native-release,3
 gql_compat.graph_patterns,gql_compatibility.test,native-debug|native-release,3
 gql_compat.graph_scope_write,gql_compatibility.test,native-debug|native-release,3
 host.disable,host_access.test,native-debug|native-release,4
+ladybug_cloud_config.remote_access,ladybug_cloud_config.test,native-debug|native-release,3
+ladybug_cloud_config.invalid_requests,ladybug_cloud_config.test,native-debug|native-release,4
 limits.bytes,limits.test,native-debug|native-release,2
 limits.tokens,limits.test,native-debug|native-release,2
 limits.depth,limits.test,native-debug|native-release,2

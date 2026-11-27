@@ -16,7 +16,7 @@ use duckdb_neo::{
 
 use super::{
     CONFIG_GENERATION, ConfigSnapshot, DeclaredCatalog, GraphCatalog, GraphGeneration, ReadBackend,
-    RegisteredConfig, RetiredRegistration, admit_local_path, backend_error, is_identifier,
+    RegisteredConfig, RetiredRegistration, admit_local_path, backend_error, cloud, is_identifier,
     parse_config, remote,
 };
 
@@ -32,6 +32,7 @@ pub enum ProviderRewrite {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProviderSource {
     LocalFile,
+    LocalOrCloudFile,
     RemoteEndpoint,
 }
 
@@ -422,6 +423,41 @@ impl CustomOptionCallbacks for GraphConfig {
                 "QW_CONFIG: {} does not support timeout_ms",
                 descriptor.name
             )));
+        }
+        if descriptor.source == ProviderSource::LocalOrCloudFile
+            && !Path::new(&config.path).is_absolute()
+            && config.path.contains("://")
+        {
+            remote::admit_remote(context)?;
+            let config = cloud::CloudConfig::from_input(config)?;
+            if !backend.supports_cloud_storage(config.source.storage) {
+                return Err(Error::invalid_input(
+                    "QW_CONFIG: Ladybug cloud storage is unavailable in this package",
+                ));
+            }
+            let catalog = backend
+                .cloud_catalog(context, &config.source, config.timeout_ms)
+                .map_err(backend_error)?;
+            remote::admit_remote(context)?;
+            let generation = next_generation()?;
+            let snapshot = ConfigSnapshot {
+                generation: GraphGeneration::remote(generation),
+                config: RegisteredConfig::Cloud(config),
+                observed_catalog: !catalog.is_empty(),
+                catalog: Some(catalog),
+                single_pattern_row_bound: None,
+                populations: None,
+                feedback: Default::default(),
+            };
+            // Retire the local handle, if any. Admitted readers own their sessions.
+            return self.publish(context, expected_revision, snapshot, || {
+                backend.set_generation(None)
+            });
+        }
+        if config.secret.is_some() {
+            return Err(Error::invalid_input(
+                "QW_CONFIG: The secret field requires a Ladybug cloud snapshot URI",
+            ));
         }
         let declared = config
             .catalog

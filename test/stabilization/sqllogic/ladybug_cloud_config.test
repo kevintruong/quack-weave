@@ -1,0 +1,38 @@
+# name: test/stabilization/sqllogic/ladybug_cloud_config.test
+# description: Ladybug cloud graph registration rejects inadmissible paths before opening a graph
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+# case: ladybug_cloud_config.remote_access Cloud registration requires the global remote access switch
+statement ok
+LOAD '{QW_EXT}';
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"s3://example-graphs/snapshots/v1.lbdb","secret":"unused_graph_secret"}';
+----
+QW_ACCESS: Remote graph reads require SET GLOBAL qw_enable_remote_graphs = true
+
+statement ok
+SET GLOBAL qw_enable_remote_graphs = true;
+
+# case: ladybug_cloud_config.invalid_requests Reject unqualified providers and unsafe snapshot paths without network I/O
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"az://graphs/snapshots/v1.lbdb","secret":"unused_graph_secret"}';
+----
+QW_CONFIG: Unsupported Ladybug cloud storage scheme
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"s3://example-graphs/snapshots/v1.lbdb?token=placeholder","secret":"unused_graph_secret"}';
+----
+QW_CONFIG: Invalid Ladybug cloud snapshot URI
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"gs://example-graphs/snapshots/../v1.lbdb","secret":"unused_graph_secret"}';
+----
+QW_CONFIG: Invalid Ladybug cloud snapshot URI
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"gs://example-graphs/snapshots/v1.lbdb"}';
+----
+QW_CONFIG: A Ladybug cloud graph requires a nonempty secret name

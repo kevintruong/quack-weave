@@ -30,6 +30,8 @@ use duckdb_neo::{
 use serde::{Deserialize, Serialize};
 
 mod aggregate_scan;
+mod cloud;
+pub use cloud::{CloudSource, CloudStorage};
 mod filters;
 mod fragment;
 use fragment::GraphFragment;
@@ -196,6 +198,33 @@ pub trait ReadBackend: Send + Sync {
         _context: &Context,
         _source: &RemoteSource,
         _limits: &ScanLimits,
+        _schema: &[ColumnSpec],
+    ) -> std::result::Result<Box<dyn ReadSession>, BackendError> {
+        Err(BackendError::Open)
+    }
+
+    /// Whether the packaged engine can attach this object store read-only.
+    fn supports_cloud_storage(&self, _storage: CloudStorage) -> bool {
+        false
+    }
+
+    /// Attach with the registration connection's credentials and capture metadata.
+    fn cloud_catalog(
+        &self,
+        _context: &Context,
+        _source: &CloudSource,
+        _timeout_ms: Option<u64>,
+    ) -> std::result::Result<GraphCatalog, BackendError> {
+        Err(BackendError::RemoteConfig)
+    }
+
+    /// Resolve the executing connection's credential without contacting storage.
+    /// The returned session performs ATTACH after admission in execute_with_params.
+    fn open_cloud(
+        &self,
+        _context: &Context,
+        _source: &CloudSource,
+        _timeout_ms: Option<u64>,
         _schema: &[ColumnSpec],
     ) -> std::result::Result<Box<dyn ReadSession>, BackendError> {
         Err(BackendError::Open)
@@ -368,6 +397,12 @@ struct ConfigInput {
     path: String,
     timeout_ms: Option<u64>,
     max_batch_bytes: Option<usize>,
+    #[serde(
+        default,
+        deserialize_with = "remote::present_reference",
+        skip_serializing_if = "Option::is_none"
+    )]
+    secret: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     catalog: Option<DeclaredCatalog>,
 }
@@ -460,6 +495,7 @@ impl GraphGeneration {
 enum RegisteredConfig {
     Local(ConfigInput),
     Remote(remote::RemoteConfig),
+    Cloud(cloud::CloudConfig),
 }
 
 impl RegisteredConfig {
@@ -467,6 +503,7 @@ impl RegisteredConfig {
         match self {
             Self::Local(config) => &config.alias,
             Self::Remote(config) => &config.alias,
+            Self::Cloud(config) => &config.alias,
         }
     }
 
@@ -474,6 +511,7 @@ impl RegisteredConfig {
         match self {
             Self::Local(config) => config.max_batch_bytes,
             Self::Remote(config) => config.max_batch_bytes,
+            Self::Cloud(config) => config.max_batch_bytes,
         }
     }
 
@@ -481,7 +519,12 @@ impl RegisteredConfig {
         match self {
             Self::Local(config) => config.has_resource_limit(),
             Self::Remote(_) => true,
+            Self::Cloud(config) => config.timeout_ms.is_some() || config.max_batch_bytes.is_some(),
         }
+    }
+
+    fn allows_rewrites(&self) -> bool {
+        matches!(self, Self::Local(config) if !config.has_resource_limit())
     }
 }
 
@@ -554,7 +597,7 @@ impl BoundRead {
     fn allows_pgq_rewrite(&self) -> bool {
         self.fragment.is_some()
             && self.literal_candidate.is_none()
-            && !self.config.config.has_resource_limit()
+            && self.config.config.allows_rewrites()
             && match self.provider.descriptor.rewrite {
                 ProviderRewrite::Disabled => false,
                 ProviderRewrite::LabelCatalog => true,
@@ -724,6 +767,7 @@ impl TableFunctionCallbacks for GraphQuery {
         let mut watch = None;
         let mut literal_candidate = None;
         if provider.descriptor.rewrite == ProviderRewrite::LabelCatalog
+            && matches!(config.config, RegisteredConfig::Local(_))
             && matches!(
                 self.kind,
                 GraphQueryKind::Filtered | GraphQueryKind::RuntimeWatch
@@ -798,7 +842,7 @@ impl TableFunctionCallbacks for GraphQuery {
                 self.kind,
                 GraphQueryKind::Filtered | GraphQueryKind::RuntimeWatch
             )
-            && !config.config.has_resource_limit()
+            && config.config.allows_rewrites()
             && config.observed_catalog
         {
             let label = required(3)?;
@@ -959,6 +1003,23 @@ impl TableFunctionCallbacks for GraphQuery {
                         remote::admit_remote(context)?;
                         // Remote session construction performs no graph read. This
                         // last generation check admits the request before submission.
+                        self.providers
+                            .require_generation(provider, generation.id())?;
+                        session
+                    }
+                    RegisteredConfig::Cloud(config) => {
+                        remote::admit_remote(context)?;
+                        let session = bound
+                            .provider
+                            .backend
+                            .open_cloud(
+                                context,
+                                &config.source,
+                                config.timeout_ms,
+                                projection.schema(bound),
+                            )
+                            .map_err(backend_error)?;
+                        remote::admit_remote(context)?;
                         self.providers
                             .require_generation(provider, generation.id())?;
                         session

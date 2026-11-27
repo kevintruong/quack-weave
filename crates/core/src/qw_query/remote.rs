@@ -90,7 +90,7 @@ impl CustomOptionCallbacks for RemoteAccess {
 pub(super) fn register(extension: &Extension) -> Result<()> {
     CustomOptionBuilder::new(
         ENABLE_REMOTE,
-        "Allow reads from registered remote graph endpoints",
+        "Allow reads from registered remote graph endpoints and cloud snapshots",
         bool::logical_type(extension)?,
         RemoteAccess,
     )
@@ -117,7 +117,9 @@ struct RemoteConfigInput {
 }
 
 // A missing key is optional, but explicit JSON null is an invalid reference.
-fn present_reference<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
+pub(super) fn present_reference<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error>
 where
     D: Deserializer<'de>,
 {
