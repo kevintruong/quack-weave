@@ -1,0 +1,105 @@
+# name: test/stabilization/sqllogic/hybrid_creator_selective.test
+# description: Exercise the benchmark creator query on the same tiny input in both scan modes
+# group: [quack_weave]
+
+test-env QW_CREATOR_EXTENSION UNSET_QW_CREATOR_EXTENSION
+
+test-env QW_CREATOR_REGISTER UNSET_QW_CREATOR_REGISTER
+
+test-env QW_CREATOR_THRESHOLD UNSET_QW_CREATOR_THRESHOLD
+
+test-env QW_CREATOR_PEOPLE UNSET_QW_CREATOR_PEOPLE
+
+test-env QW_CREATOR_EDGES UNSET_QW_CREATOR_EDGES
+
+test-env QW_CREATOR_SQL UNSET_QW_CREATOR_SQL
+
+# case: hybrid_creator.setup Bind the graph and load the same base rows into the relational oracle
+statement ok
+LOAD {QW_CREATOR_EXTENSION};
+
+statement ok
+{QW_CREATOR_REGISTER};
+
+statement ok
+SET threads = 1;
+
+statement ok
+SET dynamic_or_filter_threshold = {QW_CREATOR_THRESHOLD};
+
+statement ok
+SET disabled_optimizers = 'build_side_probe_side,join_order';
+
+statement ok
+CREATE TEMP TABLE micro_people(author BIGINT, tier BIGINT, segment BIGINT);
+
+statement ok
+INSERT INTO micro_people VALUES {QW_CREATOR_PEOPLE};
+
+statement ok
+CREATE TEMP TABLE creator_edges(author BIGINT, mid BIGINT);
+
+statement ok
+INSERT INTO creator_edges VALUES {QW_CREATOR_EDGES};
+
+statement ok
+CREATE TEMP VIEW creator_reference AS
+SELECT p.segment, count(*) AS matches, sum(e.mid % 1000003)::BIGINT AS checksum
+FROM creator_edges e JOIN micro_people p ON e.author = p.author
+WHERE p.tier = 1
+GROUP BY p.segment;
+
+# case: hybrid_creator.schema Check the actual column types, not just rendered values
+query TT
+SELECT column_name, column_type FROM (DESCRIBE {QW_CREATOR_SQL});
+----
+segment	BIGINT
+matches	BIGINT
+checksum	BIGINT
+
+# case: hybrid_creator.host The host preserves duplicate joins and ignores NULL, absent and other-tier keys
+statement ok
+SET SESSION qw_enable_runtime_watchlist = false;
+
+query III rowsort
+{QW_CREATOR_SQL};
+----
+7	6	62
+9	1	20
+
+query I
+WITH actual AS MATERIALIZED ({QW_CREATOR_SQL}), diff AS (
+    (FROM actual EXCEPT ALL FROM creator_reference) UNION ALL (FROM creator_reference EXCEPT ALL FROM actual)
+)
+SELECT count(*) FROM diff;
+----
+0
+
+# case: hybrid_creator.optimized Push the exact key set without removing SQL duplicates
+statement ok
+SET SESSION qw_enable_runtime_watchlist = true;
+
+statement ok
+CALL enable_logging('QuackWeaveGraphRoute', level = 'info');
+
+query III rowsort
+{QW_CREATOR_SQL};
+----
+7	6	62
+9	1	20
+
+query T
+SELECT message FROM duckdb_logs() WHERE type = 'QuackWeaveGraphRoute';
+----
+runtime_exact
+
+statement ok
+CALL disable_logging();
+
+query I
+WITH actual AS MATERIALIZED ({QW_CREATOR_SQL}), diff AS (
+    (FROM actual EXCEPT ALL FROM creator_reference) UNION ALL (FROM creator_reference EXCEPT ALL FROM actual)
+)
+SELECT count(*) FROM diff;
+----
+0

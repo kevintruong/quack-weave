@@ -1,0 +1,163 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "case_id": "micro_creator_selective",
+      "case_revision": 1,
+      "sql_template_sha256": "d9dc7685107751d529be6f6a46b81bcd9953e7b4a61c8a3bac907b181ac21d5a",
+      "result_schema": [
+        [
+          "segment",
+          "BIGINT"
+        ],
+        [
+          "matches",
+          "BIGINT"
+        ],
+        [
+          "checksum",
+          "BIGINT"
+        ]
+      ],
+      "comparison": "bag",
+      "oracle": {
+        "id": "micro_csv_bag",
+        "revision": 1,
+        "encoding": "sorted_i64_le_v1"
+      },
+      "sql_logic_refs": [
+        {
+          "path": "test/stabilization/sqllogic/hybrid_creator_selective.test",
+          "case_ids": [
+            "hybrid_creator.setup",
+            "hybrid_creator.schema",
+            "hybrid_creator.host",
+            "hybrid_creator.optimized"
+          ]
+        },
+        {
+          "path": "benchmarks/provider_comparison/tracker/micro_results.test",
+          "case_ids": []
+        },
+        {
+          "path": "benchmarks/provider_comparison/tracker/micro_snapshot.test",
+          "case_ids": []
+        }
+      ],
+      "tiny_fixture": {
+        "path": "test/stabilization/fixtures/hybrid_creator_selective.json",
+        "schema_version": 1,
+        "logical_sha256": "70da807d41fb8d1e47a5f8599edfdbabb3d4ed9f06e68e5fb88b129e0dc410bf"
+      }
+    },
+    {
+      "case_id": "micro_creator_broad",
+      "case_revision": 1,
+      "sql_template_sha256": "6995ffbe7396b68203d021d7dac9e2cb2f336a45cb2badcc66041594283971ac",
+      "result_schema": [
+        [
+          "segment",
+          "BIGINT"
+        ],
+        [
+          "matches",
+          "BIGINT"
+        ],
+        [
+          "checksum",
+          "BIGINT"
+        ]
+      ],
+      "comparison": "bag",
+      "oracle": {
+        "id": "micro_csv_bag",
+        "revision": 1,
+        "encoding": "sorted_i64_le_v1"
+      },
+      "sql_logic_refs": [
+        {
+          "path": "benchmarks/provider_comparison/tracker/micro_results.test",
+          "case_ids": []
+        },
+        {
+          "path": "benchmarks/provider_comparison/tracker/micro_snapshot.test",
+          "case_ids": []
+        }
+      ]
+    },
+    {
+      "case_id": "micro_message_selective",
+      "case_revision": 1,
+      "sql_template_sha256": "2561883a797a992007cb0a9ce6779eb1ba003d9d2f84acdbbe98981163734068",
+      "result_schema": [
+        [
+          "topic",
+          "BIGINT"
+        ],
+        [
+          "matches",
+          "BIGINT"
+        ],
+        [
+          "checksum",
+          "BIGINT"
+        ]
+      ],
+      "comparison": "bag",
+      "oracle": {
+        "id": "micro_csv_bag",
+        "revision": 1,
+        "encoding": "sorted_i64_le_v1"
+      },
+      "sql_logic_refs": [
+        {
+          "path": "benchmarks/provider_comparison/tracker/micro_results.test",
+          "case_ids": []
+        },
+        {
+          "path": "benchmarks/provider_comparison/tracker/micro_snapshot.test",
+          "case_ids": []
+        }
+      ]
+    },
+    {
+      "case_id": "micro_creator_message",
+      "case_revision": 1,
+      "sql_template_sha256": "2bc312616060ebb04a28394ae55293f200cfa0cadf98dc0c3dd9fdf1bcaeb746",
+      "result_schema": [
+        [
+          "segment",
+          "BIGINT"
+        ],
+        [
+          "topic",
+          "BIGINT"
+        ],
+        [
+          "matches",
+          "BIGINT"
+        ],
+        [
+          "checksum",
+          "BIGINT"
+        ]
+      ],
+      "comparison": "bag",
+      "oracle": {
+        "id": "micro_csv_bag",
+        "revision": 1,
+        "encoding": "sorted_i64_le_v1"
+      },
+      "sql_logic_refs": [
+        {
+          "path": "benchmarks/provider_comparison/tracker/micro_results.test",
+          "case_ids": []
+        },
+        {
+          "path": "benchmarks/provider_comparison/tracker/micro_snapshot.test",
+          "case_ids": []
+        }
+      ]
+    }
+  ]
+}

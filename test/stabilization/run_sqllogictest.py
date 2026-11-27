@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -128,6 +129,75 @@ def run_cases(unittest, scratch, variables, files=(), stdin=None):
         raise SystemExit(f"SQLLogicTest expected {expected}, observed {completed}")
 
 
+def run_creator_witness(unittest, scratch, lbug, extension):
+    # The benchmark modules used here require only the standard library.
+    benchmark_path = HERE.parents[1] / "benchmarks/provider_comparison"
+    sys.path.insert(0, str(benchmark_path))
+    try:
+        import micro_workloads as micro
+        import workload_manifest as workloads
+    finally:
+        sys.path.remove(str(benchmark_path))
+
+    case_id = "micro_creator_selective"
+    case = workloads.load_manifest()[case_id]
+    fixture = workloads.read_tiny_fixture(case)
+
+    edges = fixture["edges"]
+    people = fixture["people"]
+    graph_dir = scratch / "hybrid-creator"
+    graph_dir.mkdir()
+    graph = graph_dir / "creator.lbdb"
+    graph_ddl = [
+        "CREATE NODE TABLE Person(PersonId INT64 PRIMARY KEY);",
+        "CREATE NODE TABLE Message(MessageId INT64 PRIMARY KEY);",
+        "CREATE REL TABLE Message_hasCreator_Person(FROM Message TO Person);",
+    ]
+    graph_ddl.extend(f"CREATE (:Person {{PersonId: {author:d}}});" for author in sorted({a for a, _ in edges}))
+    graph_ddl.extend(f"CREATE (:Message {{MessageId: {mid:d}}});" for mid in sorted({m for _, m in edges}))
+    graph_ddl.extend(
+        f"MATCH (m:Message {{MessageId: {mid:d}}}), (p:Person {{PersonId: {author:d}}}) "
+        "CREATE (m)-[:Message_hasCreator_Person]->(p);"
+        for author, mid in edges
+    )
+    ladybug(lbug, graph, "\n".join(graph_ddl) + "\n")
+
+    def file_hashes():
+        hashes = {}
+        for path in graph_dir.iterdir():
+            with path.open("rb") as handle:
+                hashes[path.name] = hashlib.file_digest(handle, "sha256").hexdigest()
+        return hashes
+
+    def quote(value):
+        return "'" + str(value).replace("'", "''") + "'"
+
+    sql = workloads.micro_statements()[case_id]
+    before = file_hashes()
+    result = micro.expected_rows(edges, {"people": people, "messages": []})[case_id]
+    # The scaled tracker uses the same whole-row, little-endian int64 encoding.
+    oracle_sha256 = hashlib.sha256(b"".join(struct.pack("<qqq", *row) for row in sorted(result))).hexdigest()
+    evidence = workloads.workload_evidence(
+        case, scale="tiny", fixture_sha256=case["tiny_fixture"]["logical_sha256"],
+        sql=sql, parameters={"people": people},
+        oracle_rows=len(result), oracle_sha256=oracle_sha256,
+    )
+    register = json.dumps({"alias": workloads.CREATOR_ALIAS, "path": str(graph)})
+    variables = {
+        "QW_CREATOR_EXTENSION": quote(extension),
+        "QW_CREATOR_REGISTER": "SET GLOBAL qw_ladybug_config = " + quote(register),
+        "QW_CREATOR_THRESHOLD": micro.HOST_THRESHOLD,
+        "QW_CREATOR_PEOPLE": micro.values_sql(people),
+        "QW_CREATOR_EDGES": micro.values_sql(edges),
+        "QW_CREATOR_SQL": sql,
+    }
+    witness = next(ref for ref in case["sql_logic_refs"] if ref["case_ids"])
+    run_cases(unittest, scratch, variables, [workloads.sqllogic_path(witness)])
+    if before != file_hashes():
+        raise ValueError(f"Hybrid workload {case_id} changed its read-only graph fixture")
+    print("[QW_HYBRID_WORKLOAD] " + json.dumps(evidence), flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--duckdb-unittest", required=True, type=Path)
@@ -193,6 +263,7 @@ def main():
             "duckgql_admission.test", "duckgql_aggregates.test", "duckgql_basic.test",
             "duckgql_paths.test", "duckgql_reachability.test", "duckgql_scalars.test",
         )])
+        run_creator_witness(unittest, scratch, lbug, relocated)
         snapshot(lbug, graph, fixtures, after)
         write_package_observations(package, export, observations)
         run_cases(unittest, scratch, {"QW_BEFORE": before, "QW_AFTER": after, "QW_PACKAGE": observations},

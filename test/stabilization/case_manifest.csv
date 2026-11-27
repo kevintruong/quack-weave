@@ -141,3 +141,7 @@ hybrid.aggregate_pushdown,graph_aggregate_pushdown.test,native-debug|native-rele
 hybrid.table_watchlist,table_watchlist.test,native-debug|native-release,34
 remote_policy.host_access,remote_policy.test,native-debug|native-release,10
 declared_bindings.read,declared_bindings.test,native-debug|native-release,4
+hybrid_creator.setup,hybrid_creator_selective.test,native-debug|native-release,10
+hybrid_creator.schema,hybrid_creator_selective.test,native-debug|native-release,1
+hybrid_creator.host,hybrid_creator_selective.test,native-debug|native-release,3
+hybrid_creator.optimized,hybrid_creator_selective.test,native-debug|native-release,6
