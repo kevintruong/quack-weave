@@ -159,15 +159,19 @@ def compatible_baselines(current, start):
 
 
 def select_pair(current, ancestor, directory):
-    from artifacts import restore_previous
+    from artifacts import PHASE, restore_previous
 
     unavailable = {}
     for previous in compatible_baselines(current, ancestor):
         sha = checked_sha(previous["workspace_head"])
         extension = restore_previous(previous, directory)
         if extension is not None:
-            return {"baseline_sha": sha, "artifact_id": previous["actions_artifacts"]["release"],
-                    "extension_sha256": previous["binaries"]["extension"], "extension": str(extension)}
+            selection = {"baseline_sha": sha, "artifact_id": previous["actions_artifacts"]["release"],
+                         "extension_sha256": previous["binaries"]["extension"], "extension": str(extension)}
+            if "phase_extension" in previous["binaries"]:
+                selection.update(phase_extension=str(extension.parent / PHASE),
+                                 phase_sha256=previous["binaries"]["phase_extension"])
+            return selection
         unavailable.setdefault("unavailable_sha", sha)
     return unavailable
 
@@ -185,13 +189,14 @@ def verify_pair(current, previous, selection):
     if (previous["workspace_head"] != selection["baseline_sha"]
             or current["workspace_head"] == previous["workspace_head"]
             or previous["binaries"]["extension"] != selection["extension_sha256"]
+            or previous["binaries"].get("phase_extension") != selection.get("phase_sha256")
             or previous["actions_artifacts"]["release"] != selection["artifact_id"]):
         raise ValueError("Wrong baseline release for paired measurement")
     for key in ("host_id", "pair_id", "tracker_sha256", "fixture"):
         if not current.get(key) or current[key] != previous.get(key):
             raise ValueError(f"Paired measurements require matching {key}")
     def clients(snapshot):
-        return {k: v for k, v in snapshot["binaries"].items() if k != "extension"}
+        return {k: v for k, v in snapshot["binaries"].items() if k not in ("extension", "phase_extension")}
     if (current["id"] == previous["id"] or clients(current) != clients(previous)
             or cohort(current) != cohort(previous) or series(current).keys() != series(previous).keys()):
         raise ValueError("Incompatible paired measurements")
@@ -219,6 +224,15 @@ def judge(current, previous):
     old = series(previous)
     for key, row in series(current).items():
         prior = old[key]
+        if "engine_execution" in row and "engine_execution" in prior:
+            engine, old_engine = row["engine_execution"], prior["engine_execution"]
+            slow = [m for m in ("p50", "p95") if old_engine[m + "_ms"] > 0 and engine[m + "_ms"] > 0
+                    and latency_percent(old_engine[m + "_ms"], engine[m + "_ms"]) >= REVIEW_PERCENT]
+            if slow:
+                result.setdefault("engine_regressions", []).append({
+                    "series": "/".join(key), "metrics": slow,
+                    "old_p50_ms": old_engine["p50_ms"], "new_p50_ms": engine["p50_ms"],
+                    "old_p95_ms": old_engine["p95_ms"], "new_p95_ms": engine["p95_ms"]})
         deltas = {m: latency_percent(prior[m + "_ms"], row[m + "_ms"]) for m in ("p50", "p95")}
         slow = [m for m, delta in deltas.items() if delta >= REVIEW_PERCENT]
         fast = [m for m, delta in deltas.items() if delta < 0]
@@ -252,6 +266,46 @@ def report_label(value):
     return value
 
 
+def layer_tables(snapshot, baseline, threshold):
+    lines = []
+    prior = series(baseline) if baseline else {}
+    engines = [r for r in snapshot["summary"] if "engine_execution" in r]
+    if engines:
+        lines.extend(["#### Warm graph-engine execution", "",
+                      "Each provider reports execution inside its engine. Diagnostics use the same query order and result checks as the release.",
+                      "",
+                      "| Provider | Route | Workload | Engine samples | p50 (ms) | p95 (ms) | p50 change | p95 change | Other warm work p50 (ms) |",
+                      "|---|---|---|---:|---:|---:|---:|---:|---:|"])
+        for row in engines:
+            key = tuple(report_label(row[k]) for k in ("provider", "route", "case"))
+            engine = row["engine_execution"]
+            old = prior.get(key, {}).get("engine_execution", {})
+            changes = []
+            for metric in ("p50_ms", "p95_ms"):
+                if old.get(metric, 0) > 0 and engine[metric] > 0:
+                    delta = latency_percent(old[metric], engine[metric])
+                    changes.append(format_change(delta, threshold) if threshold is not None else f"{delta:+.1f}%")
+                else:
+                    changes.append("—")
+            other = row.get("other_warm_work")
+            residual = f"{other['p50_ms']:.3f}" if other else "—"
+            lines.append(f"| {' | '.join(key)} | {engine['n']:d} | {engine['p50_ms']:.3f} | {engine['p95_ms']:.3f} | {' | '.join(changes)} | {residual} |")
+        lines.extend(["", "Other warm work is elapsed time outside native execution on the same diagnostic call, including preparation and Arrow fetch. "
+                      "Hybrid SQL includes DuckDB relational execution and has its own client timings below.", ""])
+    if "bootstrap_summary" in snapshot:
+        lines.extend(["#### One-time connection bootstrap", "",
+                      "Each connection contributes one sample. Registration includes opening the provider graph through DuckDB.",
+                      "", "| Provider | Route | Connections | p50 (ms) | p95 (ms) | Open p50 | Load p50 | Register p50 |",
+                      "|---|---|---:|---:|---:|---:|---:|---:|"])
+        for row in snapshot["bootstrap_summary"]:
+            stages = row["stage_p50_ms"]
+            components = [f"{stages[k]:.3f}" if k in stages else "—" for k in ("open_ms", "load_ms", "register_ms")]
+            lines.append(f"| {report_label(row['provider'])} | {report_label(row['route'])} | {row['n']:d} | "
+                         f"{row['p50_ms']:.3f} | {row['p95_ms']:.3f} | {' | '.join(components)} |")
+        lines.append("")
+    return lines
+
+
 def markdown_report(record, snapshot, baseline=None):
     sha = checked_sha(record["commit"])
     status = record["status"]
@@ -282,8 +336,11 @@ def markdown_report(record, snapshot, baseline=None):
     elif status == "baseline":
         lines.extend(["First compatible baseline for this runner and protocol.", ""])
     threshold = record.get("review_percent")
+    if baseline is None:
+        baseline = snapshot.get("paired_baseline_snapshot")
+    lines.extend(layer_tables(snapshot, baseline, threshold))
     if threshold is not None and record.get("baseline_sha"):
-        lines.extend([f"Latency is advisory. A rise of {threshold:g}% or more in either p50 or p95 warrants review. "
+        lines.extend([f"Warm client latency is advisory. A rise of {threshold:g}% or more in either p50 or p95 warrants review. "
                       "Negative changes mean faster queries.", ""])
         regressions = record["regressions"]
         improvements = record["improvements"]
@@ -314,11 +371,9 @@ def markdown_report(record, snapshot, baseline=None):
                          f"| {old95:,.3f} | {new95:,.3f} | {(new95/old95-1):+.1%} |")
         lines.append("")
 
-    if baseline is None:
-        baseline = snapshot.get("paired_baseline_snapshot")
     prior = series(baseline) if baseline else {}
     for scope, title in (("standalone", "Standalone graph queries"), ("hybrid", "Hybrid SQL and graph queries")):
-        lines.extend([f"#### {title}", "",
+        lines.extend([f"#### {title} · warm client latency through fetch", "",
                       "| Provider | Route | Workload | Samples | p50 (ms) | p95 (ms) | p50 / direct |"
                       + (" Baseline p50 (ms) | p50 change | Baseline p95 (ms) | p95 change |" if prior else ""),
                       "|---|---|---|---:|---:|---:|---:|" + ("---:|" * 4 if prior else "")])
@@ -409,8 +464,11 @@ def main():
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
             summary.write(markdown_report(record, snapshot))
         if result["regressions"] and os.environ.get("GITHUB_ACTIONS") == "true":
-            print(f"::warning::{len(result['regressions'])} benchmark workloads slowed by at least "
+            print(f"::warning::{len(result['regressions'])} end-to-end benchmark workloads slowed by at least "
                   f"{REVIEW_PERCENT}% in p50 or p95. See the benchmark summary.")
+        if result.get("engine_regressions") and os.environ.get("GITHUB_ACTIONS") == "true":
+            print(f"::warning::{len(result['engine_regressions'])} graph-engine series slowed by at least "
+                  f"{REVIEW_PERCENT}% in p50 or p95. See the engine execution table.")
         return 0
 
 

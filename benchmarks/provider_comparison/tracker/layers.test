@@ -1,0 +1,58 @@
+# name: benchmarks/provider_comparison/tracker/layers.test
+# description: Verify native execution and one-time bootstrap independently of client latency
+# group: [quack_weave]
+
+require json
+
+test-env QW_TRACKER_SNAPSHOT UNSET_QW_TRACKER_SNAPSHOT
+
+statement ok
+CREATE TEMP TABLE snapshot AS FROM read_json_auto('{QW_TRACKER_SNAPSHOT}');
+
+statement ok
+CREATE TEMP VIEW measured_engine AS
+SELECT w.provider, w.route, s."case" AS workload, count(*) AS n,
+       median(s.engine_ms) AS p50_ms, quantile_disc(s.engine_ms, .95) AS p95_ms
+FROM snapshot, unnest(workers) AS t(w), unnest(w.engine_samples) AS u(s)
+WHERE s.repetition > 0 GROUP BY ALL;
+
+statement ok
+CREATE TEMP VIEW published_engine AS
+SELECT r.provider, r.route, r."case" AS workload, r.engine_execution AS e
+FROM snapshot, unnest(summary) AS t(r) WHERE r.engine_execution IS NOT NULL;
+
+query I
+SELECT count(*) FROM measured_engine m FULL JOIN published_engine p USING (provider,route,workload)
+WHERE m.n IS DISTINCT FROM p.e.n OR m.n <> (SELECT blocks*runs FROM snapshot)
+   OR abs(m.p50_ms - p.e.p50_ms) > 1e-8 OR abs(m.p95_ms - p.e.p95_ms) > 1e-8;
+----
+0
+
+# Both providers have three direct workloads. A matching probe adds both standalone DuckDB routes.
+query I
+SELECT (SELECT count(*) FROM measured_engine) =
+    CASE WHEN json_extract(to_json(binaries), '$.phase_extension') IS NULL THEN 6 ELSE 18 END
+FROM snapshot;
+----
+1
+
+query I
+SELECT count(*) FROM snapshot, unnest(workers) AS t(w), unnest(w.engine_samples) AS u(s)
+WHERE s.engine_ms IS NULL OR NOT isfinite(s.engine_ms) OR s.engine_ms < 0
+   OR s.engine_ms > s.wall_ms;
+----
+0
+
+query I
+WITH boot AS (
+    SELECT w.provider, w.route, count(*) AS n, median(w.setup.bootstrap_ms) AS p50,
+           quantile_disc(w.setup.bootstrap_ms,.95) AS p95
+    FROM snapshot, unnest(workers) AS t(w) GROUP BY ALL
+), published AS (
+    SELECT b.* FROM (SELECT unnest(bootstrap_summary) AS b FROM snapshot)
+)
+SELECT count(*) FROM boot FULL JOIN published p USING (provider,route)
+WHERE boot.n IS DISTINCT FROM p.n OR p.n <> (SELECT blocks FROM snapshot)
+   OR abs(boot.p50 - p.p50_ms) > 1e-8 OR abs(boot.p95 - p.p95_ms) > 1e-8;
+----
+0

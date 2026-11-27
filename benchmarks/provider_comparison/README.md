@@ -4,6 +4,63 @@ The notebook compares the same DuckDB SQL through the two providers. Its DuckDB 
 
 The benchmark tracker also measures direct Ladybug and direct RelateDB for standalone graph queries. It tracks hybrid SQL workloads through QuackWeave on both providers, with immutable snapshots and a DuckDB history query. [Standalone baselines and hybrid tracker](tracker/README.md)
 
+## Creator partnership review with a Parquet sales ledger
+
+A partnerships manager is preparing a creator’s next campaign brief. Which three sales channels generated the most settled net sales on that creator’s current portfolio in the last month? Does the last week give the same ranking? The graph supplies post authorship at query time. The sales ledger contains order and content IDs, booking dates, channels, settlement status and signed USD amounts. A refund reduces sales in the period when it settles, even if the purchase happened earlier.
+
+The graph query selects posts by following the creator relationship. DuckDB joins those post IDs to the ledger, filters the reporting window and settlement status, and ranks channels by net sales. A channel needs at least five settled purchases and positive net sales to qualify. Ties sort by channel name. This measures attributed sales for a campaign review. Estimating incremental lift or return on spend would require spend and comparison-group data.
+
+The benchmark runs the same `MATCH … RETURN` in Cypher and supported GQL on both Ladybug and RelateDB. Each block reuses a configured connection across 7-day and 30-day reports. It runs each query against both `read_parquet('sales.parquet')` and a DuckDB in-memory table loaded from that file. Two direct-client controls quantify the cost of refreshing or reusing the graph result. [Runnable benchmark and SQL](creator_sales.py)
+
+On a connection with the `social` graph registered, the 30-day review can be expressed as one query. Set the graph and dialect once. The example reads the ledger from the benchmark output directory.
+
+```sql
+SESSION SET GRAPH social;
+SET SESSION qw_graph_dialect = 'gql';
+
+SELECT s.channel, count(*) FILTER (WHERE s.kind = 'sale') AS sales,
+       sum(s.amount_cents)::BIGINT AS net_sales_cents
+FROM qw_query(current_setting('qw_selected_graph'), current_setting('qw_graph_dialect'),
+    'MATCH (m:Message)-[:Message_hasCreator_Person]->(p:Person)
+     WHERE p.PersonId = 4398046519825 RETURN m.MessageId AS content_id',
+    schema := 'content_id BIGINT') AS g
+JOIN read_parquet('sales.parquet') AS s USING (content_id)
+WHERE s.status = 'settled' AND s.booked_on >= DATE '2025-03-02' AND s.booked_on < DATE '2025-04-01'
+GROUP BY s.channel
+HAVING count(*) FILTER (WHERE s.kind = 'sale') >= 5 AND sum(s.amount_cents) > 0
+ORDER BY net_sales_cents DESC, s.channel ASC
+LIMIT 3;
+```
+
+| Route | What happens on each request |
+|---|---|
+| Live GQL or Cypher | The application submits one SQL statement to DuckDB. QuackWeave retrieves post IDs from the selected graph. DuckDB returns up to three ranked channels. |
+| Direct native client, fresh Arrow | The native Cypher client retrieves the same post IDs. The application replaces a DuckDB table via ADBC Arrow ingestion and executes the same relational query. The timer includes all three steps. |
+| Direct native client, reused portfolio | The application retrieves and stages the post IDs once. Subsequent queries use the staged membership. The snapshot records its construction cost. It needs a refresh when authorship changes. |
+
+With the tracker environment and the full `mod1` fixture installed, run the following from the project root. Choose a new output directory for each run. The optional timing companion replays the queries separately to collect provider-native execution counters. [Environment and build](tracker/README.md)
+
+```sh
+build/tracker-venv/bin/python -B benchmarks/provider_comparison/creator_sales.py \
+  --phase-extension build/benchmark-engine-timing/quack_weave.duckdb_extension \
+  --out build/perf/creator-sales-sf1
+```
+
+The default generates one million synthetic orders against post IDs from the frozen SF1 graph. The dated ledger is sorted by booking date and stored as compressed Parquet. All routes share the same data and case order. Filesystem caches are warm. Connection bootstrap, ledger preload and portfolio staging are reported separately from warm p50 and p95. Each submission must match the ordered answer independently calculated from the source edge CSV and the saved ledger. The output directory contains the Parquet file, a readable report, and JSON with the exact SQL, raw samples and file hashes. CI checks settlement and ranking semantics on a small hand-calculated fixture. The full timing run is opt-in.
+
+### SF1 creator review results
+
+The local macOS ARM64 run on November 25, 2026 used 3,809,607 creator edges and 1,123,209 synthetic ledger events. The selected creator had 6,465 posts. Their 30-day portfolio recorded 507 settled purchases and 65 refunds across all channels. Paid social led at $13,983.67 in net sales, followed by email at $13,772.74 and marketplace at $12,100.87. The 7-day ranking had the same order.
+
+| 30-day warm p50 (ms) | Live GQL | Live Cypher | Direct + fresh Arrow | Reused portfolio |
+|---|---:|---:|---:|---:|
+| Ladybug, Parquet | 22.60 | 21.18 | 21.81 | 19.16 |
+| Ladybug, memory | 10.08 | 9.42 | 10.66 | 6.75 |
+| RelateDB, Parquet | 28.41 | 28.43 | 28.03 | 18.00 |
+| RelateDB, memory | 15.08 | 15.04 | 14.63 | 6.77 |
+
+Both live dialects returned the three ranked rows in one submission. The direct refresh transferred 6,465 post IDs into the application and staged them in DuckDB each time. Reusing a portfolio was fastest at the median when its membership could stay fixed. Across routes, median ledger preload took 147–201 ms. Direct connection bootstrap includes initialization of the native Python client. Each cell had 20 warm observations across four connections. The Ladybug 30-day Parquet p95 ranged from 94 to 148 ms across routes, so small median differences should be interpreted with the recorded tails.
+
 ## Optimized release on the full SF1 creator graph
 
 All six queries completed on both providers using the same pinned DuckDB build, graph files, SQL and CSV-derived expected results as the baseline. The table shows median warm, end-to-end fetch latency over six observations per successful query. Timing includes DuckDB binding and graph-to-Arrow conversion. [Optimized full-scale observations](optimized/mod1.json) · [Baseline observations](mod1.json)
@@ -92,7 +149,7 @@ Each implementation commit has a fixture-backed SQLLogic regression. The plan ch
 From the repository root, use the benchmark Python environment with Python 3.12 and the [pinned benchmark wheels](tracker/requirements.txt). Place the pinned `sf1.lbdb` under `build/perf/lsqb-sf1/`. The fixture builder checks the source hash before importing. These commands target the combined release and the pinned DuckDB library used in the measurements.
 
 ```sh
-make native-deps && make native-release
+make native-deps native-release
 build/usage-client-venv/bin/python -m pip install --only-binary=:all: --require-hashes -r benchmarks/provider_comparison/tracker/requirements.txt
 
 for m in 256 32 1; do

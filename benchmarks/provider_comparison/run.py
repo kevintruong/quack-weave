@@ -79,6 +79,7 @@ def oracle(folder):
     return {"edges": len(mids), "people": len(np.unique(authors)), "messages": len(mids),
             "fanout": len(fan), "watchlist_groups": groups, "scan": scan, "partitions": partitions,
             "expected": {"all_pairs": signature([authors, mids]), "gql_lookup": signature([[KEYS[0]]]),
+                         "lookup_miss": signature([np.unique(authors[authors == -1])]),
                          **{k: signature([fan]) for k in ["gql_fanout", "cypher_fanout", "graph_table_where"]},
                          "table_watchlist": signature(list(zip(*groups))),
                          "full_scan_aggregate": signature([[v] for v in scan])}}
@@ -89,9 +90,7 @@ def milliseconds(start):
 
 
 @contextmanager
-def cursor(a):
-    graph_path = a.fixture / ENGINES[a.provider]
-    config = json.dumps({"alias": GRAPH_ALIAS, "path": str(graph_path.resolve())})
+def duckdb_cursor(a):
     start = perf_counter_ns()
     with dbapi.connect(driver=str(a.library.resolve()), entrypoint="duckdb_adbc_init", autocommit=True,
                        db_kwargs={"allow_unsigned_extensions": "true"}) as db, db.cursor() as cur:
@@ -102,6 +101,14 @@ def cursor(a):
         start = perf_counter_ns()
         cur.execute("SET threads = 1")
         threads_ms = milliseconds(start)
+        yield cur, {"open_ms": open_ms, "threads_ms": threads_ms}
+
+
+@contextmanager
+def cursor(a, *, prepare_watchlist=True):
+    graph_path = a.fixture / ENGINES[a.provider]
+    config = json.dumps({"alias": GRAPH_ALIAS, "path": str(graph_path.resolve())})
+    with duckdb_cursor(a) as (cur, setup):
         start = perf_counter_ns()
         cur.execute("LOAD " + sql_literal(a.extension.resolve()))
         load_ms = milliseconds(start)
@@ -111,10 +118,10 @@ def cursor(a):
         start = perf_counter_ns()
         cur.execute(f"SESSION SET GRAPH {GRAPH_ALIAS}")
         select_graph_ms = milliseconds(start)
-        cur.execute("CREATE TEMP TABLE watch(author BIGINT)")
-        cur.execute("INSERT INTO watch VALUES " + ",".join(f"({k})" for k in KEYS))
-        setup = {"open_ms": open_ms, "threads_ms": threads_ms, "load_ms": load_ms,
-                 "register_ms": register_ms, "select_graph_ms": select_graph_ms}
+        if prepare_watchlist:
+            cur.execute("CREATE TEMP TABLE watch(author BIGINT)")
+            cur.execute("INSERT INTO watch VALUES " + ",".join(f"({k})" for k in KEYS))
+        setup.update(load_ms=load_ms, register_ms=register_ms, select_graph_ms=select_graph_ms)
         yield cur, {**setup, "bootstrap_ms": sum(setup.values())}
 
 

@@ -14,6 +14,9 @@ verify_snapshot() {
     QW_TRACKER_SNAPSHOT="$snapshot" "$DUCKDB_UNITTEST" \
         --test-dir "$RUNNER_TEMP" --env-passthrough QW_TRACKER_SNAPSHOT --stdin < "$driver/tracker/snapshot.test" | tee "$log"
     check_sqllogic_log "$log"
+    QW_TRACKER_SNAPSHOT="$snapshot" "$DUCKDB_UNITTEST" \
+        --test-dir "$RUNNER_TEMP" --env-passthrough QW_TRACKER_SNAPSHOT --stdin < "$driver/tracker/layers.test" | tee "$log.layers"
+    check_sqllogic_log "$log.layers"
 }
 
 measure() {
@@ -24,6 +27,9 @@ measure() {
     python "$driver/tracker/artifacts.py" verify "$release" "$sha"
     local -a args=(--source-revision "$sha" --extension "$release/quack_weave.duckdb_extension"
         --fixture "$root/build/perf/provider-comparison/mod1" --library "$DUCKDB_LIB")
+    if [[ -f "$release/phase/quack_weave.duckdb_extension" ]]; then
+        args+=(--phase-extension "$release/phase/quack_weave.duckdb_extension")
+    fi
     if [[ -n "${PR_BASE_SHA:-}" ]]; then
         ancestor=$(git merge-base "$sha" "$PR_BASE_SHA")
     else
@@ -41,6 +47,9 @@ measure() {
     if [[ -n "$archived" ]]; then
         args+=(--baseline-revision "$archived" --baseline-extension "$(jq -er .extension "$scratch/selection.json")"
             --baseline-out "$folder/baseline.json")
+        if jq -e .phase_extension "$scratch/selection.json" >/dev/null; then
+            args+=(--baseline-phase-extension "$(jq -er .phase_extension "$scratch/selection.json")")
+        fi
     fi
     python "$driver/tracker.py" run "${args[@]}" --out "$folder/snapshot.json"
     verify_snapshot "$folder/snapshot.json" "$scratch/candidate.log"

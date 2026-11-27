@@ -127,7 +127,12 @@ jobs:
             env -u MACOSX_DEPLOYMENT_TARGET make -C "$subject" native-deps
           fi
           env -u MACOSX_DEPLOYMENT_TARGET make -C "$subject" native-release
-          python3 benchmarks/provider_comparison/tracker/artifacts.py stage "$subject" build/native/releases
+          stage=(stage "$subject" build/native/releases)
+          if [[ -f "$subject/crates/native/bench/ladybug_timing.cpp" ]]; then
+            env -u MACOSX_DEPLOYMENT_TARGET make -C "$subject" benchmark-engine-timing
+            stage+=(--phase)
+          fi
+          python3 benchmarks/provider_comparison/tracker/artifacts.py "${stage[@]}"
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
             target="$subject/target/native"
             env -u MACOSX_DEPLOYMENT_TARGET cargo build --manifest-path "$subject/Cargo.toml" \

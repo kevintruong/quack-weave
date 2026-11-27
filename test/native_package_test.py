@@ -62,6 +62,13 @@ class NativePackageTest(unittest.TestCase):
         self.assertNotIn("gql", native["features"])
 
     @unittest.skipUnless(os.environ.get("QUACK_WEAVE_TEST_ARTIFACT"), "requires a native package")
+    def test_native_package_includes_the_project_license(self):
+        artifact = pathlib.Path(os.environ["QUACK_WEAVE_TEST_ARTIFACT"])
+        license_file = artifact.parent / "licenses" / "QuackWeave-LICENSE"
+        self.assertTrue(license_file.is_file(), f"Missing project license in {artifact.parent}")
+        self.assertEqual(license_file.read_bytes(), (ROOT / "LICENSE").read_bytes())
+
+    @unittest.skipUnless(os.environ.get("QUACK_WEAVE_TEST_ARTIFACT"), "requires a native package")
     def test_native_binary_uses_only_system_runtime_dependencies(self):
         artifact = os.environ["QUACK_WEAVE_TEST_ARTIFACT"]
         imports, symbols = native_dependencies(artifact)

@@ -25,8 +25,13 @@ for sha in "$@"; do
     else
         targets=(mvp2-deps mvp2-relate-release)
     fi
+    stage=(stage "$subject" "$root/build/historical")
+    if [[ -f "$subject/crates/native/bench/ladybug_timing.cpp" ]]; then
+        targets+=(benchmark-engine-timing)
+        stage+=(--phase)
+    fi
     if make -C "$subject" "${targets[@]}"; then
-        python3 "$root/benchmarks/provider_comparison/tracker/artifacts.py" stage "$subject" "$root/build/historical"
+        python3 "$root/benchmarks/provider_comparison/tracker/artifacts.py" "${stage[@]}"
     else
         # The consumer marks this SHA failed and still measures the other releases.
         echo "::error::Could not build release $sha"

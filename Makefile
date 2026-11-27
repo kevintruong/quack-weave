@@ -2,7 +2,7 @@
 
 .PHONY: clean clean_all native native-release native-deps native-test
 .PHONY: native-stabilization-test native-stabilization-test-prebuilt public-client-test public-client-test-prebuilt
-.PHONY: native-provider-test native-neo4j-tls-test
+.PHONY: native-provider-test native-neo4j-tls-test benchmark-engine-timing
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -99,6 +99,9 @@ native:
 
 native-release:
 	$(call package_native,$(NATIVE_CARGO_DIR),--release,release,$(NATIVE_RELEASE_ARTIFACT))
+
+benchmark-engine-timing:
+	$(call package_native,$(CARGO_BUILD_ROOT)/benchmark-engine-timing,--release,release,build/benchmark-engine-timing/quack_weave.duckdb_extension,benchmark-engine-timing)
 
 native-provider-test: native-release
 	$(call build_native,$(NATIVE_CARGO_DIR),--release --example relate_fixture)

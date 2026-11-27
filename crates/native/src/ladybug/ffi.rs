@@ -127,6 +127,7 @@ unsafe extern "C" {
     ) -> c_int;
     pub(super) fn lbug_prepared_statement_destroy(prepared: *mut PreparedHandle);
     #[cfg(not(test))]
+    #[cfg_attr(feature = "benchmark-engine-timing", link_name = "qw_probe_execute")]
     pub(super) fn lbug_connection_execute(
         connection: *mut ConnectionHandle,
         prepared: *mut PreparedHandle,

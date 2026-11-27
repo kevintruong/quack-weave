@@ -221,6 +221,13 @@ impl ReadSession for Session {
             .connection
             .query_with_params(cypher, bindings)
             .map_err(|_| BackendError::Execution)?;
+        #[cfg(feature = "benchmark-engine-timing")]
+        eprintln!(
+            "QW_RELATE_PHASE {} {} {}",
+            result.parse_ms(),
+            result.plan_ms(),
+            result.execute_ms()
+        );
         if result.header.columns.len() != self.schema.len()
             || result
                 .header

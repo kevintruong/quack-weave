@@ -2,12 +2,14 @@
 name = "rusty_quack"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [features]
 default = ["relate-provider", "neo4j-provider"]
 relate-provider = ["dep:relate", "dep:relate-parser"]
 neo4j-provider = ["dep:base64", "dep:relate-parser", "dep:serde_json", "dep:ureq"]
 neo4j-test-fixture = ["neo4j-provider"]
+benchmark-engine-timing = []
 template-compat = []
 
 [lib]

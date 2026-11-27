@@ -73,12 +73,27 @@ fn main() {
             .arg("-o")
             .arg(&object),
     );
-    run(
-        Command::new(env::var_os("AR").as_deref().unwrap_or(OsStr::new("ar")))
-            .arg("crs")
-            .arg(out.join("libqw_ladybug_admission.a"))
-            .arg(object),
-    );
+    let mut archive = Command::new(env::var_os("AR").as_deref().unwrap_or(OsStr::new("ar")));
+    archive
+        .arg("crs")
+        .arg(out.join("libqw_ladybug_admission.a"))
+        .arg(object);
+    if env::var_os("CARGO_FEATURE_BENCHMARK_ENGINE_TIMING").is_some() {
+        let probe = manifest_dir.join("bench/ladybug_timing.cpp");
+        let object = out.join("ladybug_timing.o");
+        println!("cargo:rerun-if-changed={}", probe.display());
+        run(
+            Command::new(env::var_os("CXX").as_deref().unwrap_or(OsStr::new("c++")))
+                .args(["-std=c++20", "-fPIC", "-fvisibility=hidden", "-I"])
+                .arg(source.join("src/include"))
+                .arg("-c")
+                .arg(probe)
+                .arg("-o")
+                .arg(&object),
+        );
+        archive.arg(object);
+    }
+    run(&mut archive);
 
     println!("cargo:rustc-link-search=native={}", out.display());
     println!("cargo:rustc-link-lib=static=qw_ladybug_admission");

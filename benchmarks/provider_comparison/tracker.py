@@ -22,8 +22,10 @@ from uuid import uuid4
 import pyarrow as pa
 
 import application_workloads as application
+from engine_timing import attach_trace, check_uninstrumented, ns
 import micro_workloads as micro
 import run
+import session_lookups as lookup
 import workload_manifest
 from planning.compare import OUTER, VIA_VIEW
 from watchlist import SQL as VALUES_JOIN
@@ -39,14 +41,14 @@ STANDALONE = {
     "fanout": (run.FAN, "cypher_fanout"),
 }
 HYBRID = {
-    **MICRO_CASES,
-    **APPLICATION_CASES,
     "graph_table_where": (run.CASES["graph_table_where"][1], "graph_table_where"),
     "outer_where": (OUTER, "graph_table_where"),
     "view_where": (VIA_VIEW, "graph_table_where"),
     "values_watchlist": (VALUES_JOIN, "table_watchlist"),
     "table_watchlist": (run.CASES["table_watchlist"][1], "table_watchlist"),
     "full_scan_aggregate": (run.CASES["full_scan_aggregate"][1], "full_scan_aggregate"),
+    **MICRO_CASES,
+    **APPLICATION_CASES,
 }
 CASES = {**STANDALONE, **HYBRID}
 PREPARED_ROUTE = "qw_prepared_cypher"
@@ -91,11 +93,19 @@ def prepared_sql(name):
     return f"SELECT * FROM qw_query({alias}, 'cypher', {statement}, schema := 'id BIGINT')"
 
 
-def fetch_table(fetch, statement, expected_schema=None, *, ordered=False):
+def fetch_table(fetch, statement, *, expected_schema=None, require_lookup_schema=False, diagnostic=False, ordered=False):
     cpu = process_time_ns()
     start = perf_counter_ns()
+    if diagnostic:
+        trace_start = ns()
     table = fetch(statement)
+    if diagnostic:
+        trace_end = ns()
     timing = {"wall_ms": run.milliseconds(start), "cpu_ms": (process_time_ns() - cpu) / 1e6}
+    if diagnostic:
+        timing.update(start_ns=trace_start, end_ns=trace_end)
+    if require_lookup_schema and (table.column_names != ["id"] or table["id"].type != pa.int64()):
+        raise ValueError(f"Expected one BIGINT id column, got {table.schema}")
     if expected_schema is not None:
         duckdb_types = {pa.int64(): "BIGINT", pa.string(): "VARCHAR", pa.large_string(): "VARCHAR"}
         actual_schema = [[field.name, duckdb_types.get(field.type, str(field.type))] for field in table.schema]
@@ -113,6 +123,9 @@ def fetch_table(fetch, statement, expected_schema=None, *, ordered=False):
 def python_worker(a, request):
     sequence = schedule(request["cases"], a.block, a.runs)
     statements = {name: CASES[name][0] for name in request["cases"]}
+    session_lookups = request.get("session_lookups", False)
+    diagnostic = request.get("diagnostic", False)
+    native_summary = {}
     application_parameters = request.get("application_parameters", {})
     record_replay = "micro_relations" in request or bool(application_parameters)
     with ExitStack() as stack:
@@ -122,48 +135,42 @@ def python_worker(a, request):
             db = Database(str(a.fixture / run.ENGINES["relate"]), read_only=True)
             stack.callback(db.close)
             setup = {"open_ms": run.milliseconds(start)}
-            setup["bootstrap_ms"] = setup["open_ms"]
 
             def fetch(statement):
+                if diagnostic:
+                    result = db.execute(statement)
+                    if result.columns != ["id"]:
+                        raise ValueError(f"Unexpected direct RelateDB columns: {result.columns}")
+                    native_summary.update(engine_ms=result.execute_ms, parse_ms=result.parse_ms, plan_ms=result.plan_ms)
+                    return pa.table({"id": pa.array([row["id"] for row in result.data], type=pa.int64())})
                 table = pa.ipc.open_stream(db.execute_arrow(statement)).read_all()
                 if table.column_names != ["id"]:
                     raise ValueError(f"Unexpected direct RelateDB schema: {table.schema}")
                 # The wheel reports string for an empty, untyped Cypher result.
                 return table if table.num_rows else table.cast(pa.schema([("id", pa.int64())]))
-        elif a.route == "direct_cypher":
+        elif a.route in ("direct_cypher", lookup.DIRECT_PREPARED, lookup.DIRECT_PARAM):
             import ladybug
             start = perf_counter_ns()
             db = stack.enter_context(ladybug.Database(a.fixture / run.ENGINES["ladybug"], read_only=True))
             conn = stack.enter_context(ladybug.Connection(db))
             setup = {"open_ms": run.milliseconds(start)}
-            setup["bootstrap_ms"] = setup["open_ms"]
 
             def fetch(statement):
                 with conn.execute(statement) as result:
-                    return result.get_as_arrow()
-        elif a.route == PREPARED_ROUTE:
-            parent, setup = stack.enter_context(run.cursor(a))
-            statements = {name: prepared_sql(name) for name in request["cases"]}
-            cursors = {}
-            start = perf_counter_ns()
-            for statement in statements.values():
-                cursor = stack.enter_context(parent.connection.cursor())
-                cursor.adbc_prepare(statement)
-                cursors[statement] = cursor
-            setup["prepare_ms"] = run.milliseconds(start)
-
-            def fetch(statement):
-                cursor = cursors[statement]
-                cursor.execute(statement)
-                return cursor.fetch_arrow_table()
+                    table = result.get_as_arrow()
+                    if diagnostic:
+                        native_summary.update(engine_ms=result.get_execution_time(), compile_ms=result.get_compiling_time())
+                    return table
+            if a.route != "direct_cypher":
+                fetch = lookup.prepare_fetch(stack, a.route, conn, statements, setup)
         else:
             cur, setup = stack.enter_context(run.cursor(a))
-            dialect = "cypher" if a.route == "qw_cypher" else "gql"
-            start = perf_counter_ns()
-            cur.execute("SET SESSION qw_graph_dialect = " + run.sql_literal(dialect))
-            if "bootstrap_ms" in setup:
+            if a.route != PREPARED_ROUTE or session_lookups:
+                dialect = ("gql" if a.route in ("qw_gql", "qw_pgq", MICRO_HOST_ROUTE, application.STAGED_ROUTE)
+                           else "cypher")
+                start = perf_counter_ns()
+                cur.execute("SET SESSION qw_graph_dialect = " + run.sql_literal(dialect))
                 setup["set_dialect_ms"] = run.milliseconds(start)
-                setup["bootstrap_ms"] += setup["set_dialect_ms"]
             if "view_where" in request["cases"]:
                 cur.execute("CREATE TEMP VIEW planning_pairs AS SELECT * FROM " + run.PAIRS)
             if "micro_relations" in request:
@@ -179,12 +186,21 @@ def python_worker(a, request):
                     if a.route == application.STAGED_ROUTE:
                         application.CASES[name].setup_staged(cur)
                 setup["application_setup_ms"] = run.milliseconds(start)
-                setup["bootstrap_ms"] += setup["application_setup_ms"]
 
             def fetch(statement):
                 cur.execute(statement)
                 return cur.fetch_arrow_table()
 
+            if a.route == PREPARED_ROUTE:
+                statements = {name: prepared_sql(name) for name in statements}
+            if a.route == PREPARED_ROUTE or a.route in lookup.CONTROLS:
+                fetch = lookup.prepare_fetch(stack, a.route, cur.connection, statements, setup)
+
+        setup["bootstrap_ms"] = sum(
+            setup[key] for key in ("open_ms", "threads_ms", "load_ms", "register_ms",
+                                   "select_graph_ms", "set_dialect_ms", "application_setup_ms") if key in setup
+        )
+        schemas = request.get("schemas", {})
         samples = []
         for repetition, name in sequence:
             case = application.CASES.get(name)
@@ -192,14 +208,17 @@ def python_worker(a, request):
             if hasattr(case, "execute"):
                 def reader(_):
                     return case.execute(cur, application_parameters[name])
-            actual, timing = fetch_table(reader, statements[name], request.get("schemas", {}).get(name),
+            actual, timing = fetch_table(reader, statements[name], expected_schema=schemas.get(name),
+                                         require_lookup_schema=session_lookups, diagnostic=diagnostic,
                                          ordered=name in application_parameters)
             check_result(request["expected"], name, actual)
             if record_replay:
                 timing.update(result_rows=int(actual[0]), result_sha256=actual[1])
-            samples.append({"repetition": repetition, "case": name, **timing})
+            samples.append({"repetition": repetition, "case": name, **timing, **native_summary})
         worker = {"setup": setup, "samples": samples,
                   "peak_rss_mib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (2**20 if sys.platform == "darwin" else 1024)}
+        if a.route in (lookup.LIVE, lookup.FIXED):
+            worker["session_probe"] = lookup.probe_session(cur, a.route)
         if a.route in ("qw_pgq", MICRO_HOST_ROUTE, application.STAGED_ROUTE):
             crossings = {}
             if record_replay:
@@ -251,14 +270,14 @@ def run_process(command, payload, timeout):
     result = subprocess.run(command, input=payload, capture_output=True, text=True, timeout=timeout)
     if result.returncode:
         raise RuntimeError(f"Benchmark worker exited {result.returncode}: {result.stderr.strip()}")
-    return result.stdout
+    return result
 
 
 def measure_worker(a, provider, route, block, cases, expected):
     command = [sys.executable, "-B", __file__, "_worker", "--provider", provider, "--route", route,
                "--fixture", a.fixture, "--extension", a.extension, "--library", a.library,
                "--runs", str(a.runs), "--block", str(block)]
-    payload = {"expected": expected, "cases": cases}
+    payload = {"expected": expected, "cases": cases, "session_lookups": a.session_lookups}
     if getattr(a, "micro", False):
         payload["micro_relations"] = a.micro_relations
         payload["schemas"] = {name: a.micro_cases[name]["result_schema"] for name in cases}
@@ -266,28 +285,70 @@ def measure_worker(a, provider, route, block, cases, expected):
         payload["application_directory"] = str(a.application_directory)
         payload["application_parameters"] = {name: a.application_parameters[name] for name in cases}
         payload["schemas"] = {name: application.CASES[name].SCHEMA for name in cases}
-    measured = json.loads(run_process(command, json.dumps(payload), a.timeout))
+    release = run_process(command, json.dumps(payload), a.timeout)
+    check_uninstrumented(release.stderr)
+    measured = json.loads(release.stdout)
+    if route == "direct_cypher" or (a.phase_extension and route in ("qw_gql", "qw_cypher")):
+        if route != "direct_cypher":
+            command[command.index("--extension") + 1] = a.phase_extension
+        diagnostic = run_process(command, json.dumps({**payload, "diagnostic": True}), a.timeout)
+        samples = json.loads(diagnostic.stdout)["samples"]
+        if route != "direct_cypher":
+            attach_trace(samples, diagnostic.stderr, provider)
+        measured["engine_samples"] = samples
     return {"block": block, "provider": provider, "route": route, **measured}
+
+
+def percentiles(values):
+    values = sorted(values)
+    return {"n": len(values), "p50_ms": median(values), "p95_ms": values[math.ceil(.95 * len(values)) - 1]}
+
+
+def summarize_bootstrap(workers):
+    groups = {}
+    for w in workers:
+        groups.setdefault((w["provider"], w["route"]), []).append(w["setup"])
+    return [{"provider": provider, "route": route, **percentiles(s["bootstrap_ms"] for s in setups),
+             "stage_p50_ms": {k: median(s[k] for s in setups) for k in setups[0]
+                              if k.endswith("_ms") and k not in ("bootstrap_ms", "prepare_ms")}}
+            for (provider, route), setups in sorted(groups.items())]
 
 
 def summarize(workers):
     series = {}
+    engine = {}
     for worker in workers:
         for sample in worker["samples"]:
             key = (worker["provider"], worker["route"], sample["case"])
             if sample["repetition"]:
                 series.setdefault(key, []).append(sample)
+        for sample in worker.get("engine_samples", []):
+            if sample["repetition"]:
+                engine.setdefault((worker["provider"], worker["route"], sample["case"]), []).append(sample)
     rows = []
     for (provider, route, case), samples in sorted(series.items()):
-        wall = sorted(s["wall_ms"] for s in samples)
         rows.append({"provider": provider, "scope": "hybrid" if case in HYBRID else "standalone",
-                     "route": route, "case": case, "n": len(samples), "p50_ms": median(wall),
-                     "p95_ms": wall[math.ceil(.95 * len(wall)) - 1],
+                     "route": route, "case": case, **percentiles(s["wall_ms"] for s in samples),
                      "cpu_p50_ms": median(s["cpu_ms"] for s in samples)})
-    native = {(r["provider"], r["case"]): r["p50_ms"] for r in rows if r["route"] == "direct_cypher"}
+        key = (provider, route, case)
+        if key in engine:
+            timers = [s["engine_ms"] for s in engine[key]]
+            if len(timers) != len(samples) or not all(math.isfinite(t) and t >= 0 for t in timers):
+                raise ValueError(f"Invalid engine execution series for {key}")
+            rows[-1]["engine_execution"] = percentiles(timers)
+            if route.startswith("qw_"):
+                rows[-1]["other_warm_work"] = percentiles(
+                    (s["end_ns"] - s["start_ns"]) / 1e6 - s["engine_ms"] for s in engine[key])
+    medians = {(r["provider"], r["route"], r["case"]): r["p50_ms"] for r in rows}
     for row in rows:
-        if row["route"] in ("qw_gql", "qw_cypher", PREPARED_ROUTE):
-            row["qw_over_direct"] = row["p50_ms"] / native[row["provider"], row["case"]]
+        route = row["route"]
+        if row["scope"] == "standalone" and route.startswith("qw_"):
+            row["qw_over_direct"] = row["p50_ms"] / medians[row["provider"], "direct_cypher", row["case"]]
+            if (row["provider"], lookup.DIRECT_PREPARED, row["case"]) in medians:
+                reference = (lookup.DIRECT_PREPARED if route == PREPARED_ROUTE else
+                             lookup.NATIVE_REFERENCE.get(route, "direct_cypher"))
+                row["matched_direct_route"] = reference
+                row["qw_over_matched_direct"] = row["p50_ms"] / medians[row["provider"], reference, row["case"]]
     return rows
 
 
@@ -311,7 +372,10 @@ def release_metadata(a, common, binaries):
     source_commit = subprocess.check_output(
         ["git", "rev-parse", "--verify", "--end-of-options", a.source_revision + "^{commit}"],
         cwd=a.source_checkout, text=True).strip()
-    return {**common, "workspace_head": source_commit, "binaries": {**binaries, "extension": run.digest(a.extension)}}
+    hashes = {**binaries, "extension": run.digest(a.extension)}
+    if a.phase_extension:
+        hashes["phase_extension"] = run.digest(a.phase_extension)
+    return {**common, "workspace_head": source_commit, "binaries": hashes}
 
 
 def verify_micro(a, report, providers, expected_rows):
@@ -367,14 +431,21 @@ def benchmark_suite(a):
     cases = [name for name in suite if not a.case or name in a.case]
     providers = sorted(set(a.provider or run.ENGINES))
     if is_micro or a.hybrid:
-        if a.include_prepared:
-            raise ValueError("Hybrid suites exclude standalone prepared lookups")
+        if a.session_lookups or a.include_prepared:
+            raise ValueError("Hybrid suites exclude standalone lookup controls")
         if not a.describe:
             a.duckdb_unittest = a.duckdb_unittest.resolve(strict=True)
+    if a.session_lookups:
+        if set(a.provider or []) - {"ladybug"} or set(a.case or []) - lookup.KEYS.keys():
+            raise ValueError("--session-lookups accepts Ladybug lookup and lookup_miss")
+        providers = ["ladybug"]
+        cases = [name for name in lookup.KEYS if not a.case or name in a.case]
     pairing = (a.baseline_extension, a.baseline_revision, a.baseline_out)
     supplied = [arg is not None for arg in pairing]
     if any(supplied) and not all(supplied):
         raise ValueError("Supply baseline extension, revision and output together")
+    if a.baseline_phase_extension and not all(supplied):
+        raise ValueError("A baseline diagnostic extension requires a paired baseline")
     if a.describe and (a.out or any(supplied)):
         raise ValueError("Use --describe alone to write the candidate workload description")
     fixture = json.loads((a.fixture / "fixture.json").read_text())
@@ -395,13 +466,16 @@ def benchmark_suite(a):
         edge_count = sum(1 for _ in micro.edge_rows(csv_path))
     else:
         oracle = run.oracle(a.fixture)
-        if any(group[0] == -1 for group in oracle["watchlist_groups"]):
-            raise ValueError("lookup_miss requires -1 to be absent")
-        expected = {**oracle["expected"], "lookup_miss": run.signature([[]])}
-        expected = {CASES[n][1]: expected[CASES[n][1]] for n in cases}
+        expected = {CASES[n][1]: oracle["expected"][CASES[n][1]] for n in cases}
         edge_count = oracle["edges"]
+    if "lookup_miss" in cases and expected["lookup_miss"][0] != 0:
+        raise ValueError("lookup_miss requires -1 to be absent")
     routes = {k: [n for n in cases if n in group] for k, group in ROUTES.items()
               if k != PREPARED_ROUTE or a.include_prepared}
+    if a.session_lookups:
+        routes = {k: cases for k in ("direct_cypher", "qw_cypher", *lookup.CONTROLS)}
+        if a.include_prepared:
+            routes[PREPARED_ROUTE] = cases
     binaries = {"duckdb_library": run.digest(a.library)}
     if "relate" in providers and routes["direct_cypher"]:
         import relate._native
@@ -444,6 +518,14 @@ def benchmark_suite(a):
         common["schedule_sha256"] = workload_manifest.canonical_sha256(common["workload_schedule"])
     if routes.get(PREPARED_ROUTE):
         common["prepared_statements"] = {name: prepared_sql(name) for name in routes[PREPARED_ROUTE]}
+    if a.session_lookups:
+        common["session_lookups"] = {
+            "version": 1, "graph": run.GRAPH_ALIAS, "dialect": "cypher",
+            "person_ids": {name: lookup.KEYS[name] for name in cases},
+            "statements": {route: {name: prepared_sql(name) if route == PREPARED_ROUTE else
+                                   lookup.statement(route, STANDALONE[name][0]) for name in cases} for route in routes},
+        }
+        common["session_lookups_sha256"] = run.digest(Path(lookup.__file__))
     if a.describe:
         description = release_metadata(a, common, binaries)
         description["summary"] = [{"provider": provider, "route": route, "case": name}
@@ -454,6 +536,7 @@ def benchmark_suite(a):
     if all(supplied):
         baseline = copy(a)
         baseline.extension, baseline.source_revision, baseline.out = pairing
+        baseline.phase_extension = a.baseline_phase_extension
         releases.insert(0, baseline)
         common["pair_id"] = uuid4().hex
     subjects = []
@@ -486,6 +569,7 @@ def benchmark_suite(a):
     verify_fixture(a.fixture, fixture)
     for release, _, report in subjects:
         report["summary"] = summarize(report["workers"])
+        report["bootstrap_summary"] = summarize_bootstrap(report["workers"])
         report["finished_utc"] = datetime.now(timezone.utc).isoformat()
         if is_micro or a.hybrid:
             if run.digest(release.extension) != report["binaries"]["extension"]:
@@ -511,12 +595,29 @@ def benchmark_suite(a):
 
 def print_summary(path, report):
     print(path)
-    print("provider\troute\tcase\tn\tp50_ms\tp95_ms\tqw_over_direct")
+    print("Warm provider engine execution (ms, native query summary)")
+    print("provider\troute\tcase\tn\tp50_ms\tp95_ms\tother_warm_work_p50_ms")
+    for row in report["summary"]:
+        if engine := row.get("engine_execution"):
+            other = row.get("other_warm_work")
+            print(row["provider"], row["route"], row["case"], engine["n"], f"{engine['p50_ms']:.3f}",
+                  f"{engine['p95_ms']:.3f}", f"{other['p50_ms']:.3f}" if other else "—", sep="\t")
+    print("One-time connection bootstrap (ms)")
+    print("provider\troute\tconnections\tp50_ms\tp95_ms")
+    for row in report["bootstrap_summary"]:
+        print(row["provider"], row["route"], row["n"], f"{row['p50_ms']:.3f}", f"{row['p95_ms']:.3f}", sep="\t")
+    print("Warm client latency through Arrow fetch (ms)")
+    session = "session_lookups" in report
+    print("provider\troute\tcase\tn\tp50_ms\tp95_ms\tqw_over_direct" +
+          ("\tmatched_direct_route\tqw_over_matched_direct" if session else ""))
     for row in report["summary"]:
         ratio = f"{row['qw_over_direct']:.2f}x" if "qw_over_direct" in row else "—"
-        print(f"{row['provider']}\t{row['route']}\t{row['case']}\t{row['n']}\t"
-              f"{row['p50_ms']:.3f}\t{row['p95_ms']:.3f}\t{ratio}")
-
+        fields = [row["provider"], row["route"], row["case"], row["n"],
+                  f"{row['p50_ms']:.3f}", f"{row['p95_ms']:.3f}", ratio]
+        if session:
+            matched = row.get("qw_over_matched_direct")
+            fields.extend([row.get("matched_direct_route", "—"), f"{matched:.2f}x" if matched is not None else "—"])
+        print(*fields, sep="\t")
     if "micro" in report or "application" in report:
         crossings = {}
         for worker in report["workers"]:
@@ -535,6 +636,8 @@ def compare(old, new):
             raise ValueError(f"Incompatible snapshots: {field} differs")
     if before.get("prepared_statements") != after.get("prepared_statements"):
         raise ValueError("Incompatible snapshots: prepared statements differ")
+    if before.get("session_lookups") != after.get("session_lookups"):
+        raise ValueError("Incompatible snapshots: session lookup workloads differ")
     if before.get("micro") != after.get("micro"):
         raise ValueError("Incompatible snapshots: CM-LDBC inputs differ")
     if before.get("application") != after.get("application"):
@@ -558,6 +661,20 @@ def compare(old, new):
     if baseline.keys() != candidate.keys() or before["statements"] != after["statements"] or before["expected"] != after["expected"]:
         raise ValueError("Incompatible snapshots: workload matrix, statement or oracle differs")
     print(f"{before['id']} -> {after['id']}")
+    print("Warm provider engine execution (ms)")
+    print("provider\troute\tcase\told_p50_ms\tnew_p50_ms\told_p95_ms\tnew_p95_ms")
+    for key, row in candidate.items():
+        old_engine, new_engine = baseline[key].get("engine_execution"), row.get("engine_execution")
+        if old_engine and new_engine:
+            print(*key, *(f"{group[k]:.3f}" for k in ("p50_ms", "p95_ms") for group in (old_engine, new_engine)), sep="\t")
+    if before.get("bootstrap_summary") and after.get("bootstrap_summary"):
+        print("One-time connection bootstrap (ms)")
+        print("provider\troute\told_p50_ms\tnew_p50_ms\told_p95_ms\tnew_p95_ms")
+        old_boot = {(r["provider"], r["route"]): r for r in before["bootstrap_summary"]}
+        for row in after["bootstrap_summary"]:
+            key = (row["provider"], row["route"])
+            print(*key, *(f"{group[k]:.3f}" for k in ("p50_ms", "p95_ms") for group in (old_boot[key], row)), sep="\t")
+    print("Warm client latency through fetch (ms)")
     print("provider\troute\tcase\told_p50_ms\tnew_p50_ms\tp50_change_pct\told_p95_ms\tnew_p95_ms")
     for key, current in candidate.items():
         past = baseline[key]
@@ -581,6 +698,8 @@ def main():
         cmd.add_argument("--extension", type=Path, default=run.EXT)
         cmd.add_argument("--runs", type=int, default=5)
     measure.add_argument("--provider", action="append", choices=run.ENGINES)
+    measure.add_argument("--phase-extension", type=Path, help="Matching diagnostic release for engine timings through bare Cypher/GQL")
+    measure.add_argument("--baseline-phase-extension", type=Path, help="Matching diagnostic release for the paired baseline")
     measure.add_argument("--case", action="append", choices=CASES)
     suite = measure.add_mutually_exclusive_group()
     suite.add_argument("--micro", action="store_true", help="Measure the CM-LDBC hybrid workload suite")
@@ -590,6 +709,8 @@ def main():
                          help="Pinned SQLLogic runner for the Hybrid workload and snapshot gates")
     measure.add_argument("--include-prepared", action="store_true",
                          help="Also time reused explicit-schema qw_query Cypher statements")
+    measure.add_argument("--session-lookups", action="store_true",
+                         help="Measure Ladybug hits and misses on a stable session with matched preparation controls")
     measure.add_argument("--out", type=Path, help="New JSON file (default: timestamped history)")
     measure.add_argument("--describe", type=Path, help="Write candidate workload metadata before measuring")
     measure.add_argument("--baseline-extension", type=Path, help="Verified baseline extension to alternate with the candidate")
@@ -601,7 +722,7 @@ def main():
     measure.add_argument("--blocks", type=int, default=4)
     measure.add_argument("--timeout", type=int, default=300, help="Maximum seconds per worker process")
     worker.add_argument("--provider", required=True, choices=run.ENGINES)
-    worker.add_argument("--route", required=True, choices=ROUTES)
+    worker.add_argument("--route", required=True, choices=[*ROUTES, *lookup.CONTROLS])
     worker.add_argument("--block", required=True, type=int)
     a = parser.parse_args()
     if a.command == "list":

@@ -16,7 +16,78 @@ import pyarrow as pa
 import tracker
 
 
+class PhaseMeasurements(unittest.TestCase):
+    def test_one_bootstrap_per_connection_and_only_warm_engine_samples(self):
+        workers = []
+        for route in ("direct_cypher", "qw_cypher"):
+            for block in (0, 1):
+                samples = [{"case": "lookup_miss", "repetition": i, "wall_ms": t, "cpu_ms": 1}
+                           for i, t in enumerate((1000, 5, 10))]
+                native = [{**s, "engine_ms": t, "start_ns": 0, "end_ns": 10_000_000}
+                          for s, t in zip(samples, (1000, 2, 4))]
+                workers.append({"block": block, "provider": "ladybug", "route": route, "samples": samples,
+                                "setup": {"open_ms": 20, "bootstrap_ms": 20, "prepare_ms": 99},
+                                "engine_samples": native})
+        row = tracker.summarize(workers)[1]
+        self.assertEqual(row["engine_execution"], {"n": 4, "p50_ms": 3, "p95_ms": 4})
+        self.assertEqual(row["p50_ms"], 7.5)
+        self.assertEqual(row["other_warm_work"]["p50_ms"], 7)
+        self.assertEqual(tracker.summarize_bootstrap(workers)[1],
+                         {"provider": "ladybug", "route": "qw_cypher", "n": 2, "p50_ms": 20,
+                          "p95_ms": 20, "stage_p50_ms": {"open_ms": 20}})
+
+    def test_one_native_event_per_verified_submission(self):
+        samples = [{"start_ns": 10, "end_ns": 50}]
+        for trace, provider in [("", "ladybug"), ("QW_PHASE 0 100 1 1", "ladybug"),
+                                ("QW_RELATE_PHASE 0 0 NaN", "relate")]:
+            with self.subTest(trace=trace), self.assertRaises(ValueError):
+                tracker.attach_trace(samples, trace, provider)
+        tracker.attach_trace(samples, "QW_RELATE_PHASE 2 3 5", "relate")
+        self.assertEqual((samples[0]["parse_ms"], samples[0]["plan_ms"], samples[0]["engine_ms"]), (2, 3, 5))
+
+
 class PreparedWorker(unittest.TestCase):
+    def test_live_scan_cannot_keep_returning_the_previous_dialects_result(self):
+        parent = MagicMock()
+        handle = parent.connection.cursor.return_value.__enter__.return_value
+        handle.execute.return_value.fetch_arrow_table.return_value = pa.table({"id": [tracker.run.KEYS[0]]})
+        with self.assertRaisesRegex(ValueError, "dialect_gql: expected QW_GQL_SUBSET, observed hit"):
+            tracker.lookup.probe_session(parent, tracker.lookup.LIVE)
+        handle.adbc_prepare.assert_called_once()
+
+    def test_parameterized_match_prepares_once_for_both_keys_after_selecting_dialect(self):
+        parent = MagicMock()
+        handle = parent.connection.cursor.return_value.__enter__.return_value
+        def fetch():
+            key, = handle.execute.call_args.args[1]
+            return pa.table({"id": pa.array([] if key == -1 else [key], type=pa.int64())})
+        handle.fetch_arrow_table.side_effect = fetch
+        cases = list(tracker.lookup.KEYS)
+        expected = {"gql_lookup": tracker.run.signature([[tracker.run.KEYS[0]]]),
+                    "lookup_miss": tracker.run.signature([[]])}
+        args = SimpleNamespace(route=tracker.lookup.QW_PARAM, provider="ladybug", block=1, runs=3)
+        with patch.object(tracker.run, "cursor", return_value=nullcontext((parent, {}))) as open_session:
+            worker = tracker.python_worker(args, {"cases": cases, "expected": expected, "session_lookups": True})
+        open_session.assert_called_once()
+        parent.execute.assert_called_once_with("SET SESSION qw_graph_dialect = 'cypher'")
+        handle.adbc_prepare.assert_called_once_with(tracker.lookup.PARAM_QUERY)
+        self.assertEqual(worker["setup"]["prepared_handles"], 1)
+        self.assertEqual(handle.execute.call_args_list, [
+            call(tracker.lookup.PARAM_QUERY, (tracker.lookup.KEYS[name],))
+            for _, name in tracker.schedule(cases, 1, 3)])
+        self.assertEqual(len(worker["samples"]), 8)
+
+    def test_matched_ratio_uses_the_native_parameterized_handle(self):
+        def worker(route, latency):
+            return {"provider": "ladybug", "route": route, "samples": [
+                {"case": "lookup_miss", "repetition": i, "wall_ms": value, "cpu_ms": value}
+                for i, value in enumerate((100, latency))]}
+        rows = tracker.summarize([worker("direct_cypher", 4), worker(tracker.lookup.DIRECT_PREPARED, 2),
+                                  worker(tracker.lookup.DIRECT_PARAM, 1), worker(tracker.lookup.QW_PARAM, 8)])
+        match = next(row for row in rows if row["route"] == tracker.lookup.QW_PARAM)
+        self.assertEqual((match["n"], match["qw_over_direct"], match["qw_over_matched_direct"]), (1, 2, 8))
+        self.assertEqual(match["matched_direct_route"], tracker.lookup.DIRECT_PARAM)
+
     def test_prepares_each_fixed_lookup_once_and_reuses_its_cursor(self):
         cases = {"lookup": [tracker.run.KEYS[0]], "lookup_miss": []}
         tables = {name: pa.table({"id": pa.array(values, type=pa.int64())})
@@ -72,7 +143,7 @@ class TrackerPair(unittest.TestCase):
 
     def worker(self, args, provider, route, block, cases, expected):
         self.calls.append((block, args.extension.name, args.fixture, args.library))
-        return {"block": block, "provider": provider, "route": route, "samples": [
+        return {"block": block, "provider": provider, "route": route, "setup": {"open_ms": 4, "bootstrap_ms": 4}, "samples": [
             {"case": case, "repetition": repetition, "wall_ms": 1, "cpu_ms": 1}
             for repetition, case in tracker.schedule(cases, block, args.runs)]}
 

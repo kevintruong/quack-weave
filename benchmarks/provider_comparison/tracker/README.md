@@ -1,6 +1,6 @@
 # Standalone and hybrid graph benchmark tracker
 
-Use this tracker to measure the client-visible cost of submitting a graph query through QuackWeave, and to follow hybrid SQL performance between releases. The unit of comparison is one provider, one execution route, and one workload on the same frozen graph. [Runner](../tracker.py) · [SF1 observations](sf1.json)
+Use this tracker to compare graph-engine execution, connection bootstrap and warm client latency on the same frozen graph. Compare direct and QuackWeave timings within the same provider. Each provider defines its own native execution timer. [Runner](../tracker.py) · [SF1 observations](sf1.json)
 
 | Workloads | QuackWeave route | Reference |
 |---|---|---|
@@ -10,7 +10,16 @@ Use this tracker to measure the client-visible cost of submitting a graph query 
 
 ### View CI benchmark tables
 
-Open a **CI** run and select **Summary**. The standalone and hybrid tables show median (p50) and p95 latency in milliseconds. In paired reports, each percentile shows a signed change from the baseline. Negative changes are faster. Positive changes below 10% are acceptable. An increase of 10% or more appears in bold as a regression, and the summary lists the affected workload and percentile. A workload can improve at p50 and regress at p95. The standalone ratio compares each QuackWeave median to the same provider's direct Cypher median. [CI runs](https://github.com/kevintruong/quack-weave/actions/workflows/CI.yml)
+Open a **CI** run and select **Summary**. Four tables show p50 and p95 in milliseconds. [CI runs](https://github.com/kevintruong/quack-weave/actions/workflows/CI.yml)
+
+| Measurement | Timing boundary and sampling unit |
+|---|---|
+| Warm graph-engine execution | One verified warm standalone query. Ladybug reports native execution time and RelateDB reports its execute phase. Direct, bare Cypher and bare GQL each have their own measurements. The diagnostic replays the same inputs and warmups on a separate connection. |
+| One-time connection bootstrap | One observation per release connection and route. Direct includes opening the native database and connection. QuackWeave includes DuckDB open, thread configuration, extension load, graph registration, selection and dialect setup. Registration includes opening the graph provider. Fixture construction, benchmark version checks and explicit statement preparation are outside this total. |
+| Warm standalone client latency | Submission on the configured release connection through fetching all rows. The ratio compares this whole operation with the same provider's direct client. |
+| Warm hybrid SQL client latency | Submission through full fetch, including graph scans, DuckDB relational operators and result handling. |
+
+The engine table also shows other warm work through QuackWeave. For each diagnostic call the tracker subtracts its native execution time from its own client interval, then takes the median. The remainder includes native preparation, interface work, result conversion and probe overhead. The normal release supplies the client latency tables. Paired runs review engine and client p50 and p95 independently against a 10% slowdown threshold. Historical releases without a matching timing build show the available measurements.
 
 The `benchmark-history` branch displays the latest published main run on its front page. For an individual commit, open `main/<commit>/<run>-<attempt>/` or `pull_request/<commit>/<run>-<attempt>/`. Each new attempt has a rendered README beside its JSON evidence. PRs and late-finishing older runs preserve the latest main report. [Latest main report](https://github.com/kevintruong/quack-weave/tree/benchmark-history)
 
@@ -67,6 +76,16 @@ tracker=benchmarks/provider_comparison/tracker.py
 "$py" -B "$tracker" run
 ```
 
+To include QuackWeave's native timers locally, build the timing companion from the same checkout as the release. CI builds and verifies both artifacts for revisions that support the companion.
+
+```sh
+make native-release benchmark-engine-timing
+phase=build/benchmark-engine-timing/quack_weave.duckdb_extension
+"$py" -B "$tracker" run --phase-extension "$phase"
+```
+
+Direct Ladybug reads its query summary. Direct RelateDB uses the verified result from its `execute` API for diagnostic sampling and retains `execute_arrow` for client latency. The QuackWeave companion reads the corresponding timer from the provider result for each submission.
+
 The default output is a timestamped JSON file under `build/perf/provider-comparison/tracker/`. Use `--out` to choose a new filename. Existing snapshots are protected from replacement. Repeat `--case` or `--provider` for a focused run. For example, `--case fanout --provider relate` exercises all three standalone routes, while `--case table_watchlist` exercises the two QuackWeave hybrid routes.
 
 ### Prepared lookups
@@ -76,6 +95,50 @@ Pass `--include-prepared` to compare a reused `qw_query` statement with bare Cyp
 ```sh
 "$py" -B "$tracker" run --include-prepared --case lookup --case lookup_miss
 ```
+
+### Lookups on one configured connection
+
+`--session-lookups` runs a Ladybug Cypher experiment. Each worker opens one connection per block. QuackWeave loads the extension, registers the graph, selects it and sets the dialect once before timing. The snapshot records those setup times and the preparation time and handle count for explicitly prepared routes. Each timed call includes execution and the full Arrow fetch. Every hit and miss must match the CSV oracle and return one BIGINT column named `id`.
+
+```sh
+"$py" -B "$tracker" run --session-lookups --case lookup_miss --blocks 4 --runs 50
+"$py" -B "$tracker" run --session-lookups --case lookup --case lookup_miss --blocks 4 --runs 50
+```
+
+The first command repeats one absent ID. The second interleaves a known hit and miss in the same seeded order on every route. Both produce 200 warm observations per route and case. Use distinct snapshots for these two workloads. Add `--include-prepared` for the explicit-schema bridge.
+
+| Comparison | What varies |
+|---|---|
+| `direct_cypher` and `qw_cypher` | Normal client execution of literal Cypher on an open connection. The ADBC cursor can reuse its last statement when the SQL repeats. |
+| `direct_prepared_cypher` and `qw_prepared_match` | Each client explicitly prepares each distinct literal query once and reuses its handle. |
+| `direct_parameterized_cypher` and `qw_parameterized_match` | Each client prepares one `MATCH (p:Person) WHERE p.PersonId = $person_id RETURN p.PersonId AS id` and binds the next ID for each call. |
+| `qw_prepared_session_scan` and `qw_prepared_literal_scan` | The same inferred-schema DuckDB scan takes either live session settings or fixed alias and dialect arguments. Both reuse handles and call the same provider. Their difference measures the cost of the binding path, including work triggered by a rebind. |
+
+`qw_over_matched_direct` uses the native client with the corresponding preparation strategy. `qw_over_direct` always uses native text execution. The pinned Ladybug Python client exposes explicit preparation as a deprecated API; the native text route remains the reference for ordinary client use.
+
+After timing, both inferred scans prepare a Cypher-only property-map lookup on their existing connection. The live handle observes a switch to GQL and a graph reset. The fixed handle continues to return the known ID. Both must reject a revoked registration. The worker saves the SQL and observed outcomes in `session_probe`. A mismatch fails the run before publication. The regular CI matrix and its historical measurements use the default mode.
+
+### Complex Cypher on the full social graph
+
+The [complex Cypher benchmark](../complex_cypher.py) uses the original checksummed LSQB SF1 Ladybug graph at `build/perf/lsqb-sf1/sf1.lbdb`. It measures a point miss, a creator fanout, two-hop friends of friends, three-hop tags on friends’ messages, and a four-hop reply count grouped by country. The first four use bare `MATCH`. The country aggregation uses `qw_query` with an explicit schema for the count column.
+
+```sh
+"$py" -B benchmarks/provider_comparison/complex_cypher.py \
+  --out build/complex-sf1.json
+```
+
+By default each block starts a fresh process and connection per query and route, records session setup and the first query separately, and then measures repeated executions through full Arrow fetch. Route order reverses in alternate blocks. Every result must match in type, count and values, including order for ranked queries. Filesystem caches stay warm. Native Ladybug uses its default thread configuration on both paths. The DuckDB host uses one thread.
+
+Add `--mixed-session` to open one connection per client in each block. A round submits all five queries serially in a seeded order shared by both clients. Quack Weave sets the graph and dialect once and uses one ADBC cursor throughout. Each round is timed from its first submission to its last Arrow fetch, with checksums computed afterward. The first two rounds warm the connection. With the defaults, one connection serves 50 queries. The snapshot’s `session_summary` includes setup plus the first round, warm five-query p50 and p95, and time for the whole session (setup plus all measured rounds).
+
+For the engine comparison, use the timing companion. The mixed-session benchmark sums native execution across the five queries in each warm round before computing percentiles. Both clients have dedicated diagnostic runs. The ordinary release and direct client supply the end-to-end round measurements.
+
+```sh
+"$py" -B benchmarks/provider_comparison/complex_cypher.py --mixed-session \
+  --phase-extension "$phase" --out build/mixed-sf1-engine.json
+```
+
+The diagnostic records monotonic timestamps around Ladybug’s native execute call and reads its compile and execution timers. The interval before that call includes DuckDB binding and native preparation. The interval after the call includes Arrow fetch and probe reporting. Setup is counted once per connection in `bootstrap_summary`.
 
 ### CM-LDBC workloads
 
@@ -134,6 +197,8 @@ WHERE workload = 'table_watchlist'
 ORDER BY started_utc DESC, provider;
 ```
 
+For standalone queries, `engine_p50_ms` and `engine_p95_ms` hold the native measurements where available. Query `qw_benchmark_bootstrap(...)` for one row per connection route in each new snapshot.
+
 Run the snapshot SQLLogic test against the complete CI matrix to independently recalculate the percentiles and native ratios from raw observations and check the hybrid scan counts.
 
 ```sh
@@ -151,6 +216,7 @@ The **CI** workflow plans one measurement for every commit introduced by a push 
 | DuckDB SQLLogic runner and ADBC library | DuckDB 2.0.1 release-build artifact for the selected ARM64 platform | Native stabilization, provider integration and all benchmark shards |
 | Stabilization packages, licenses and Rust observer test executables | CI checkout, including the merge revision on PRs. Native debug and release | Stabilization and public-client tests |
 | Native release and RelateDB fixture builder | PR source head or main push tip, `native-release` | Provider integration and SF1 measurements use the same extension bytes. |
+| Engine timing companion | Same source revision, `benchmark-engine-timing` in a separate Cargo output directory | Standalone diagnostic sessions read the provider timers. The release manifest identifies both packages by SHA-256. |
 | Earlier releases with RelateDB | One release per additional source SHA in a multi-commit event | The corresponding commit's SF1 measurement |
 
 The planner selects GitHub's `ubuntu-24.04-arm` for commits with a Linux build target. An event containing an older macOS-only commit runs its entire comparison on `macos-15`. Hardware, platform and protocol are part of baseline selection. The measurement job consumes the compiled QuackWeave artifact for each SHA and installs the pinned standalone clients. RelateDB's embedded Rust crate is part of the extension build.

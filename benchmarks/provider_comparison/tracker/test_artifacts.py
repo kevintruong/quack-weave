@@ -27,7 +27,10 @@ class NativeRelease(unittest.TestCase):
             (package / "licenses").mkdir()
             (package / "licenses" / "Relate-LICENSE").write_text("notice")
             output = Path(temp) / "outputs"
-            artifacts.stage(repo, output)
+            diagnostic = repo / artifacts.PHASE_PACKAGE
+            diagnostic.mkdir(parents=True)
+            (diagnostic / artifacts.EXTENSION).write_bytes(b"diagnostic")
+            artifacts.stage(repo, output, include_phase=True)
             folder = output / sha
             artifacts.verify(folder, sha)
             with self.assertRaises(ValueError):
@@ -38,6 +41,10 @@ class NativeRelease(unittest.TestCase):
             with self.assertRaises(ValueError):
                 artifacts.verify(folder, sha)
             manifest.write_text(saved)
+            (folder / artifacts.PHASE).write_bytes(b"wrong diagnostic")
+            with self.assertRaises(ValueError):
+                artifacts.verify(folder, sha)
+            (folder / artifacts.PHASE).write_bytes(b"diagnostic")
             (folder / artifacts.EXTENSION).write_bytes(b"other")
             with self.assertRaises(ValueError):
                 artifacts.verify(folder, sha)
@@ -131,6 +138,20 @@ class RestoredRelease(unittest.TestCase):
                 self.assertEqual(path.name, artifacts.EXTENSION)
                 self.assertEqual(path.read_bytes(), self.blob)
                 self.assertFalse(list(Path(self.tmp.name).rglob("escape")))
+
+    def test_restores_matching_phase_binary_with_baseline(self):
+        phase = b"diagnostic"
+        phase_hash = hashlib.sha256(phase).hexdigest()
+        self.snapshot["binaries"]["phase_extension"] = phase_hash
+        body = io.BytesIO(self.archive([self.sha], manifest={**self.manifest, "phase_sha256": phase_hash}))
+        with zipfile.ZipFile(body, "a") as archive:
+            archive.writestr(self.sha + "/" + artifacts.PHASE, phase)
+        with self.github(body.getvalue()):
+            path = artifacts.restore_previous(self.snapshot, self.folder)
+        self.assertEqual((path.parent / artifacts.PHASE).read_bytes(), phase)
+        self.snapshot["binaries"]["phase_extension"] = self.digest
+        with self.github(body.getvalue()), self.assertRaisesRegex(ValueError, "Diagnostic release SHA-256"):
+            artifacts.restore_previous(self.snapshot, self.folder)
 
     def test_rejects_wrong_commit_profile_digest_bytes_or_layout(self):
         bad = "f" * 64

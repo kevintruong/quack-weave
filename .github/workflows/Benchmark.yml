@@ -132,6 +132,7 @@ jobs:
           echo "QW_BUILD_TOOLCHAIN=$(cat build/native/toolchain.txt)" >> "$GITHUB_ENV"
           python -m pip install --only-binary=:all: --require-hashes -r benchmarks/provider_comparison/tracker/requirements.txt
           python -B -m unittest discover -s benchmarks/provider_comparison -p 'test_tracker_pair.py'
+          python -B -m unittest discover -s benchmarks/provider_comparison -p 'test_creator_sales.py'
           python -B -m unittest discover -s benchmarks/provider_comparison -p test_workload_manifest.py
           python -B -m unittest discover -s benchmarks/provider_comparison/tracker -p test_hybrid_archive.py
           DUCKDB_UNITTEST="$PWD/build/benchmark-host/unittest" python -B -m unittest discover \

@@ -1,0 +1,85 @@
+# Run the Hybrid Query test bench
+
+Use the native SQLLogic suite for correctness and the provider tracker for performance. Both use the same versioned SQL for `micro_creator_selective`. The tiny fixture exercises duplicate and NULL keys in seconds. The `mod32` fixture exercises the same query on Ladybug and RelateDB with graph prefiltering enabled and disabled.
+
+## Set up the host and fixture
+
+Run these commands from the repository root on Apple Silicon macOS or Linux ARM64. Use a QuackWeave release built against DuckDB 2.0.1 with the Ladybug and RelateDB adapters. If you already have a compatible release and DuckDB host, point the variables below at those artifacts and reuse them.
+
+```sh
+python3.12 -m venv build/tracker-venv
+tracker_python=build/tracker-venv/bin/python
+"$tracker_python" -m pip install --only-binary=:all: --require-hashes \
+  -r benchmarks/provider_comparison/tracker/requirements.txt
+"$tracker_python" benchmarks/provider_comparison/tracker/install_host.py
+make native-deps native-release
+
+export DUCKDB_UNITTEST="$PWD/build/benchmark-host/unittest"
+case "$(uname -s)" in
+  Darwin) export DUCKDB_LIB="$PWD/build/benchmark-host/release/src/libduckdb.dylib" ;;
+  Linux)  export DUCKDB_LIB="$PWD/build/benchmark-host/release/src/libduckdb.so" ;;
+esac
+export QW_EXT="$PWD/build/native/release/extension/quack_weave/quack_weave.duckdb_extension"
+export LBUG="$PWD/build/deps/ladybug-v0.22.3/lbug"
+```
+
+The host installer uses `gh` to retrieve a pinned GitHub release artifact when it is absent from the cache. For the scaled fixture, place the [pinned LSQB SF1 graph](../benchmarks/lsqb_sf1/watchlist.py) at `build/perf/lsqb-sf1/sf1.lbdb`, then run the preparation command below. The builder checks the source hash and creates both provider files, the shared edge CSV, and a fixture manifest.
+
+```sh
+"$tracker_python" -B benchmarks/provider_comparison/prepare.py --modulus 32 \
+  --source build/perf/lsqb-sf1/sf1.lbdb
+```
+
+## Verify correctness with native SQLLogic
+
+The stabilization runner provisions fresh graph files and executes the tiny shared-workload witness with the rest of the native SQLLogic suite. Look for `hybrid_creator_selective.test` and its `[QW_HYBRID_WORKLOAD]` receipt. The witness checks the output schema, compares both routes to an independent relational oracle, and checks the applied optimized route.
+
+```sh
+python3 -B test/stabilization/run_sqllogictest.py \
+  --duckdb-unittest "$DUCKDB_UNITTEST" --extension "$QW_EXT" --lbug "$LBUG"
+```
+
+The [workload manifest](../benchmarks/provider_comparison/hybrid_workloads.json) maps cases to the shared SQL template, oracle, and SQLLogic files. The provider suite also covers [applied watchlist routes](../test/relate/watchlist_applied_route.test) and [ordered LIMIT behavior](../test/relate/ordered_watchlist_limit.test).
+
+## Replay the scaled workload twice
+
+This smoke run uses two matched blocks and two measured calls per block for each provider and route. Each block first runs a verified warmup. Each run gets its own output file.
+
+```sh
+tracker=benchmarks/provider_comparison/tracker.py
+qw_replays=$(mktemp -d "${TMPDIR:-/tmp}/qw-hybrid.XXXXXX")
+
+run_replay() {
+  "$tracker_python" -B "$tracker" run --micro --case micro_creator_selective \
+    --fixture build/perf/provider-comparison/mod32 \
+    --extension "$QW_EXT" --library "$DUCKDB_LIB" \
+    --duckdb-unittest "$DUCKDB_UNITTEST" --blocks 2 --runs 2 \
+    --out "$qw_replays/$1.json"
+}
+
+run_replay first && run_replay second &&
+  "$tracker_python" -B "$tracker" compare "$qw_replays/first.json" "$qw_replays/second.json"
+```
+
+Repeat `--case` to select more cases, omit it to run all four MICRO workloads, or pass `--provider ladybug` or `--provider relate` to focus one provider. The `qw_pgq` arm enables the watchlist prefilter. The `qw_pgq_host` arm disables it. Check `scan_diagnostics.applied_route` for the route actually taken. Both arms must produce the exact oracle result. A failed result or SQLLogic check prevents snapshot publication.
+
+The two snapshots should agree on `workload_evidence`, `schedule_sha256`, the result signature, and the SQLLogic receipts. The comparison prints warm p50 and p95 from verified full fetches. Use more matched samples before interpreting the tails. For a release-to-release comparison, use the same `run` command with `--source-revision`, plus `--baseline-extension`, `--baseline-revision`, and a fresh `--baseline-out`. The tracker alternates release order within the run.
+
+## Inspect metrics and archived evidence
+
+Load the metric view from the DuckDB CLI and substitute the actual path to the first snapshot or an archived `hybrid_snapshot.json`.
+
+```sql
+.read benchmarks/provider_comparison/tracker/history.sql
+SELECT provider, route, block, repetition, metric_id, unit,
+       numeric_value, count_value, text_value
+FROM qw_benchmark_metrics('/path/to/first.json')
+WHERE workload = 'micro_creator_selective'
+ORDER BY provider, route, block, repetition, metric_id;
+```
+
+- `first_fetch` is the verified warmup. `release_wall` measures the subsequent calls through full Arrow fetch.
+- `scan_rows` counts graph rows crossing into DuckDB before the residual SQL operators. `result_rows` counts the final SQL rows.
+- `applied_route` and `admitted_generation` come from an untimed diagnostic replay. Optional provider timing appears when captured.
+
+The CI smoke uses the pinned `mod32` fixture. The history publisher exposes its verified snapshot as `hybrid_snapshot.json` alongside the standard benchmark snapshot for the same attempt. See the [tracker reference](../benchmarks/provider_comparison/tracker/README.md) for setup, comparison, and history details.

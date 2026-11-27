@@ -30,9 +30,12 @@ def package(library, extension, duckdb_version, platform, extension_version):
 
 
 def package_native(library, extension, duckdb_version, platform, extension_version):
+    project = Path(__file__).resolve().parents[1]
     duckgql = ROOT / f"duckdb-gql-{DUCKGQL_REVISION}"
-    relate = Path(__file__).resolve().parents[1] / "crates/native/licenses/relate-1.2.0"
+    relate = project / "crates/native/licenses/relate-1.2.0"
     licenses = (
+        ("QuackWeave-LICENSE", project / "LICENSE",
+         "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"),
         ("DuckDB-LICENSE", ROOT.parent / f"duckdb-{DUCKDB_REVISION}" / "LICENSE",
          "075c33400ffcb0c586dd106a029d3e733e9da3693f8fcb9cebfc651c8a2f14e3"),
         ("DuckGQL-LICENSE", duckgql / "LICENSE",
@@ -64,7 +67,7 @@ def package_native(library, extension, duckdb_version, platform, extension_versi
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Package QuackWeave with its third-party notices")
+    parser = argparse.ArgumentParser(description="Package QuackWeave with its license and third-party notices")
     parser.add_argument("library", type=Path)
     parser.add_argument("extension", type=Path)
     parser.add_argument("duckdb_version")

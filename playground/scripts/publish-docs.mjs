@@ -4,6 +4,9 @@ const source = new URL("../../docs/", import.meta.url);
 const destination = new URL("../dist/docs/", import.meta.url);
 
 await mkdir(destination, { recursive: true });
-for (const file of ["index.html", "styles.css", "evidence.json"]) {
+for (const file of [
+  "index.html", "styles.css", "evidence.json",
+  "benchmarks.html", "benchmarks.css", "benchmarks.js", "benchmark-data.js",
+]) {
   await copyFile(new URL(file, source), new URL(file, destination));
 }

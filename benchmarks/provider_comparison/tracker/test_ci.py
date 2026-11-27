@@ -51,6 +51,21 @@ def evidence(sha, status, snapshot=None, event="main", run=100, attempt=1):
 
 
 class TrackerCI(unittest.TestCase):
+    def test_engine_regression_can_coexist_with_faster_client_latency(self):
+        sample = json.loads((HERE / "sf1.json").read_text())
+        sample["summary"] = [sample["summary"][0]]
+        row = sample["summary"][0]
+        row.update(p50_ms=10, p95_ms=20, engine_execution={"n": 4, "p50_ms": 2, "p95_ms": 4})
+        current = deepcopy(sample)
+        current["summary"][0].update(p50_ms=9, p95_ms=18, engine_execution={"n": 4, "p50_ms": 3, "p95_ms": 4})
+        record = {"commit": current["workspace_head"], **ci.judge(current, sample)}
+        self.assertEqual(record["regressions"], [])
+        self.assertEqual(record["engine_regressions"][0]["metrics"], ["p50"])
+        report = ci.markdown_report(record, current, sample)
+        self.assertIn("Warm graph-engine execution", report)
+        self.assertIn("**+50.0% regression**", report)
+        self.assertIn("warm client latency through fetch", report)
+
     def test_pr_and_push_include_each_introduced_commit(self):
         with tempfile.TemporaryDirectory() as tmp:
             init_repo(tmp)

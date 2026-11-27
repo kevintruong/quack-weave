@@ -15,7 +15,7 @@ make native-deps && make native-release
 /path/to/duckdb-v2.0.1 -unsigned
 ```
 
-The commands build `build/native/release/extension/quack_weave/quack_weave.duckdb_extension`. Plain `make` produces the corresponding debug package in `build/native/debug/`. The adjacent `licenses/` directory contains the notices for the pinned DuckDB, DuckGQL, openGQL, ANTLR, and RelateDB sources.
+The commands build `build/native/release/extension/quack_weave/quack_weave.duckdb_extension`. Plain `make` produces the corresponding debug package in `build/native/debug/`. The adjacent `licenses/` directory contains the Quack Weave license and the notices for the pinned DuckDB, DuckGQL, openGQL, ANTLR, and RelateDB sources.
 
 Open an existing Ladybug graph with `Document` nodes and `LINKS_TO` relationships. `GRAPH_TABLE` makes the matches available to standard SQL.
 
@@ -481,3 +481,7 @@ with the following error on extension load:
 IO Error: Extension '<name>.duckdb_extension' could not be loaded: The specified module could not be found
 ```
 This was resolved by using python 3.12
+
+## License
+
+Quack Weave is distributed under the [Apache License 2.0](LICENSE). Third-party components retain their respective licenses.

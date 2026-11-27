@@ -24,6 +24,8 @@ PACKAGE_PROFILES = {
     Path("build/mvp2-relate/release/extension/quack_weave"): f"mvp2-relate-release/{PLATFORM}/duckdb-v2.0.1",
 }
 EXTENSION = "quack_weave.duckdb_extension"
+PHASE_PACKAGE = Path("build/benchmark-engine-timing")
+PHASE = "phase/" + EXTENSION
 
 
 def digest(path):
@@ -31,7 +33,7 @@ def digest(path):
         return hashlib.file_digest(file, "sha256").hexdigest()
 
 
-def stage(checkout, output):
+def stage(checkout, output, include_phase=False):
     sha = checked_sha(subprocess.check_output(
         ["git", "-C", str(checkout), "rev-parse", "HEAD"], text=True).strip())
     for location, profile in PACKAGE_PROFILES.items():
@@ -43,6 +45,9 @@ def stage(checkout, output):
     folder = output / sha
     shutil.copytree(source, folder)
     manifest = {"commit": sha, "profile": profile, "sha256": digest(folder / EXTENSION)}
+    if include_phase:
+        shutil.copytree(checkout / PHASE_PACKAGE, folder / "phase")
+        manifest["phase_sha256"] = digest(folder / PHASE)
     (folder / "manifest.json").write_text(json.dumps(manifest) + "\n")
 
 
@@ -51,6 +56,8 @@ def verify(folder, sha, expected_digest=None):
     checksum = digest(folder / EXTENSION)
     profile = manifest.get("profile")
     identity = {"commit": checked_sha(sha), "profile": profile, "sha256": checksum}
+    if (folder / PHASE).is_file():
+        identity["phase_sha256"] = digest(folder / PHASE)
     if (profile not in PACKAGE_PROFILES.values() or manifest != identity
             or (expected_digest is not None and checksum != expected_digest)):
         raise ValueError(f"Release artifact identity or SHA-256 mismatch for {sha}")
@@ -102,13 +109,26 @@ def restore_previous(snapshot, directory):
             prefix = manifests[0].removesuffix("manifest.json")
             if names.count(prefix + EXTENSION) != 1:
                 raise ValueError(f"Expected one release binary for {sha}")
-            for member in ("manifest.json", EXTENSION):
+            members = ["manifest.json", EXTENSION]
+            phase_digest = snapshot["binaries"].get("phase_extension")
+            manifest = json.loads(bundle.read(prefix + "manifest.json"))
+            if phase_digest is not None and phase_digest != manifest.get("phase_sha256"):
+                raise ValueError(f"Diagnostic release SHA-256 mismatch for {sha}")
+            if "phase_sha256" in manifest:
+                if names.count(prefix + PHASE) != 1:
+                    raise ValueError(f"Expected one diagnostic binary for {sha}")
+                (staged / "phase").mkdir()
+                members.append(PHASE)
+            for member in members:
                 with bundle.open(prefix + member) as source, (staged / member).open("wb") as target:
                     shutil.copyfileobj(source, target)
         verify(staged, sha, checksum)
         destination = directory / sha / checksum / EXTENSION
         destination.parent.mkdir(parents=True, exist_ok=True)
         (staged / EXTENSION).replace(destination)
+        if phase_digest is not None:
+            (destination.parent / "phase").mkdir(exist_ok=True)
+            (staged / PHASE).replace(destination.parent / PHASE)
         return destination
 
 
@@ -118,11 +138,12 @@ if __name__ == "__main__":
     produce = sub.add_parser("stage")
     produce.add_argument("checkout", type=Path)
     produce.add_argument("output", type=Path)
+    produce.add_argument("--phase", action="store_true")
     consume = sub.add_parser("verify")
     consume.add_argument("folder", type=Path)
     consume.add_argument("commit")
     args = parser.parse_args()
     if args.cmd == "stage":
-        stage(args.checkout, args.output)
+        stage(args.checkout, args.output, args.phase)
     else:
         verify(args.folder, args.commit)

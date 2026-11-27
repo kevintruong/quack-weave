@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#13191a">
+  <meta name="description" content="Measured Quack Weave query performance on Ladybug and RelateDB.">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./benchmarks.css">
+  <script src="./benchmark-data.js" defer></script>
+  <script src="./benchmarks.js" defer></script>
+  <title>Performance benchmarks · Quack Weave</title>
+</head>
+<body class="benchmarks">
+  <a class="skip-link" href="#content">Skip to content</a>
+  <header class="topbar">
+    <div class="frame topbar-inner">
+      <a class="brand" href="./index.html"><span aria-hidden="true">Q</span> Quack Weave</a>
+      <nav aria-label="Site">
+        <a href="./index.html">Documentation</a>
+        <a href="./benchmarks.html" aria-current="page">Benchmarks</a>
+        <a href="https://github.com/kevintruong/quack-weave">GitHub</a>
+      </nav>
+    </div>
+  </header>
+  <main class="frame" id="content">
+    <section class="intro benchmark-intro">
+      <div>
+        <h1>Performance<br>benchmarks</h1>
+        <p>Compare warm query latency and rows delivered to DuckDB across Ladybug and RelateDB. Explore the full SF1 baseline, CM-LDBC graph joins, and the effect of hot keys on prefiltering.</p>
+      </div>
+      <a class="history-link" href="https://github.com/kevintruong/quack-weave/tree/benchmark-history">CI benchmark history</a>
+    </section>
+
+    <div class="highlights" aria-label="Selected benchmark results">
+      <div><strong id="creator-speedup">…</strong><span>Selective creator join</span><small>RelateDB · CM-LDBC p50 speedup</small></div>
+      <div><strong id="hot-slowdown">…</strong><span>Hot-key prefilter</span><small>Ladybug · repeat-run p50 slowdown</small></div>
+      <div><strong id="sf1-edges">…</strong><span>Full SF1 creator edges</span><small>Archived release baseline</small></div>
+    </div>
+
+    <noscript><p>Enable JavaScript to explore the charts, or open the <a href="https://github.com/kevintruong/quack-weave/tree/benchmark-history">CI benchmark history</a> for tabular reports.</p></noscript>
+    <section class="benchmark-explorer" aria-labelledby="explorer-title">
+      <h2 id="explorer-title">Explore the runs</h2>
+      <nav class="suite-tabs" aria-label="Benchmark suites">
+        <button type="button" data-suite="micro" aria-pressed="true">CM-LDBC joins</button>
+        <button type="button" data-suite="sf1" aria-pressed="false">Full SF1 baseline</button>
+        <button type="button" data-suite="fanout" aria-pressed="false">Fanout experiment</button>
+      </nav>
+
+      <div class="benchmark-panel">
+        <div class="chart-heading">
+          <div>
+            <h3 id="chart-title">Latency by workload</h3>
+            <p id="chart-context"></p>
+          </div>
+          <div class="chart-controls">
+            <div class="chart-control">
+              <label for="provider">Provider</label>
+              <select id="provider">
+                <option value="relate">RelateDB</option>
+                <option value="ladybug">Ladybug</option>
+              </select>
+            </div>
+            <div class="chart-control">
+              <label for="metric">Metric</label>
+              <select id="metric">
+                <option value="p50">p50 latency</option>
+                <option value="p95">p95 latency</option>
+                <option value="rows">Graph rows</option>
+              </select>
+            </div>
+            <div class="chart-control" id="run-control" hidden>
+              <label for="run">Run</label>
+              <select id="run">
+                <option value="1">Repeat</option>
+                <option value="0">First</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <figure aria-label="Benchmark comparison" id="chart">
+          <figcaption id="chart-units"></figcaption>
+          <div id="legend" class="chart-legend"></div>
+          <div id="axis" class="chart-axis" aria-hidden="true"></div>
+          <div id="plot"></div>
+        </figure>
+        <p id="measurement-note" class="measurement-note"></p>
+
+        <details class="measurement-details">
+          <summary>Measurement table</summary>
+          <div class="scroll" tabindex="0" aria-label="Benchmark data table scroll area">
+            <table aria-label="Selected benchmark measurements">
+              <thead><tr><th scope="col">Workload</th><th scope="col">Route</th><th scope="col">p50 (ms)</th><th scope="col">p95 (ms)</th><th scope="col">Samples</th><th scope="col">Graph rows</th></tr></thead>
+              <tbody id="measurements"></tbody>
+            </table>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section class="benchmark-source" aria-labelledby="source-heading">
+      <div>
+        <h2 id="source-heading">Measurement and provenance</h2>
+        <p id="source-method"></p>
+        <p id="source-links"></p>
+        <details>
+          <summary>Artifact hashes</summary>
+          <dl id="hashes"></dl>
+        </details>
+      </div>
+      <button class="download" type="button" id="download">Download chart data</button>
+    </section>
+  </main>
+</body>
+</html>

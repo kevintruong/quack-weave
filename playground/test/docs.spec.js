@@ -35,3 +35,43 @@ test("the Playground links to the capability guide and its evidence", async ({ p
   await page.getByRole("link", { name: "Playground", exact: true }).click();
   await expect(page).toHaveURL(baseURL);
 });
+
+test("benchmark charts switch between comparable measurements and sample counts", async ({ page, request, baseURL }) => {
+  const docsUrl = new URL("docs/", baseURL);
+  await page.goto(docsUrl.href);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("link", { name: "Benchmarks", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Performance benchmarks" })).toBeVisible();
+  const chart = page.getByRole("figure", { name: "Benchmark comparison" });
+  await expect(chart).toContainText("Selective creator join");
+  await expect(chart).toContainText("119,052");
+  await expect(chart).toContainText("81.828");
+  await expect(chart).toContainText("1.751");
+
+  await page.getByLabel("Metric").selectOption("p95");
+  await expect(chart).toContainText("88.404");
+  await page.getByLabel("Metric").selectOption("rows");
+  await expect(chart).toContainText("734");
+
+  await page.getByRole("button", { name: "Fanout experiment" }).click();
+  await page.getByLabel("Provider").selectOption("ladybug");
+  await page.getByLabel("Metric").selectOption("p50");
+  await expect(chart).toContainText("Hot keys");
+  await expect(chart).toContainText("5.203");
+  await page.getByLabel("Run", { exact: true }).selectOption("0");
+  await expect(chart).toContainText("5.332");
+
+  await page.getByRole("button", { name: "Full SF1 baseline" }).click();
+  await expect(chart).toContainText("log scale");
+  await expect(chart).toContainText("Direct Cypher");
+  await page.getByLabel("Metric").selectOption("rows");
+  await expect(chart).toContainText("6,465");
+  await expect(chart).not.toContainText("Lookup hit");
+  await page.getByText("Measurement table", { exact: true }).click();
+  const table = page.getByRole("table", { name: "Selected benchmark measurements" });
+  await expect(table.getByRole("row", { name: /Graph-local equality/ })).toContainText("20");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+
+  const data = await request.get(new URL("benchmark-data.js", docsUrl).href);
+  expect(data.ok()).toBeTruthy();
+});

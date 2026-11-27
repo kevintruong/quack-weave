@@ -3,15 +3,26 @@ CREATE OR REPLACE TEMP MACRO qw_benchmark_history(snapshot_files) AS TABLE
 SELECT id AS run_id, started_utc, workspace_head, binaries.extension AS extension_sha256,
        protocol, host_id, edge_count, fixture.files."edges.csv".sha256 AS fixture_sha256,
        blocks, runs, s.provider, s.scope, s.route, s."case" AS workload, s.n,
-       s.p50_ms, s.p95_ms, s.cpu_p50_ms, s.qw_over_direct
+       s.p50_ms, s.p95_ms, s.cpu_p50_ms, s.qw_over_direct,
+       s.engine_execution.p50_ms AS engine_p50_ms, s.engine_execution.p95_ms AS engine_p95_ms,
+       s.other_warm_work.p50_ms AS other_warm_work_p50_ms
 FROM read_json(snapshot_files, format = 'unstructured', columns = {
     'id': 'VARCHAR', 'started_utc': 'TIMESTAMPTZ', 'workspace_head': 'VARCHAR',
     'protocol': 'INTEGER', 'host_id': 'VARCHAR', 'edge_count': 'BIGINT',
     'fixture': 'STRUCT(files STRUCT("edges.csv" STRUCT(sha256 VARCHAR)))',
     'binaries': 'STRUCT(extension VARCHAR)', 'blocks': 'INTEGER', 'runs': 'INTEGER',
     'summary': 'STRUCT(provider VARCHAR, scope VARCHAR, route VARCHAR, "case" VARCHAR,
-                       n BIGINT, p50_ms DOUBLE, p95_ms DOUBLE, cpu_p50_ms DOUBLE, qw_over_direct DOUBLE)[]'
+                       n BIGINT, p50_ms DOUBLE, p95_ms DOUBLE, cpu_p50_ms DOUBLE, qw_over_direct DOUBLE,
+                       engine_execution STRUCT(p50_ms DOUBLE, p95_ms DOUBLE), other_warm_work STRUCT(p50_ms DOUBLE))[]'
 }), UNNEST(summary) AS series(s);
+
+-- One sample per connection, summarized per route independently of workload count.
+CREATE OR REPLACE TEMP MACRO qw_benchmark_bootstrap(snapshot_files) AS TABLE
+SELECT id AS run_id, workspace_head, b.provider, b.route, b.n AS connections, b.p50_ms, b.p95_ms
+FROM read_json(snapshot_files, format = 'unstructured', columns = {
+    'id': 'VARCHAR', 'workspace_head': 'VARCHAR',
+    'bootstrap_summary': 'STRUCT(provider VARCHAR, route VARCHAR, n BIGINT, p50_ms DOUBLE, p95_ms DOUBLE)[]'
+}), UNNEST(bootstrap_summary) AS sessions(b);
 
 -- Raw observations retain the measured phase and grain. Read only verified snapshots.
 -- Numeric times and RSS, integral row counts, and opaque values use separate columns.
