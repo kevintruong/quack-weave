@@ -5,12 +5,16 @@ use std::collections::HashMap;
 
 use duckdb_neo::table_function::InitColumnData;
 
-use super::{BoundRead, ColumnSpec, Context, Error, Result, runtime_watch};
+use super::{
+    BoundRead, ColumnSpec, Context, Error, Result,
+    runtime_watch::{self, WatchlistRoute},
+};
 
 pub(super) struct ScanProjection {
     query: Option<String>,
     schema: Option<Vec<ColumnSpec>>,
     pub(super) output_columns: Vec<usize>,
+    pub(super) watchlist_route: WatchlistRoute,
 }
 
 impl ScanProjection {
@@ -29,48 +33,57 @@ impl ScanProjection {
                 "Graph scan received an unknown output column",
             ));
         }
-        let original = |output_columns| {
-            let query = if let Some(watch) = &bound.watch
-                && runtime_watch::enabled(context)?
-            {
-                watch.query(&bound.provider.backend.runtime_watch_keys(watch.column))
-            } else {
-                None
-            };
+        let original = |output_columns, query, watchlist_route| {
             Ok(Self {
                 query,
                 schema: None,
                 output_columns,
+                watchlist_route,
             })
         };
+        // Both candidate sources are optional until this execution initializes.
+        // A prepared literal plan keeps its base query when the gate is disabled.
+        let watchlist_enabled = (bound.literal_candidate.is_some()
+            || bound.watch.is_some()
+            || bound.allows_pgq_rewrite())
+            && runtime_watch::enabled(context)?;
+        if watchlist_enabled && let Some(candidate) = &bound.literal_candidate {
+            return original(
+                requested,
+                Some(candidate.clone()),
+                WatchlistRoute::LiteralExact,
+            );
+        }
         let Some(fragment) = bound
             .fragment
             .as_ref()
             .filter(|_| bound.allows_pgq_rewrite())
         else {
-            return original(requested);
+            if watchlist_enabled
+                && let Some(watch) = &bound.watch
+                && let Some(query) =
+                    watch.query(&bound.provider.backend.runtime_watch_keys(watch.column))
+            {
+                return original(requested, Some(query), WatchlistRoute::RuntimeExact);
+            }
+            return original(requested, None, WatchlistRoute::Host);
         };
-        // Legacy literal watchlists can bind an already filtered native query.
-        // Preserve that read instead of replacing its existing predicate.
-        let base = format!("{} RETURN {}", fragment.pattern(), fragment.projection());
-        if base != bound.cypher {
-            return original(requested);
-        }
-        let runtime_predicate = if runtime_watch::enabled(context)? {
+        let runtime_predicate = if watchlist_enabled {
             bound.runtime_predicate()
         } else {
             None
+        };
+        let watchlist_route = if runtime_predicate.is_some() {
+            WatchlistRoute::RuntimeExact
+        } else {
+            WatchlistRoute::Host
         };
         let predicates: Vec<_> = [bound.static_predicate_sql()?, runtime_predicate]
             .into_iter()
             .flatten()
             .collect();
         if requested.iter().copied().eq(0..bound.schema.len()) && predicates.is_empty() {
-            return Ok(Self {
-                query: None,
-                schema: None,
-                output_columns: requested,
-            });
+            return original(requested, None, watchlist_route);
         }
         let mut query = fragment.pattern().to_owned();
         if !predicates.is_empty() {
@@ -105,6 +118,7 @@ impl ScanProjection {
             query: Some(query),
             schema: Some(schema),
             output_columns,
+            watchlist_route,
         })
     }
 

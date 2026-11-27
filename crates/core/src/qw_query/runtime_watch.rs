@@ -7,6 +7,7 @@ use duckdb_neo::{
     custom_option::{CustomOptionBuilder, CustomOptionCallbacks},
     error::Error,
     extension::Extension,
+    log::{Log, LogLevel},
     value::Value,
 };
 
@@ -14,6 +15,25 @@ use super::{BoundRead, ScalarType, is_identifier};
 
 pub(super) const MAX_KEYS: usize = 64;
 const ENABLE_WATCHLIST: &str = "qw_enable_runtime_watchlist";
+
+#[derive(Clone, Copy)]
+pub(super) enum WatchlistRoute {
+    Host,
+    LiteralExact,
+    RuntimeExact,
+}
+
+impl WatchlistRoute {
+    pub(super) fn log(self, context: &Context) {
+        let route = match self {
+            Self::Host => "host",
+            Self::LiteralExact => "literal_exact",
+            Self::RuntimeExact => "runtime_exact",
+        };
+        // The route was dispatched. Logging must never affect read execution.
+        let _ = Log::log_on_context(context, LogLevel::Info, route, "QuackWeaveGraphRoute");
+    }
+}
 
 struct WatchlistOption;
 
@@ -45,7 +65,7 @@ impl CustomOptionCallbacks for WatchlistOption {
 pub(super) fn register(extension: &Extension) -> Result<()> {
     CustomOptionBuilder::new(
         ENABLE_WATCHLIST,
-        "Apply exact execution-local watchlist keys to QuackWeave graph reads",
+        "Apply exact literal or execution-local watchlist keys to QuackWeave graph reads",
         bool::logical_type(extension)?,
         WatchlistOption,
     )

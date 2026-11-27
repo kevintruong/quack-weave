@@ -10,12 +10,7 @@ impl TableGetBindInfoCallbacks for GraphQuery {
         )?;
         let mode = match bound.fragment.as_ref() {
             None => "native",
-            Some(fragment)
-                if bound.cypher
-                    != format!("{} RETURN {}", fragment.pattern(), fragment.projection()) =>
-            {
-                "literal"
-            }
+            Some(_) if bound.literal_candidate.is_some() => "literal",
             Some(_) if bound.config.config.has_resource_limit() => "limit",
             Some(_) if !bound.allows_pgq_rewrite() => "catalog",
             Some(_) if bound.static_predicate_sql()?.is_some() => "static",

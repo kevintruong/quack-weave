@@ -1,0 +1,106 @@
+# name: test/relate/watchlist_applied_route.test
+# description: One execution-time gate controls both key offers and reports the selected scan.
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_RELATE UNSET_QW_RELATE
+
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_relate_config = '{"alias":"routes","path":"{QW_RELATE}"}';
+
+statement ok
+SET threads = 1;
+
+statement ok
+SET disabled_optimizers = 'build_side_probe_side,join_order';
+
+statement ok
+CREATE TEMP TABLE watch(k BIGINT);
+
+statement ok
+INSERT INTO watch VALUES (202),(202),(NULL);
+
+statement ok
+PREPARE literal_watch AS SELECT g.k, g.dist FROM GRAPH_TABLE (
+  routes MATCH (a:airport)-[r:route]->(b:airport) COLUMNS (r.rid AS k, r.dist AS dist)
+) g JOIN (VALUES (202::BIGINT), (202::BIGINT), (NULL::BIGINT)) w(k) ON g.k = w.k;
+
+statement ok
+PREPARE runtime_watch AS SELECT g.k, g.dist FROM GRAPH_TABLE (
+  routes MATCH (a:airport)-[r:route]->(b:airport) COLUMNS (r.rid AS k, r.dist AS dist)
+) g JOIN watch AS w ON g.k = w.k;
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE literal_watch;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 1,[^{}]*"name": "QW_GRAPH_QUERY_FILTERED".*
+
+statement ok
+SET SESSION qw_enable_runtime_watchlist = false;
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE literal_watch;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 3,[^{}]*"name": "QW_GRAPH_QUERY_FILTERED".*
+
+statement ok
+CALL enable_logging(level = 'info');
+
+query II
+EXECUTE literal_watch;
+----
+202	600
+202	600
+
+query II
+EXECUTE runtime_watch;
+----
+202	600
+202	600
+
+query T rowsort
+SELECT message FROM duckdb_logs() WHERE type = 'QuackWeaveGraphRoute';
+----
+host
+host
+
+query I
+SELECT count(*) FROM duckdb_logs() WHERE type = 'QuackWeaveWatchlist';
+----
+0
+
+statement ok
+RESET SESSION qw_enable_runtime_watchlist;
+
+statement ok
+CALL truncate_duckdb_logs();
+
+query II
+EXECUTE literal_watch;
+----
+202	600
+202	600
+
+query II
+EXECUTE runtime_watch;
+----
+202	600
+202	600
+
+query T rowsort
+SELECT message FROM duckdb_logs() WHERE type = 'QuackWeaveGraphRoute';
+----
+literal_exact
+runtime_exact
+
+query T
+SELECT message FROM duckdb_logs() WHERE type = 'QuackWeaveWatchlist';
+----
+exact_keys
+
+statement ok
+CALL disable_logging();

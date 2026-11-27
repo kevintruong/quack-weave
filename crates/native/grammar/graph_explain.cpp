@@ -26,7 +26,7 @@ constexpr Description DESCRIPTIONS[] = {
     {"Pattern scan", nullptr, "Explicit resource limit"},
     {"Pattern scan", nullptr, "Declared property catalog"},
     {"Pattern scan", nullptr, "Unsupported relational operation"},
-    {"Literal prefilter", "SQL join or predicate", nullptr},
+    {"Optional literal prefilter", "SQL join or predicate", nullptr},
     {"Pattern scan", "SQL join", "No eligible runtime key filter"},
 };
 

@@ -520,6 +520,7 @@ struct BoundRead {
     static_predicate: std::sync::Mutex<Option<String>>,
     fragment: Option<GraphFragment>,
     provider: GraphProvider,
+    literal_candidate: Option<String>,
     watch: Option<RuntimeWatch>,
     params: Vec<(String, GraphParameter)>,
     config: Arc<ConfigSnapshot>,
@@ -530,6 +531,7 @@ struct BoundRead {
 impl BoundRead {
     fn allows_pgq_rewrite(&self) -> bool {
         self.fragment.is_some()
+            && self.literal_candidate.is_none()
             && !self.config.config.has_resource_limit()
             && match self.provider.descriptor.rewrite {
                 ProviderRewrite::Disabled => false,
@@ -603,7 +605,7 @@ impl GraphLanguage {
         }
     }
 
-    fn compile(self, query: String, parser: GqlParser) -> Result<String> {
+    fn compile(&self, query: String, parser: GqlParser) -> Result<String> {
         match self {
             Self::Cypher => Ok(query),
             Self::Gql => compile_gql_query(&query, parser),
@@ -657,7 +659,7 @@ impl TableFunctionCallbacks for GraphQuery {
         }
         let alias = required(0)?;
         let dialect = required(1)?;
-        let mut query = required(2)?;
+        let query = required(2)?;
         let fragment = match args.arg_by_name("pgq")? {
             Some(arg) => arg
                 .resolved_value::<String>()?
@@ -698,6 +700,7 @@ impl TableFunctionCallbacks for GraphQuery {
         }
         let backend = &provider.backend;
         let mut watch = None;
+        let mut literal_candidate = None;
         if provider.descriptor.rewrite == ProviderRewrite::LabelCatalog
             && matches!(
                 self.kind,
@@ -728,17 +731,19 @@ impl TableFunctionCallbacks for GraphQuery {
                         && runtime_watch::filtered_column(&query, &candidate, &label, &property)
                             .is_some()
                     {
-                        query = candidate;
+                        literal_candidate = Some(candidate);
                     }
                 }
             }
         }
-        let mut cypher = match language {
+        let compile = |query| match language {
             GraphLanguage::Gql if self.kind != GraphQueryKind::DeclaredSchema => {
-                backend.native_gql(query, self.gql_parser)?
+                backend.native_gql(query, self.gql_parser)
             }
-            _ => language.compile(query, self.gql_parser)?,
+            _ => language.compile(query, self.gql_parser),
         };
+        let cypher = compile(query)?;
+        let mut literal_candidate = literal_candidate.map(compile).transpose()?;
         let schema = if let Some(declared) = declared {
             declared
         } else {
@@ -795,7 +800,7 @@ impl TableFunctionCallbacks for GraphQuery {
                 if runtime_watch::filtered_column(&cypher, &candidate, &label, &property)
                     .is_some_and(is_integer)
                 {
-                    cypher = candidate;
+                    literal_candidate = Some(candidate);
                 }
             }
         }
@@ -831,6 +836,7 @@ impl TableFunctionCallbacks for GraphQuery {
             static_predicate: Default::default(),
             fragment,
             provider: provider.clone(),
+            literal_candidate,
             watch,
             params,
             config,
@@ -922,9 +928,16 @@ impl TableFunctionCallbacks for GraphQuery {
                         session
                     }
                 };
-                session
+                let reader = session
                     .execute_with_params(projection.query(bound), &bound.params)
-                    .map_err(backend_error)
+                    .map_err(backend_error)?;
+                if bound.fragment.is_some()
+                    || bound.watch.is_some()
+                    || bound.literal_candidate.is_some()
+                {
+                    projection.watchlist_route.log(context);
+                }
+                Ok(reader)
             },
         )?
         else {
