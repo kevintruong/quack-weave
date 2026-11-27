@@ -1,0 +1,61 @@
+{
+  "id": "metric-smoke",
+  "workspace_head": "example-commit",
+  "protocol": 2,
+  "host_id": "example-host",
+  "binaries": {"extension": "extension-digest"},
+  "fixture": {"files": {"edges.csv": {"sha256": "legacy-fixture"}}},
+  "workload_evidence": {
+    "creator_selective": {
+      "case_id": "hybrid.creator_selective",
+      "case_revision": 2,
+      "scale": "mod32",
+      "fixture_sha256": "fixture-digest",
+      "sql_sha256": "sql-digest",
+      "parameter_trace_sha256": "parameter-digest",
+      "oracle_sha256": "oracle-definition-digest",
+      "workload_sha256": "workload-digest",
+      "oracle_key": "creator_oracle"
+    }
+  },
+  "expected": {
+    "creator_oracle": [4, "result-digest"],
+    "older_case": [0, "empty-result-digest"]
+  },
+  "workers": [
+    {
+      "provider": "ladybug",
+      "route": "qw_pgq",
+      "block": 0,
+      "setup": {"bootstrap_ms": 11.25},
+      "peak_rss_mib": 16.5,
+      "samples": [
+        {"case": "creator_selective", "repetition": 0, "wall_ms": 9.75, "cpu_ms": 6.25},
+        {
+          "case": "creator_selective",
+          "repetition": 1,
+          "wall_ms": 8.5,
+          "cpu_ms": 5.25,
+          "result_rows": 4,
+          "result_sha256": "result-digest"
+        }
+      ],
+      "engine_samples": [
+        {"case": "creator_selective", "repetition": 0, "engine_ms": 3},
+        {"case": "creator_selective", "repetition": 1, "engine_ms": 2.5, "start_ns": 1000000, "end_ns": 5000000}
+      ],
+      "graph_scan_rows": {"creator_selective": 734},
+      "scan_diagnostics": {
+        "creator_selective": {"scan_rows": 734, "applied_route": "runtime_exact", "admitted_generation": 123}
+      }
+    },
+    {
+      "provider": "ladybug",
+      "route": "qw_pgq_host",
+      "block": 0,
+      "setup": {"open_ms": 3.5},
+      "samples": [{"case": "older_case", "repetition": 1, "wall_ms": 12}],
+      "graph_scan_rows": {"older_case": 0}
+    }
+  ]
+}

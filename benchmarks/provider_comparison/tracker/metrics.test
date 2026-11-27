@@ -1,0 +1,75 @@
+# name: benchmarks/provider_comparison/tracker/metrics.test
+# description: Verify typed history observations preserve their phase, grain and workload provenance
+# group: [quack_weave]
+# Prepend history.sql as a statement block before running this SQLLogic file.
+
+test-env QW_TRACKER_METRIC_FIXTURE UNSET_QW_TRACKER_METRIC_FIXTURE
+
+statement ok
+CREATE TEMP TABLE metrics AS FROM qw_benchmark_metrics('{QW_TRACKER_METRIC_FIXTURE}');
+
+query TTTTT rowsort
+SELECT DISTINCT metric_id, stage, unit, capture, sample_grain FROM metrics;
+----
+admitted_generation	scan_admission	opaque	logs	query_scan
+applied_route	scan_init	enum	logs	query_scan
+bootstrap	host_setup	ms	release	connection
+engine_exec	provider	ms	diagnostic	query
+engine_remainder	client	ms	diagnostic	query
+first_fetch	client	ms	release	connection_case
+peak_rss	worker	mib	release	process
+release_cpu	client	ms	release	query
+release_wall	client	ms	release	query
+result_digest	sql_output	sha256	oracle	query
+result_rows	sql_output	rows	oracle	query
+scan_rows	scan_boundary	rows	explain	query_scan
+
+query TTII rowsort
+SELECT metric_id, workload, repetition, (numeric_value * 1000)::BIGINT
+FROM metrics WHERE route = 'qw_pgq' AND numeric_value IS NOT NULL;
+----
+bootstrap	NULL	NULL	11250
+engine_exec	creator_selective	0	3000
+engine_exec	creator_selective	1	2500
+engine_remainder	creator_selective	1	1500
+first_fetch	creator_selective	0	9750
+peak_rss	NULL	NULL	16500
+release_cpu	creator_selective	0	6250
+release_cpu	creator_selective	1	5250
+release_wall	creator_selective	1	8500
+
+query TTIT rowsort
+SELECT metric_id, evidence_source, repetition, coalesce(count_value::VARCHAR, text_value)
+FROM metrics WHERE route = 'qw_pgq' AND numeric_value IS NULL;
+----
+admitted_generation	scan_diagnostics	NULL	123
+applied_route	scan_diagnostics	NULL	runtime_exact
+result_digest	sample	1	result-digest
+result_digest	snapshot_oracle	0	result-digest
+result_rows	sample	1	4
+result_rows	snapshot_oracle	0	4
+scan_rows	graph_scan_rows	NULL	734
+
+query TTTTTITTT
+SELECT DISTINCT run_id, workspace_head, extension_sha256, host_id, case_id, case_revision, scale,
+                fixture_sha256, workload_sha256
+FROM metrics WHERE workload = 'creator_selective';
+----
+metric-smoke	example-commit	extension-digest	example-host	hybrid.creator_selective	2	mod32	fixture-digest	workload-digest
+
+# Old and incomplete captures contribute only the information present in the archive.
+query TTIT rowsort
+SELECT metric_id, fixture_sha256, case_revision, coalesce(count_value::VARCHAR, text_value)
+FROM metrics WHERE workload = 'older_case';
+----
+release_wall	legacy-fixture	NULL	NULL
+result_digest	legacy-fixture	NULL	empty-result-digest
+result_rows	legacy-fixture	NULL	0
+scan_rows	legacy-fixture	NULL	0
+
+query I
+SELECT count(*) FROM metrics
+WHERE ((numeric_value IS NOT NULL)::INTEGER + (count_value IS NOT NULL)::INTEGER
+       + (text_value IS NOT NULL)::INTEGER) <> 1;
+----
+0
