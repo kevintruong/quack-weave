@@ -1,0 +1,140 @@
+# name: test/stabilization/sqllogic/hybrid_prepared_watchlist_churn.test
+# description: A prepared graph join reuses its plan while the watchlist crosses the native key cap
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_AIR_ROUTES UNSET_QW_AIR_ROUTES
+
+# case: hybrid_churn.setup Register the graph and prepare one join before replacing any keys
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"air_routes","path":"{QW_AIR_ROUTES}"}';
+
+statement ok
+SET threads = 1;
+
+# The five-row graph is smaller than the watchlist. Keep it on the probe side.
+statement ok
+SET disabled_optimizers = 'build_side_probe_side,join_order';
+
+statement ok
+SET dynamic_or_filter_threshold = 128;
+
+statement ok
+SET SESSION qw_enable_runtime_watchlist = true;
+
+statement ok
+CREATE TEMP TABLE churn_watch(author BIGINT);
+
+statement ok
+PREPARE churn_join AS
+SELECT g.author, count(*) AS matches, sum(g.mid % 1000003)::BIGINT AS checksum
+FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[e:route]->(d:airport)
+    COLUMNS(e.rid AS author, e.dist AS mid)) AS g
+JOIN churn_watch AS w USING (author)
+GROUP BY g.author ORDER BY g.author;
+
+statement ok
+CALL enable_logging(level = 'info');
+
+# case: hybrid_churn.below Verify sixty-three distinct non-NULL keys with a duplicate and a NULL
+statement ok
+DELETE FROM churn_watch;
+
+statement ok
+INSERT INTO churn_watch SELECT -i * 1000000000 FROM range(1, 63) t(i)
+UNION ALL VALUES (101), (101), (NULL);
+
+query III
+SELECT count(*), count(DISTINCT author), count(*)-count(author) FROM churn_watch;
+----
+65	63	1
+
+query III
+EXECUTE churn_join;
+----
+101	2	1892
+
+query TT
+SELECT
+    (SELECT message FROM duckdb_logs() WHERE type = 'QuackWeaveGraphRoute'),
+    (SELECT message FROM duckdb_logs() WHERE type = 'QuackWeaveWatchlist');
+----
+runtime_exact	exact_keys
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE churn_join;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 1,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+# case: hybrid_churn.at Exactly sixty-four distinct keys can still use the native filter
+statement ok
+CALL truncate_duckdb_logs();
+
+statement ok
+DELETE FROM churn_watch;
+
+statement ok
+INSERT INTO churn_watch SELECT -i * 1000000000 FROM range(1, 64) t(i)
+UNION ALL VALUES (103), (103), (NULL);
+
+query III
+SELECT count(*), count(DISTINCT author), count(*)-count(author) FROM churn_watch;
+----
+66	64	1
+
+query III
+EXECUTE churn_join;
+----
+103	2	3892
+
+query TT
+SELECT
+    (SELECT message FROM duckdb_logs() WHERE type = 'QuackWeaveGraphRoute'),
+    (SELECT message FROM duckdb_logs() WHERE type = 'QuackWeaveWatchlist');
+----
+runtime_exact	exact_keys
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE churn_join;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 1,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+# case: hybrid_churn.above The same prepared join falls back without dropping duplicate matches
+statement ok
+CALL truncate_duckdb_logs();
+
+statement ok
+DELETE FROM churn_watch;
+
+statement ok
+INSERT INTO churn_watch SELECT -i * 1000000000 FROM range(1, 65) t(i)
+UNION ALL VALUES (104), (104), (NULL);
+
+query III
+SELECT count(*), count(DISTINCT author), count(*)-count(author) FROM churn_watch;
+----
+67	65	1
+
+query III
+EXECUTE churn_join;
+----
+104	2	4344
+
+query TT
+SELECT
+    (SELECT message FROM duckdb_logs() WHERE type = 'QuackWeaveGraphRoute'),
+    (SELECT message FROM duckdb_logs() WHERE type = 'QuackWeaveWatchlist');
+----
+host	key_cap
+
+query TT
+EXPLAIN (ANALYZE, FORMAT JSON) EXECUTE churn_join;
+----
+analyzed_plan	<REGEX>:.*"intermediate_rows": 5,[^{}]*"name": "QW_GRAPH_QUERY".*
+
+statement ok
+CALL disable_logging();

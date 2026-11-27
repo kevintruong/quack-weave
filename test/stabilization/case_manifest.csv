@@ -148,3 +148,7 @@ hybrid_creator.optimized,hybrid_creator_selective.test,native-debug|native-relea
 hybrid_directory.setup,hybrid_directory_join_topk.test,native-debug|native-release,6
 hybrid_directory.ordered,hybrid_directory_join_topk.test,native-debug|native-release,4
 hybrid_directory.limit_before_join,hybrid_directory_join_topk.test,native-debug|native-release,1
+hybrid_churn.setup,hybrid_prepared_watchlist_churn.test,native-debug|native-release,9
+hybrid_churn.below,hybrid_prepared_watchlist_churn.test,native-debug|native-release,6
+hybrid_churn.at,hybrid_prepared_watchlist_churn.test,native-debug|native-release,7
+hybrid_churn.above,hybrid_prepared_watchlist_churn.test,native-debug|native-release,8

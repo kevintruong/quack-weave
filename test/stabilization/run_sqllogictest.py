@@ -263,6 +263,7 @@ def main():
             "duckgql_admission.test", "duckgql_aggregates.test", "duckgql_basic.test",
             "duckgql_paths.test", "duckgql_reachability.test", "duckgql_scalars.test",
             "hybrid_directory_join_topk.test",
+            "hybrid_prepared_watchlist_churn.test",
         )])
         run_creator_witness(unittest, scratch, lbug, relocated)
         snapshot(lbug, graph, fixtures, after)

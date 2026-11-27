@@ -4,9 +4,10 @@ import json
 from pathlib import Path
 
 import directory_join_topk
+import prepared_watchlist_churn
 
 
-CASES = {directory_join_topk.CASE_ID: directory_join_topk}
+CASES = {case.CASE_ID: case for case in (directory_join_topk, prepared_watchlist_churn)}
 HOST_ROUTE = "qw_pgq_host"
 SLT = {"BIGINT": "I", "VARCHAR": "T"}
 
@@ -24,6 +25,15 @@ def signature(rows):
 def setup_sql(case, parameters, directory, prefilter):
     return [f"SET SESSION qw_enable_runtime_watchlist = {'true' if prefilter else 'false'}",
             *case.setup_sql(parameters, directory)]
+
+
+def query_steps(case, parameters, expected):
+    if hasattr(case, "operations"):
+        for epoch, (commands, query) in zip(parameters["epochs"], case.operations(parameters), strict=True):
+            rows = [row[1:] for row in expected if row[0] == epoch["epoch"]]
+            yield commands, query, case.SCHEMA[1:], rows
+    else:
+        yield [], case.SQL, case.SCHEMA, expected
 
 
 def verify(a, report, rows, run, scratch):
@@ -65,10 +75,12 @@ def verify(a, report, rows, run, scratch):
             directory = a.application_directory / name
             blocks.extend(f"statement ok\n{sql.rstrip(';')};"
                           for sql in setup_sql(case, parameters, directory, route != HOST_ROUTE))
-            columns = "".join(SLT[kind] for _, kind in case.SCHEMA)
-            answer = "\n".join("\t".join("NULL" if value is None else str(value) for value in row)
-                               for row in rows[name])
-            blocks.append(f"query {columns} nosort\n{case.SQL};\n----\n{answer}")
+            for commands, query, schema, expected in query_steps(case, parameters, rows[name]):
+                blocks.extend(f"statement ok\n{sql.rstrip(';')};" for sql in commands)
+                columns = "".join(SLT[kind] for _, kind in schema)
+                answer = "\n".join("\t".join("NULL" if value is None else str(value) for value in row)
+                                   for row in expected)
+                blocks.append(f"query {columns} nosort\n{query};\n----\n{answer}")
         test.write_text("\n\n".join(blocks) + "\n\n", encoding="utf-8")
         run_cases(a.duckdb_unittest, scratch, variables, [test])
 

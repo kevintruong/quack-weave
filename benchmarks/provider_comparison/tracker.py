@@ -183,7 +183,12 @@ def python_worker(a, request):
 
         samples = []
         for repetition, name in sequence:
-            actual, timing = fetch_table(fetch, statements[name], request.get("schemas", {}).get(name),
+            case = application.CASES.get(name)
+            reader = fetch
+            if hasattr(case, "execute"):
+                def reader(_):
+                    return case.execute(cur, application_parameters[name])
+            actual, timing = fetch_table(reader, statements[name], request.get("schemas", {}).get(name),
                                          ordered=name in application_parameters)
             check_result(request["expected"], name, actual)
             if record_replay:
@@ -197,6 +202,12 @@ def python_worker(a, request):
                 cur.execute("CALL enable_logging(level = 'info')")
                 worker["scan_diagnostics"] = {}
             for name in request["cases"]:
+                case = application.CASES.get(name)
+                if hasattr(case, "diagnose"):
+                    diagnostic = case.diagnose(cur, application_parameters[name], scan_diagnostic)
+                    crossings[name] = diagnostic["scan_rows"]
+                    worker["scan_diagnostics"][name] = diagnostic
+                    continue
                 if record_replay:
                     cur.execute("CALL truncate_duckdb_logs()")
                 cur.execute("EXPLAIN (ANALYZE, FORMAT JSON) " + statements[name])

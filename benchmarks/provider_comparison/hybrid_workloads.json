@@ -201,6 +201,50 @@
           "case_ids": []
         }
       ]
+    },
+    {
+      "case_id": "prepared_watchlist_churn",
+      "case_revision": 1,
+      "sql_template_sha256": "fe457956f0d5400400762093a45528a2b7a231c5471eee292db6b5379cab805f",
+      "result_schema": [
+        [
+          "epoch",
+          "BIGINT"
+        ],
+        [
+          "author",
+          "BIGINT"
+        ],
+        [
+          "matches",
+          "BIGINT"
+        ],
+        [
+          "checksum",
+          "BIGINT"
+        ]
+      ],
+      "comparison": "ordered",
+      "oracle": {
+        "id": "prepared_watchlist_churn_csv",
+        "revision": 1,
+        "encoding": "canonical_json_v1"
+      },
+      "sql_logic_refs": [
+        {
+          "path": "test/stabilization/sqllogic/hybrid_prepared_watchlist_churn.test",
+          "case_ids": [
+            "hybrid_churn.setup",
+            "hybrid_churn.below",
+            "hybrid_churn.at",
+            "hybrid_churn.above"
+          ]
+        },
+        {
+          "path": "benchmarks/provider_comparison/tracker/workload_snapshot.test",
+          "case_ids": []
+        }
+      ]
     }
   ]
 }

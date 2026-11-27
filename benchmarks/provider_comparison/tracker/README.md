@@ -210,3 +210,8 @@ SQL in the pinned SQLLogic runner, and verifies the workload and observed call
 order before writing the snapshot. The airport SQLLogic witness covers the
 public route-directory query. The scaled case uses the matched creator graph as
 a route/destination projection and joins it to a generated, hashed Parquet file.
+
+`prepared_watchlist_churn` reuses one DuckDB prepared join across 63, 64 and
+65 distinct keys. Each sample includes replacing the watchlist and fetching
+each epoch. Untimed `scan_diagnostics.steps` records rows, offers and the applied
+route per epoch. The top-level scan count is the sum across the three executions.
