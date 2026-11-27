@@ -93,7 +93,7 @@ usage.table_position,usage_relations.test,native-debug|native-release,1
 usage_binding.setup,usage_binding.test,native-debug|native-release,2
 usage_binding.fresh_view,usage_binding.test,native-debug|native-release,5
 usage_binding.prepared_view,usage_binding.test,native-debug|native-release,5
-usage_binding.literal_guard,usage_binding.test,native-debug|native-release,5
+usage_binding.literal_guard,usage_binding.test,native-debug|native-release,11
 usage_binding.deferred_arguments,usage_binding.test,native-debug|native-release,5
 usage_binding.host_parameter,usage_binding.test,native-debug|native-release,3
 usage_binding.graph_parameters,usage_binding.test,native-debug|native-release,3

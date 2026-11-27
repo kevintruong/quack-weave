@@ -15,6 +15,7 @@ use duckdb_neo::{
     error::Error,
     extension::Extension,
     file::{FileBuilder, FileSystem},
+    log::{Log, LogLevel},
     logical_type::LogicalType,
     signature::{
         FunctionDocumentationBuilder, FunctionParameter, FunctionParameterKind, SignatureBuilder,
@@ -885,31 +886,36 @@ impl TableFunctionCallbacks for GraphQuery {
             capacity,
             bound.config.config.max_batch_bytes(),
             || {
-                self.check_scan_registration(bound)?;
+                let provider = bound.provider.descriptor;
+                let generation = &bound.config.generation;
+                self.providers
+                    .require_generation(provider, generation.id())?;
                 let session = match &bound.config.config {
                     RegisteredConfig::Local(config) => {
-                        let generation = &bound.config.generation;
                         let path = admit_local_path(context, &config.path)?;
                         if path != config.path {
                             return Err(Error::invalid_input(format!(
                                 "QW_ACCESS: Configured {} path changed after binding",
-                                bound.provider.descriptor.name
+                                provider.name
                             )));
                         }
                         let path = Path::new(&path);
-                        generation.validate(path)?;
-                        let session = bound
-                            .provider
-                            .backend
-                            .open_for_generation(
-                                path,
-                                config.timeout_ms,
-                                projection.schema(bound),
-                                generation,
-                            )
-                            .map_err(backend_error)?;
-                        generation.validate(path)?;
-                        session
+                        self.providers
+                            .open_admitted(provider, generation.id(), || {
+                                generation.validate(path)?;
+                                let session = bound
+                                    .provider
+                                    .backend
+                                    .open_for_generation(
+                                        path,
+                                        config.timeout_ms,
+                                        projection.schema(bound),
+                                        generation,
+                                    )
+                                    .map_err(backend_error)?;
+                                generation.validate(path)?;
+                                Ok(session)
+                            })?
                     }
                     RegisteredConfig::Remote(config) => {
                         remote::admit_remote(context)?;
@@ -923,11 +929,22 @@ impl TableFunctionCallbacks for GraphQuery {
                                 projection.schema(bound),
                             )
                             .map_err(backend_error)?;
-                        self.check_scan_registration(bound)?;
                         remote::admit_remote(context)?;
+                        // Remote session construction performs no graph read. This
+                        // last generation check admits the request before submission.
+                        self.providers
+                            .require_generation(provider, generation.id())?;
                         session
                     }
                 };
+                // The provider session is open for this generation. Diagnostics
+                // and query execution happen after releasing the publication gate.
+                let _ = Log::log_on_context(
+                    context,
+                    LogLevel::Info,
+                    &generation.id().to_string(),
+                    "QuackWeaveGraphAdmission",
+                );
                 let reader = session
                     .execute_with_params(projection.query(bound), &bound.params)
                     .map_err(backend_error)?;
@@ -948,21 +965,6 @@ impl TableFunctionCallbacks for GraphQuery {
                 *scan = Scan::Finished;
                 return Err(error);
             }
-        }
-        Ok(())
-    }
-}
-
-impl GraphQuery {
-    fn check_scan_registration(&self, bound: &BoundRead) -> Result<()> {
-        if !self
-            .providers
-            .check_generation(bound.provider.descriptor.id, bound.config.generation.id())?
-        {
-            return Err(Error::invalid_input(format!(
-                "QW_CONFIG: {} configuration changed after binding",
-                bound.provider.descriptor.name
-            )));
         }
         Ok(())
     }

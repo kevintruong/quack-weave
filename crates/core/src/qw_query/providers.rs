@@ -2,7 +2,7 @@
 use std::{
     collections::{HashMap, HashSet},
     path::Path,
-    sync::{Arc, Mutex, atomic::Ordering},
+    sync::{Arc, Mutex, RwLock, atomic::Ordering},
 };
 
 use duckdb_neo::{
@@ -59,6 +59,7 @@ impl ProviderDescriptor {
 pub struct GraphProvider {
     pub(super) descriptor: ProviderDescriptor,
     pub(super) backend: Arc<dyn ReadBackend>,
+    generation_gate: Arc<RwLock<()>>,
 }
 
 impl GraphProvider {
@@ -66,6 +67,7 @@ impl GraphProvider {
         Self {
             descriptor,
             backend: Arc::new(backend),
+            generation_gate: Arc::new(RwLock::new(())),
         }
     }
 }
@@ -120,6 +122,10 @@ fn unknown_provider() -> Error {
     Error::internal("QW_CONFIG: Unknown graph provider")
 }
 
+fn unavailable_gate() -> Error {
+    Error::internal("QW_CONFIG: Graph generation gate unavailable")
+}
+
 /// The same registry backs configuration, lookup, session selection, and inventory.
 #[derive(Clone)]
 pub struct ProviderRegistry {
@@ -162,6 +168,13 @@ impl ProviderRegistry {
             .map_err(|_| Error::internal("QW_CONFIG: Graph registry unavailable"))
     }
 
+    fn provider(&self, provider_id: &str) -> Result<&GraphProvider> {
+        self.providers
+            .iter()
+            .find(|provider| provider.descriptor.id == provider_id)
+            .ok_or_else(unknown_provider)
+    }
+
     pub(super) fn register_options(&self, extension: &Extension) -> Result<()> {
         for provider in self.providers.iter() {
             let descriptor = provider.descriptor;
@@ -202,11 +215,7 @@ impl ProviderRegistry {
         let alias = alias.to_ascii_lowercase();
         let state = self.state()?;
         if let Some(id) = state.aliases.get(&alias) {
-            let provider = self
-                .providers
-                .iter()
-                .find(|provider| provider.descriptor.id == *id)
-                .ok_or_else(unknown_provider)?;
+            let provider = self.provider(id)?;
             let snapshot = state
                 .slot(id)?
                 .active
@@ -251,6 +260,37 @@ impl ProviderRegistry {
             .is_some_and(|snapshot| snapshot.generation.id() == generation))
     }
 
+    pub(super) fn require_generation(
+        &self,
+        provider: ProviderDescriptor,
+        generation: u64,
+    ) -> Result<()> {
+        if self.check_generation(provider.id, generation)? {
+            return Ok(());
+        }
+        Err(Error::invalid_input(format!(
+            "QW_CONFIG: {} configuration changed after binding",
+            provider.name
+        )))
+    }
+
+    /// Linearize the local generation check and native session acquisition
+    /// with publication. The session owns its read resources after return.
+    pub(super) fn open_admitted<T>(
+        &self,
+        provider: ProviderDescriptor,
+        generation: u64,
+        open: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        let _admission = self
+            .provider(provider.id)?
+            .generation_gate
+            .read()
+            .map_err(|_| unavailable_gate())?;
+        self.require_generation(provider, generation)?;
+        open()
+    }
+
     fn revision(&self, provider_id: &str) -> Result<u64> {
         Ok(self.state()?.slot(provider_id)?.revision)
     }
@@ -264,6 +304,11 @@ impl ProviderRegistry {
     ) -> Result<()> {
         let alias = snapshot.config.alias().to_ascii_lowercase();
         let (previous, retired) = {
+            let _publication = self
+                .provider(provider_id)?
+                .generation_gate
+                .write()
+                .map_err(|_| unavailable_gate())?;
             let mut state = self.state()?;
             if state.slot(provider_id)?.revision != expected_revision {
                 return Err(Error::invalid_input(
@@ -291,6 +336,11 @@ impl ProviderRegistry {
         deactivate: impl FnOnce() -> Option<RetiredRegistration>,
     ) -> Result<()> {
         let (previous, retired) = {
+            let _publication = self
+                .provider(provider_id)?
+                .generation_gate
+                .write()
+                .map_err(|_| unavailable_gate())?;
             let mut state = self.state()?;
             // Keep the tombstone revision even for an empty slot to cancel in-flight preparation.
             let previous = state.replace(provider_id, None, None)?;
@@ -529,6 +579,60 @@ mod tests {
             single_pattern_row_bound: None,
             populations: None,
         })
+    }
+
+    #[test]
+    fn opening_holds_only_its_provider_generation_gate_until_session_acquisition() {
+        let registry = ProviderRegistry::new(vec![
+            fixture_provider("first", "first_config"),
+            fixture_provider("second", "second_config"),
+        ])
+        .unwrap();
+        let first = registry.provider("first").unwrap();
+        let second = registry.provider("second").unwrap();
+        registry
+            .commit("first", 0, fixture_snapshot(1, "old"), || None)
+            .unwrap();
+        let snapshot = registry.snapshot("first").unwrap().unwrap();
+        let opening = Barrier::new(2);
+        let finish = Barrier::new(2);
+        let admitted = thread::scope(|scope| {
+            let scan = scope.spawn(|| {
+                registry.open_admitted(first.descriptor, 1, || {
+                    opening.wait();
+                    finish.wait();
+                    Ok(snapshot)
+                })
+            });
+            opening.wait();
+            let publication_blocked = matches!(
+                first.generation_gate.try_write(),
+                Err(std::sync::TryLockError::WouldBlock)
+            );
+            let another_provider_available = second.generation_gate.try_write().is_ok();
+            let registry_available = registry.state.try_lock().is_ok();
+            finish.wait();
+            let snapshot = scan.join().unwrap().unwrap();
+            assert!(publication_blocked);
+            assert!(another_provider_available);
+            assert!(registry_available);
+            snapshot
+        });
+
+        registry
+            .commit("first", 1, fixture_snapshot(2, "replacement"), || None)
+            .unwrap();
+        assert_eq!(admitted.generation.id(), 1);
+        assert!(registry.check_generation("first", 2).unwrap());
+        let stale = registry.open_admitted(first.descriptor, 1, || -> Result<()> {
+            panic!("a stale generation must not reach the provider")
+        });
+        assert!(
+            stale
+                .unwrap_err()
+                .to_string()
+                .contains("changed after binding")
+        );
     }
 
     #[test]

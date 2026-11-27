@@ -64,6 +64,9 @@ SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
 
 # case: usage_binding.literal_guard A directly bound literal scan rejects a stale generation
 statement ok
+CALL enable_logging(level = 'info');
+
+statement ok
 PREPARE read_literal AS
 SELECT id FROM qw_query('kg', 'cypher',
     $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$,
@@ -75,6 +78,13 @@ EXECUTE read_literal;
 101
 101
 
+query II
+SELECT count(*), count(*) FILTER (WHERE message =
+    regexp_extract(current_setting('qw_ladybug_config'), '"generation":\{"id":([0-9]+)', 1))
+FROM duckdb_logs() WHERE type = 'QuackWeaveGraphAdmission';
+----
+1	1
+
 statement ok
 SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH_REPLACEMENT}"}';
 
@@ -82,6 +92,30 @@ statement error
 EXECUTE read_literal;
 ----
 QW_CONFIG: Ladybug configuration changed after binding
+
+query I
+SELECT count(*) FROM duckdb_logs() WHERE type = 'QuackWeaveGraphAdmission';
+----
+1
+
+query I
+SELECT id FROM qw_query('kg', 'cypher',
+    $$MATCH (a:Document {id: 100})-[:LINKS_TO]->(b:Document) RETURN b.id AS id$$,
+    schema := 'id BIGINT');
+----
+201
+201
+
+query III
+SELECT count(*), count(DISTINCT try_cast(message AS UBIGINT)),
+    count(*) FILTER (WHERE message =
+        regexp_extract(current_setting('qw_ladybug_config'), '"generation":\{"id":([0-9]+)', 1))
+FROM duckdb_logs() WHERE type = 'QuackWeaveGraphAdmission';
+----
+2	2	1
+
+statement ok
+CALL disable_logging();
 
 statement ok
 SET GLOBAL qw_ladybug_config = '{"alias":"kg","path":"{QW_GRAPH}"}';
