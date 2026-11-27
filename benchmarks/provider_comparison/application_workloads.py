@@ -5,10 +5,11 @@ from pathlib import Path
 import creator_sales_workload
 import directory_join_topk
 import prepared_watchlist_churn
+import two_hop_enriched
 
 
 CASES = {case.CASE_ID: case for case in (
-    directory_join_topk, prepared_watchlist_churn, creator_sales_workload,
+    directory_join_topk, prepared_watchlist_churn, creator_sales_workload, two_hop_enriched,
 )}
 HOST_ROUTE = "qw_pgq_host"
 STAGED_ROUTE = "qw_sql_staged"

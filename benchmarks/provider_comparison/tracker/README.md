@@ -221,3 +221,8 @@ ranks channels by seven- and 30-day settled net sales. The `qw_sql_staged` arm
 fetches the graph portfolio into Arrow once per connection and ingests it into
 DuckDB. `setup.application_setup_ms` includes that work, and the warm samples
 time the same ranking SQL on the staged portfolio with zero graph rows scanned.
+
+`two_hop_enriched` uses a bound, explicit-schema `qw_query` to reach sibling
+messages through their creator. DuckDB joins the path bag to host attributes
+and orders the grouped results. This route emits graph scan and admission
+metrics. The watchlist switch has no effect on these explicit Cypher reads.

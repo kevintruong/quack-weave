@@ -289,6 +289,49 @@
           "case_ids": []
         }
       ]
+    },
+    {
+      "case_id": "two_hop_enriched",
+      "case_revision": 1,
+      "sql_template_sha256": "34a093f45a01a4b8cf4652f0f1ad920303753a788935e992b911ce4d2ca6c0e8",
+      "result_schema": [
+        [
+          "author",
+          "BIGINT"
+        ],
+        [
+          "segment",
+          "BIGINT"
+        ],
+        [
+          "paths",
+          "BIGINT"
+        ],
+        [
+          "checksum",
+          "BIGINT"
+        ]
+      ],
+      "comparison": "ordered",
+      "oracle": {
+        "id": "two_hop_enriched_csv",
+        "revision": 1,
+        "encoding": "canonical_json_v1"
+      },
+      "sql_logic_refs": [
+        {
+          "path": "test/stabilization/sqllogic/hybrid_two_hop_enriched.test",
+          "case_ids": [
+            "hybrid_two_hop.setup",
+            "hybrid_two_hop.native",
+            "hybrid_two_hop.oracle"
+          ]
+        },
+        {
+          "path": "benchmarks/provider_comparison/tracker/workload_snapshot.test",
+          "case_ids": []
+        }
+      ]
     }
   ]
 }

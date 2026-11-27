@@ -156,3 +156,6 @@ hybrid_sales.setup,hybrid_creator_sales.test,native-debug|native-release,8
 hybrid_sales.ledger,hybrid_creator_sales.test,native-debug|native-release,1
 hybrid_sales.fresh,hybrid_creator_sales.test,native-debug|native-release,4
 hybrid_sales.staged,hybrid_creator_sales.test,native-debug|native-release,4
+hybrid_two_hop.setup,hybrid_two_hop_enriched.test,native-debug|native-release,6
+hybrid_two_hop.native,hybrid_two_hop_enriched.test,native-debug|native-release,5
+hybrid_two_hop.oracle,hybrid_two_hop_enriched.test,native-debug|native-release,2

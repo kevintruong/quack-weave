@@ -1,0 +1,83 @@
+# name: test/stabilization/sqllogic/hybrid_two_hop_enriched.test
+# description: Compare a two-hop native read joined with SQL attributes against a two-edge relational oracle
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_AIR_ROUTES UNSET_QW_AIR_ROUTES
+
+# case: hybrid_two_hop.setup Stage the same air routes and SQL attributes for both paths
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"air","path":"{QW_AIR_ROUTES}"}';
+
+statement ok
+CREATE TEMP TABLE route_edges(hub VARCHAR, sibling VARCHAR, rid BIGINT);
+
+statement ok
+INSERT INTO route_edges VALUES ('ATL','BOS',101), ('ATL','BOS',102), ('ATL','LAX',103), ('ATL','PDX',104), ('ATL','SEA',105);
+
+statement ok
+CREATE TEMP TABLE two_hop_attributes(sibling VARCHAR, segment BIGINT, active BOOLEAN);
+
+statement ok
+INSERT INTO two_hop_attributes VALUES ('LAX',0,true), ('LAX',0,true), ('PDX',1,true), ('PDX',1,false), ('SEA',1,false), ('BOS',2,true), (NULL,2,true);
+
+# case: hybrid_two_hop.native Both parallel ATL to BOS edges participate, and the seed is excluded
+statement ok
+CREATE TEMP VIEW two_hop_native AS
+SELECT * FROM qw_query('air', 'cypher',
+    'MATCH (s:airport)<-[r1:route]-(p:airport)-[r2:route]->(t:airport)
+     WHERE s.code = $seed AND t.code <> s.code
+     RETURN p.code AS author, t.code AS sibling, r2.rid AS sibling_id',
+    schema := 'author VARCHAR, sibling VARCHAR, sibling_id BIGINT', bindings := {'seed': 'BOS'});
+
+query TI
+SELECT sibling, count(*) FROM two_hop_native GROUP BY sibling ORDER BY sibling;
+----
+LAX	2
+PDX	2
+SEA	2
+
+statement ok
+CREATE TEMP VIEW two_hop_actual AS
+SELECT g.author, a.segment, count(*) AS paths, sum(g.sibling_id % 1000003)::BIGINT AS checksum
+FROM two_hop_native AS g JOIN two_hop_attributes AS a USING (sibling)
+WHERE a.active
+GROUP BY g.author, a.segment
+ORDER BY g.author, a.segment;
+
+query TT
+SELECT column_name, column_type FROM (DESCRIBE two_hop_actual);
+----
+author	VARCHAR
+segment	BIGINT
+paths	BIGINT
+checksum	BIGINT
+
+query TIII
+SELECT * FROM two_hop_actual ORDER BY author, segment;
+----
+ATL	0	4	412
+ATL	1	2	208
+
+# case: hybrid_two_hop.oracle Compare grouped path multiplicities and checksum against two ordinary edge joins
+statement ok
+CREATE TEMP VIEW two_hop_reference AS
+SELECT anchor.hub AS author, a.segment, count(*) AS paths, sum(neighbor.rid % 1000003)::BIGINT AS checksum
+FROM route_edges AS anchor
+JOIN route_edges AS neighbor USING (hub)
+JOIN two_hop_attributes AS a ON a.sibling = neighbor.sibling
+WHERE anchor.sibling = 'BOS' AND neighbor.sibling <> anchor.sibling AND a.active
+GROUP BY anchor.hub, a.segment;
+
+query I
+WITH diff AS (
+    (FROM two_hop_actual EXCEPT ALL FROM two_hop_reference)
+    UNION ALL (FROM two_hop_reference EXCEPT ALL FROM two_hop_actual)
+)
+SELECT count(*) FROM diff;
+----
+0
