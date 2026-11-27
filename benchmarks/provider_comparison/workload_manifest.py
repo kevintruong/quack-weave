@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 
+import application_workloads as application
 import micro_workloads as micro
 
 
@@ -65,7 +66,7 @@ def load_manifest():
     if document["schema_version"] != SCHEMA_VERSION:
         raise ValueError("Unsupported hybrid workload manifest schema")
 
-    templates = micro_statements()
+    templates = {**micro_statements(), **application.statements()}
     cases = {}
     for case in document["cases"]:
         case_id = case["case_id"]

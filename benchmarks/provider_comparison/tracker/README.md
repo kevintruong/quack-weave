@@ -200,3 +200,13 @@ For the two-commit build handoff, Jev selected a foreign key on source commit an
 ```sh
 python3 -B -m unittest discover -s benchmarks/provider_comparison/tracker -p 'test_*.py'
 ```
+
+### Application Hybrid Query workloads
+
+Use `tracker.py run --hybrid --case directory_join_topk` with the pinned host,
+extension and `mod32` input. Omit `--case` to run the application suite. The
+runner checks exact ordered Arrow results on both providers, replays the same
+SQL in the pinned SQLLogic runner, and verifies the workload and observed call
+order before writing the snapshot. The airport SQLLogic witness covers the
+public route-directory query. The scaled case uses the matched creator graph as
+a route/destination projection and joins it to a generated, hashed Parquet file.

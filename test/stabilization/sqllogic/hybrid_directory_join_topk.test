@@ -1,0 +1,70 @@
+# name: test/stabilization/sqllogic/hybrid_directory_join_topk.test
+# description: A graph-to-Parquet directory join selects a stable top-k after joining
+# group: [quack_weave]
+
+require parquet
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_AIR_ROUTES UNSET_QW_AIR_ROUTES
+
+test-env QW_ROOT UNSET_QW_ROOT
+
+# case: hybrid_directory.setup Load the graph and write the directory with reversed tie order
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"air_routes","path":"{QW_AIR_ROUTES}"}';
+
+statement ok
+SET threads = 1;
+
+statement ok
+CREATE TEMP VIEW directory_topk_graph AS
+SELECT g.* FROM GRAPH_TABLE (air_routes MATCH (o:airport)-[r:route]->(d:airport)
+    WHERE o.code = 'ATL'
+    COLUMNS (r.rid AS route_id, r.dist AS miles, d.code AS destination_id)) AS g;
+
+statement ok
+COPY (SELECT * FROM (VALUES ('BOS', 2::BIGINT, 'Secondary'), ('BOS', 1::BIGINT, 'Primary'))
+    AS directory(destination_id, directory_id, destination_name))
+TO '{QW_ROOT}/hybrid_directory_join_topk.parquet' (FORMAT PARQUET);
+
+statement ok
+SET VARIABLE qw_directory_join_topk_path = '{QW_ROOT}/hybrid_directory_join_topk.parquet';
+
+# case: hybrid_directory.ordered Rank qualifying rows by distance, route ID and directory ID
+statement ok
+SET SESSION qw_enable_runtime_watchlist = false;
+
+query IITI
+SELECT g.route_id, g.miles, d.destination_name, d.directory_id
+FROM directory_topk_graph g
+JOIN read_parquet(getvariable('qw_directory_join_topk_path')) d USING (destination_id)
+ORDER BY g.miles DESC NULLS LAST, g.route_id, d.directory_id LIMIT 2;
+----
+101	946	Primary	1
+101	946	Secondary	2
+
+statement ok
+SET SESSION qw_enable_runtime_watchlist = true;
+
+query IITI
+SELECT g.route_id, g.miles, d.destination_name, d.directory_id
+FROM directory_topk_graph g
+JOIN read_parquet(getvariable('qw_directory_join_topk_path')) d USING (destination_id)
+ORDER BY g.miles DESC NULLS LAST, g.route_id, d.directory_id LIMIT 2;
+----
+101	946	Primary	1
+101	946	Secondary	2
+
+# case: hybrid_directory.limit_before_join The two highest raw graph rows have no directory match
+query I
+WITH premature AS (
+    FROM directory_topk_graph ORDER BY miles DESC NULLS LAST, route_id LIMIT 2
+)
+SELECT count(*) FROM premature
+JOIN read_parquet(getvariable('qw_directory_join_topk_path')) d USING (destination_id);
+----
+0

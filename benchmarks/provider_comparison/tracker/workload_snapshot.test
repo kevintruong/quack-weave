@@ -22,7 +22,7 @@ SELECT count(*) FROM replay
 WHERE report->>'schedule_sha256' IS DISTINCT FROM sha256(to_json(json_transform(report->'workload_schedule',
   '[{"block":"INTEGER","provider":"VARCHAR","route":"VARCHAR","sequence":[{"case":"VARCHAR","repetition":"INTEGER"}]}]')))
    OR json_array_length(report->'workload_schedule') IS DISTINCT FROM
-      json_array_length(report->'$.micro.providers') * 2 * (report->>'blocks')::INTEGER;
+      json_array_length(coalesce(report->'$.micro.providers', report->'$.application.providers')) * 2 * (report->>'blocks')::INTEGER;
 ----
 0
 
@@ -42,8 +42,12 @@ WHERE evidence IS NULL OR sql IS NULL
    OR evidence->>'sql_sha256' IS DISTINCT FROM sha256(json_extract_string(sql, '$'))
    OR evidence->>'oracle_sha256' IS DISTINCT FROM json_extract_string(json_extract(report->'expected', workload), '$[1]')
    OR NOT coalesce(regexp_full_match(evidence->>'workload_sha256', '[0-9a-f]{64}'), false)
-   OR evidence->>'parameter_trace_sha256' IS DISTINCT FROM sha256(to_json(json_transform(report->'$.micro.relations',
-      '{"messages":[["BIGINT"]],"people":[["BIGINT"]]}')));
+   OR evidence->>'parameter_trace_sha256' IS DISTINCT FROM CASE
+      WHEN json_type(report->'application') = 'OBJECT'
+      THEN sha256(json(json_extract(report->'$.application.parameters', workload))::VARCHAR)
+      ELSE sha256(to_json(json_transform(report->'$.micro.relations',
+          '{"messages":[["BIGINT"]],"people":[["BIGINT"]]}')))
+   END;
 ----
 0
 

@@ -262,6 +262,7 @@ def main():
             "timeout.test_slow", "artifact.test",
             "duckgql_admission.test", "duckgql_aggregates.test", "duckgql_basic.test",
             "duckgql_paths.test", "duckgql_reachability.test", "duckgql_scalars.test",
+            "hybrid_directory_join_topk.test",
         )])
         run_creator_witness(unittest, scratch, lbug, relocated)
         snapshot(lbug, graph, fixtures, after)

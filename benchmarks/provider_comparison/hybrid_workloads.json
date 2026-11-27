@@ -158,6 +158,49 @@
           "case_ids": []
         }
       ]
+    },
+    {
+      "case_id": "directory_join_topk",
+      "case_revision": 1,
+      "sql_template_sha256": "3a5587df1054e6dfa4d8f6d158aa37cf2d1766f878b5249adaf5786b2e2e0520",
+      "result_schema": [
+        [
+          "route_id",
+          "BIGINT"
+        ],
+        [
+          "destination_id",
+          "BIGINT"
+        ],
+        [
+          "directory_id",
+          "BIGINT"
+        ],
+        [
+          "destination_name",
+          "VARCHAR"
+        ]
+      ],
+      "comparison": "ordered",
+      "oracle": {
+        "id": "directory_join_topk_csv",
+        "revision": 1,
+        "encoding": "canonical_json_v1"
+      },
+      "sql_logic_refs": [
+        {
+          "path": "test/stabilization/sqllogic/hybrid_directory_join_topk.test",
+          "case_ids": [
+            "hybrid_directory.setup",
+            "hybrid_directory.ordered",
+            "hybrid_directory.limit_before_join"
+          ]
+        },
+        {
+          "path": "benchmarks/provider_comparison/tracker/workload_snapshot.test",
+          "case_ids": []
+        }
+      ]
     }
   ]
 }

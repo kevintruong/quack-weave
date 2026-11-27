@@ -21,6 +21,7 @@ from uuid import uuid4
 
 import pyarrow as pa
 
+import application_workloads as application
 import micro_workloads as micro
 import run
 import workload_manifest
@@ -30,7 +31,8 @@ from watchlist import SQL as VALUES_JOIN
 
 # A case names one logical workload. Each direct baseline uses native Cypher.
 MICRO_CASES = {name: (sql, name) for name, sql in workload_manifest.micro_statements().items()}
-MICRO_HOST_ROUTE = "qw_pgq_host"
+APPLICATION_CASES = {name: (sql, name) for name, sql in application.statements().items()}
+MICRO_HOST_ROUTE = application.HOST_ROUTE
 STANDALONE = {
     "lookup": (run.POINT, "gql_lookup"),
     "lookup_miss": ("MATCH (p:Person) WHERE p.PersonId = -1 RETURN p.PersonId AS id", "lookup_miss"),
@@ -38,6 +40,7 @@ STANDALONE = {
 }
 HYBRID = {
     **MICRO_CASES,
+    **APPLICATION_CASES,
     "graph_table_where": (run.CASES["graph_table_where"][1], "graph_table_where"),
     "outer_where": (OUTER, "graph_table_where"),
     "view_where": (VIA_VIEW, "graph_table_where"),
@@ -49,7 +52,7 @@ CASES = {**STANDALONE, **HYBRID}
 PREPARED_ROUTE = "qw_prepared_cypher"
 ROUTES = {"direct_cypher": STANDALONE, "qw_gql": STANDALONE,
           "qw_cypher": STANDALONE, PREPARED_ROUTE: STANDALONE, "qw_pgq": HYBRID,
-          MICRO_HOST_ROUTE: MICRO_CASES}
+          MICRO_HOST_ROUTE: {**MICRO_CASES, **APPLICATION_CASES}}
 HISTORY = run.BUILD / "tracker"
 PROTOCOL = 2
 
@@ -87,16 +90,18 @@ def prepared_sql(name):
     return f"SELECT * FROM qw_query({alias}, 'cypher', {statement}, schema := 'id BIGINT')"
 
 
-def fetch_table(fetch, statement, expected_schema=None):
+def fetch_table(fetch, statement, expected_schema=None, *, ordered=False):
     cpu = process_time_ns()
     start = perf_counter_ns()
     table = fetch(statement)
     timing = {"wall_ms": run.milliseconds(start), "cpu_ms": (process_time_ns() - cpu) / 1e6}
     if expected_schema is not None:
-        actual_schema = [[field.name, "BIGINT" if field.type == pa.int64() else str(field.type)]
-                         for field in table.schema]
+        duckdb_types = {pa.int64(): "BIGINT", pa.string(): "VARCHAR", pa.large_string(): "VARCHAR"}
+        actual_schema = [[field.name, duckdb_types.get(field.type, str(field.type))] for field in table.schema]
         if actual_schema != expected_schema:
             raise ValueError(f"Unexpected Hybrid Query result schema: {actual_schema}, expected {expected_schema}")
+    if ordered:
+        return application.signature([list(row.values()) for row in table.to_pylist()]), timing
     for column in table.columns:
         if column.null_count or not (pa.types.is_integer(column.type) or
                                      (pa.types.is_decimal(column.type) and column.type.scale == 0)):
@@ -107,7 +112,8 @@ def fetch_table(fetch, statement, expected_schema=None):
 def python_worker(a, request):
     sequence = schedule(request["cases"], a.block, a.runs)
     statements = {name: CASES[name][0] for name in request["cases"]}
-    record_replay = "micro_relations" in request
+    application_parameters = request.get("application_parameters", {})
+    record_replay = "micro_relations" in request or bool(application_parameters)
     with ExitStack() as stack:
         if a.route == "direct_cypher" and a.provider == "relate":
             from relate import Database
@@ -159,8 +165,17 @@ def python_worker(a, request):
                 setup["bootstrap_ms"] += setup["set_dialect_ms"]
             if "view_where" in request["cases"]:
                 cur.execute("CREATE TEMP VIEW planning_pairs AS SELECT * FROM " + run.PAIRS)
-            if record_replay:
+            if "micro_relations" in request:
                 micro.setup(cur, request["micro_relations"], prefilter=a.route != MICRO_HOST_ROUTE)
+            if application_parameters:
+                start = perf_counter_ns()
+                for name, parameters in application_parameters.items():
+                    directory = Path(request["application_directory"]) / name
+                    for statement in application.setup_sql(
+                        application.CASES[name], parameters, directory, a.route != MICRO_HOST_ROUTE,
+                    ):
+                        cur.execute(statement)
+                setup["application_setup_ms"] = run.milliseconds(start)
 
             def fetch(statement):
                 cur.execute(statement)
@@ -168,7 +183,8 @@ def python_worker(a, request):
 
         samples = []
         for repetition, name in sequence:
-            actual, timing = fetch_table(fetch, statements[name], request.get("schemas", {}).get(name))
+            actual, timing = fetch_table(fetch, statements[name], request.get("schemas", {}).get(name),
+                                         ordered=name in application_parameters)
             check_result(request["expected"], name, actual)
             if record_replay:
                 timing.update(result_rows=int(actual[0]), result_sha256=actual[1])
@@ -225,6 +241,10 @@ def measure_worker(a, provider, route, block, cases, expected):
     if getattr(a, "micro", False):
         payload["micro_relations"] = a.micro_relations
         payload["schemas"] = {name: a.micro_cases[name]["result_schema"] for name in cases}
+    if a.hybrid:
+        payload["application_directory"] = str(a.application_directory)
+        payload["application_parameters"] = {name: a.application_parameters[name] for name in cases}
+        payload["schemas"] = {name: application.CASES[name].SCHEMA for name in cases}
     measured = json.loads(run_process(command, json.dumps(payload), a.timeout))
     return {"block": block, "provider": provider, "route": route, **measured}
 
@@ -300,20 +320,34 @@ def verify_micro(a, report, providers, expected_rows):
 
 
 def benchmark(a):
+    if a.hybrid:
+        with TemporaryDirectory(prefix="qw-hybrid-") as directory:
+            a.application_directory = Path(directory)
+            benchmark_suite(a)
+    else:
+        benchmark_suite(a)
+
+
+def benchmark_suite(a):
     supported_host = (platform.system(), platform.machine()) in {("Darwin", "arm64"), ("Linux", "aarch64")}
     if not supported_host or a.runs < 1 or a.blocks < 2 or a.blocks % 2 or a.timeout <= 0:
         raise ValueError("Use native ARM64 Linux or macOS, positive runs/worker timeout and an even number of blocks >= 2")
     is_micro = getattr(a, "micro", False)
     if a.fixture is None:
-        a.fixture = run.BUILD / ("mod32" if is_micro else "mod1")
-    suite = MICRO_CASES if is_micro else [name for name in CASES if name not in MICRO_CASES]
+        a.fixture = run.BUILD / ("mod32" if is_micro or a.hybrid else "mod1")
+    if a.hybrid:
+        suite = APPLICATION_CASES
+    elif is_micro:
+        suite = MICRO_CASES
+    else:
+        suite = [name for name in CASES if name not in MICRO_CASES and name not in APPLICATION_CASES]
     if set(a.case or []) - set(suite):
-        raise ValueError("Select CM-LDBC cases with --micro and other cases without it")
+        raise ValueError("Select application cases with --hybrid or CM-LDBC cases with --micro")
     cases = [name for name in suite if not a.case or name in a.case]
     providers = sorted(set(a.provider or run.ENGINES))
-    if is_micro:
+    if is_micro or a.hybrid:
         if a.include_prepared:
-            raise ValueError("CM-LDBC measures hybrid SQL without standalone prepared lookups")
+            raise ValueError("Hybrid suites exclude standalone prepared lookups")
         if not a.describe:
             a.duckdb_unittest = a.duckdb_unittest.resolve(strict=True)
     pairing = (a.baseline_extension, a.baseline_revision, a.baseline_out)
@@ -329,6 +363,15 @@ def benchmark(a):
         a.micro_relations, edge_count = micro.fixture_inputs(csv_path)
         rows = micro.expected_rows(micro.edge_rows(csv_path), a.micro_relations)
         expected = {name: run.signature(list(zip(*rows[name]))) for name in cases}
+    elif a.hybrid:
+        a.application_parameters, rows = {}, {}
+        csv_path = a.fixture / "edges.csv"
+        for name in cases:
+            directory = a.application_directory / name
+            directory.mkdir()
+            a.application_parameters[name], rows[name] = application.CASES[name].prepare(csv_path, directory)
+        expected = {name: application.signature(rows[name]) for name in cases}
+        edge_count = sum(1 for _ in micro.edge_rows(csv_path))
     else:
         oracle = run.oracle(a.fixture)
         if any(group[0] == -1 for group in oracle["watchlist_groups"]):
@@ -357,17 +400,21 @@ def benchmark(a):
                            "relate": "1.2.0", **{k: version(k) for k in ("ladybug", "pyarrow", "adbc-driver-manager", "numpy")}},
               "fixture": fixture, "edge_count": edge_count, "duckdb_threads": 1,
               "blocks": a.blocks, "runs": a.runs, "expected": expected,
-              "statements": {n: CASES[n][0] for n in cases}, "watchlist": None if is_micro else run.KEYS}
+              "statements": {n: CASES[n][0] for n in cases}, "watchlist": None if is_micro or a.hybrid else run.KEYS}
     if is_micro:
         common["micro"] = {"source_revision": micro.REVISION, "host_threshold": micro.HOST_THRESHOLD,
                            "relations": a.micro_relations, "providers": providers}
         common["micro_workloads_sha256"] = run.digest(Path(micro.__file__))
+    if a.hybrid:
+        common["application"] = {"providers": providers, "parameters": a.application_parameters}
+    if is_micro or a.hybrid:
         a.micro_cases = workload_manifest.load_manifest()
         common["workload_evidence"] = {
             name: workload_manifest.workload_evidence(
                 a.micro_cases[name], scale=f"mod{fixture['modulus']}",
                 fixture_sha256=fixture["files"]["edges.csv"]["sha256"],
-                sql=common["statements"][name], parameters=a.micro_relations,
+                sql=common["statements"][name],
+                parameters=a.application_parameters[name] if a.hybrid else a.micro_relations,
                 oracle_rows=expected[name][0], oracle_sha256=expected[name][1])
             for name in cases
         }
@@ -418,13 +465,16 @@ def benchmark(a):
     for release, _, report in subjects:
         report["summary"] = summarize(report["workers"])
         report["finished_utc"] = datetime.now(timezone.utc).isoformat()
-        if is_micro:
+        if is_micro or a.hybrid:
             if run.digest(release.extension) != report["binaries"]["extension"]:
                 raise ValueError("QuackWeave extension changed during measurement")
-            report["micro_sqllogic"] = verify_micro(release, report, providers, rows)
+            if a.hybrid:
+                report["application_sqllogic"] = application.verify(release, report, rows, run, a.application_directory)
+            else:
+                report["micro_sqllogic"] = verify_micro(release, report, providers, rows)
             if run.digest(release.extension) != report["binaries"]["extension"]:
                 raise ValueError("QuackWeave extension changed during SQLLogic verification")
-    if is_micro:
+    if is_micro or a.hybrid:
         verify_fixture(a.fixture, fixture)
         if run.digest(a.library) != binaries["duckdb_library"]:
             raise ValueError("DuckDB library changed during measurement")
@@ -445,12 +495,12 @@ def print_summary(path, report):
         print(f"{row['provider']}\t{row['route']}\t{row['case']}\t{row['n']}\t"
               f"{row['p50_ms']:.3f}\t{row['p95_ms']:.3f}\t{ratio}")
 
-    if "micro" in report:
+    if "micro" in report or "application" in report:
         crossings = {}
         for worker in report["workers"]:
             for case, rows in worker["graph_scan_rows"].items():
                 crossings.setdefault((worker["provider"], worker["route"], case), set()).add(rows)
-        print("CM-LDBC provider rows delivered to DuckDB")
+        print("Hybrid provider rows delivered to DuckDB")
         print("provider\troute\tcase\trows_min\trows_max")
         for key, rows in sorted(crossings.items()):
             print(*key, min(rows), max(rows), sep="\t")
@@ -465,6 +515,11 @@ def compare(old, new):
         raise ValueError("Incompatible snapshots: prepared statements differ")
     if before.get("micro") != after.get("micro"):
         raise ValueError("Incompatible snapshots: CM-LDBC inputs differ")
+    if before.get("application") != after.get("application"):
+        raise ValueError("Incompatible snapshots: application inputs differ")
+    if "application" in before and (not before.get("application_sqllogic")
+                                    or before["application_sqllogic"] != after.get("application_sqllogic")):
+        raise ValueError("Incompatible snapshots: application SQLLogic receipts differ")
     sys.path.insert(0, str(Path(__file__).resolve().parent / "tracker"))
     try:
         from ci import verify_workload_replay
@@ -505,10 +560,12 @@ def main():
         cmd.add_argument("--runs", type=int, default=5)
     measure.add_argument("--provider", action="append", choices=run.ENGINES)
     measure.add_argument("--case", action="append", choices=CASES)
-    measure.add_argument("--micro", action="store_true", help="Measure the CM-LDBC hybrid workload suite")
+    suite = measure.add_mutually_exclusive_group()
+    suite.add_argument("--micro", action="store_true", help="Measure the CM-LDBC hybrid workload suite")
+    suite.add_argument("--hybrid", action="store_true", help="Measure the application Hybrid Query workloads")
     measure.add_argument("--duckdb-unittest", type=Path,
                          default=Path(os.environ.get("DUCKDB_UNITTEST", run.ROOT / "build/benchmark-host/unittest")),
-                         help="Pinned SQLLogic runner for the CM-LDBC workload and snapshot gates")
+                         help="Pinned SQLLogic runner for the Hybrid workload and snapshot gates")
     measure.add_argument("--include-prepared", action="store_true",
                          help="Also time reused explicit-schema qw_query Cypher statements")
     measure.add_argument("--out", type=Path, help="New JSON file (default: timestamped history)")
