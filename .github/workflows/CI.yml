@@ -172,6 +172,8 @@ jobs:
       - uses: ./.github/actions/native-setup
       - name: Build native stabilization packages at the CI checkout
         run: env -u MACOSX_DEPLOYMENT_TARGET make native native-release
+      - name: Build the native Ladybug cloud test package
+        run: env -u MACOSX_DEPLOYMENT_TARGET make native-ladybug-cloud-package NATIVE_CLOUD_CARGO_DIR=target/native
       - name: Build the observer test executables
         shell: bash
         run: |
@@ -195,6 +197,7 @@ jobs:
             build/observer-tests/
             build/native/debug/extension/quack_weave/
             build/native/release/extension/quack_weave/
+            build/native/test-cloud/extension/quack_weave/
           if-no-files-found: error
           retention-days: 30
 
@@ -252,6 +255,18 @@ jobs:
         run: |
           chmod +x build/observer-tests/{rusty_quack,rusty_quack_core}
           make native-stabilization-test-prebuilt OBSERVER_TEST_DIR="$PWD/build/observer-tests"
+
+      - name: Verify native Ladybug cloud reads
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            platform=linux_arm64
+          else
+            platform=osx_arm64
+          fi
+          httpfs="$RUNNER_TEMP/httpfs.duckdb_extension"
+          curl --fail --location --retry 3 \
+            "https://extensions.duckdb.org/v2.0.1/$platform/httpfs.duckdb_extension.gz" | gzip -dc > "$httpfs"
+          make native-ladybug-cloud-test-prebuilt DUCKDB_HTTPFS="$httpfs" 2>&1 | tee build/stabilization-reports/ladybug-cloud.log
 
       - name: Verify public graph results through Apache Arrow ADBC
         run: |

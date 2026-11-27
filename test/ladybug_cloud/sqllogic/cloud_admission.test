@@ -1,0 +1,53 @@
+# name: test/ladybug_cloud/sqllogic/cloud_admission.test
+# description: Ladybug cloud admission rejects unavailable credentials before contacting object storage
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_LOAD_DUCKDB_HTTPFS UNSET_QW_LOAD_DUCKDB_HTTPFS
+
+# case: ladybug_cloud.secret_admission Registration checks the gate and credential scope before network I/O
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+{QW_LOAD_DUCKDB_HTTPFS};
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"s3://qw-s3-fixture/snapshots/graph.lbdb","secret":"routes"}';
+----
+QW_ACCESS
+
+statement ok
+SET GLOBAL qw_enable_remote_graphs = true;
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"s3://qw-s3-fixture/snapshots/graph.lbdb","secret":"routes"}';
+----
+QW_AUTH
+
+statement ok
+CREATE SECRET routes IN connection
+    (TYPE s3, KEY_ID 'qw-s3-fixture', SECRET 'qw-s3-fixture-key', REGION 'us-east-1',
+     SCOPE 's3://qw-s3-fixture/snapshots/');
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"s3://qw-s3-fixture/snapshots-other/graph.lbdb","secret":"routes"}';
+----
+QW_AUTH
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"gs://qw-gcs-fixture/snapshots/graph.lbdb","secret":"routes"}';
+----
+QW_AUTH
+
+# case: ladybug_cloud.azure_pending Unqualified Ladybug Azure attachment fails closed
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"az://qw-azure-fixture/snapshots/graph.lbdb","secret":"routes"}';
+----
+QW_CONFIG
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"abfss://qw-azure-fixture/snapshots/graph.lbdb","secret":"routes"}';
+----
+QW_CONFIG

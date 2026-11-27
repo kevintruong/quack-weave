@@ -3,6 +3,7 @@
 .PHONY: clean clean_all native native-release native-deps native-test
 .PHONY: native-stabilization-test native-stabilization-test-prebuilt public-client-test public-client-test-prebuilt
 .PHONY: native-provider-test native-neo4j-tls-test benchmark-engine-timing
+.PHONY: native-ladybug-cloud-package native-ladybug-cloud-test native-ladybug-cloud-test-prebuilt
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -57,9 +58,11 @@ NATIVE_LIBRARY := librusty_quack.$(NATIVE_SUFFIX)
 CARGO_BUILD_ROOT := $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),target)
 NATIVE_CARGO_DIR ?= $(CARGO_BUILD_ROOT)/native
 NATIVE_TLS_CARGO_DIR ?= $(CARGO_BUILD_ROOT)/native-test-tls
+NATIVE_CLOUD_CARGO_DIR ?= $(CARGO_BUILD_ROOT)/native-test-cloud
 NATIVE_DEBUG_ARTIFACT ?= build/native/debug/extension/quack_weave/quack_weave.duckdb_extension
 NATIVE_RELEASE_ARTIFACT ?= build/native/release/extension/quack_weave/quack_weave.duckdb_extension
 NEO4J_TLS_TEST_ARTIFACT := build/native/test-tls/extension/quack_weave/quack_weave.duckdb_extension
+LADYBUG_CLOUD_TEST_ARTIFACT := build/native/test-cloud/extension/quack_weave/quack_weave.duckdb_extension
 
 PYTHON_BIN ?= python3
 DUCKDB ?= duckdb
@@ -107,10 +110,18 @@ native-provider-test: native-release
 	$(call build_native,$(NATIVE_CARGO_DIR),--release --example relate_fixture)
 	$(PYTHON_BIN) -B test/relate/run.py --duckdb-unittest '$(DUCKDB_UNITTEST)' --fixture-builder '$(NATIVE_CARGO_DIR)/$(NATIVE_TARGET)/release/examples/relate_fixture' --extension '$(NATIVE_RELEASE_ARTIFACT)' --lbug '$(LBUG)'
 	$(MAKE) native-neo4j-tls-test
+	$(MAKE) native-ladybug-cloud-test
 
 native-neo4j-tls-test:
 	$(call package_native,$(NATIVE_TLS_CARGO_DIR),,debug,$(NEO4J_TLS_TEST_ARTIFACT),neo4j-test-fixture)
 	$(PYTHON_BIN) -B test/neo4j/run.py --duckdb-unittest '$(DUCKDB_UNITTEST)' --extension '$(NEO4J_TLS_TEST_ARTIFACT)'
+
+native-ladybug-cloud-package:
+	$(call package_native,$(NATIVE_CLOUD_CARGO_DIR),--release,release,$(LADYBUG_CLOUD_TEST_ARTIFACT),ladybug-cloud-test-fixture)
+
+native-ladybug-cloud-test: native-ladybug-cloud-package
+native-ladybug-cloud-test native-ladybug-cloud-test-prebuilt:
+	$(PYTHON_BIN) -B test/ladybug_cloud/run.py --duckdb-unittest '$(DUCKDB_UNITTEST)' --lbug '$(LBUG)' --extension '$(LADYBUG_CLOUD_TEST_ARTIFACT)' $(if $(DUCKDB_HTTPFS),--duckdb-httpfs '$(DUCKDB_HTTPFS)')
 
 native-test: native native-release
 	$(call check_native,$(NATIVE_DEBUG_ARTIFACT))

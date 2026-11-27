@@ -7,7 +7,8 @@ from hashlib import sha256
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hmac
 import re
-from threading import Thread
+from threading import Event, Thread
+from time import monotonic
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -19,6 +20,7 @@ class Object:
     secret: str
     token: str | None = None
     wal: bytes | Literal[403, 404] = 404
+    hold_wal_head: Event | None = None
 
 
 def signed_request_matches(method, path, headers, obj):
@@ -60,6 +62,7 @@ class Store(ThreadingHTTPServer):
         self.objects = objects
         self.requests = Counter()
         self.range_lengths = Counter()
+        self.held_wal_heads = {}
         self.unexpected = []
         super().__init__(("127.0.0.1", 0), ReadOnlyRequest)
         self.endpoint = f"127.0.0.1:{self.server_port}"
@@ -114,6 +117,10 @@ class ReadOnlyRequest(BaseHTTPRequestHandler):
         if not signed_request_matches(self.command, path, self.headers, obj):
             self.reject(403, "unexpected fixture credentials")
             return
+        if sidecar and self.command == "HEAD" and obj.hold_wal_head is not None:
+            self.server.held_wal_heads.setdefault(path, monotonic())
+            if obj.hold_wal_head.wait(timeout=2):
+                return
         data = obj.wal if sidecar else obj.data
         if isinstance(data, int):
             if self.command != "HEAD":

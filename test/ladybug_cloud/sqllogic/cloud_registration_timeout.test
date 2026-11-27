@@ -1,0 +1,27 @@
+# name: test/ladybug_cloud/sqllogic/cloud_registration_timeout.test
+# description: Bound a native Ladybug cloud registration that stalls during WAL metadata lookup
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+test-env QW_LOAD_DUCKDB_HTTPFS UNSET_QW_LOAD_DUCKDB_HTTPFS
+
+# case: ladybug_cloud.registration_timeout A stalled signed HEAD exhausts the registration deadline
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+{QW_LOAD_DUCKDB_HTTPFS};
+
+statement ok
+SET GLOBAL qw_enable_remote_graphs = true;
+
+statement ok
+CREATE SECRET s3_reader IN connection
+    (TYPE s3, KEY_ID 'qw-s3-fixture', SECRET 'qw-s3-fixture-key', REGION 'us-east-1',
+     SESSION_TOKEN 'qw-s3-fixture-token', SCOPE 's3://qw-s3-fixture/snapshots/');
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"slow_graph","path":"s3://qw-s3-fixture/snapshots/slow.lbdb","secret":"s3_reader","timeout_ms":50}';
+----
+QW_TIMEOUT
