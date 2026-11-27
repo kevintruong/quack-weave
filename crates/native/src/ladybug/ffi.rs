@@ -82,6 +82,17 @@ unsafe extern "C" {
     ) -> c_int;
     #[cfg(not(test))]
     pub(super) fn qw_ladybug_is_graph_read(text: *const c_char) -> bool;
+    pub(super) fn qw_ladybug_set_extension_string(
+        connection: *mut ConnectionHandle,
+        option: *const c_char,
+        value: *const u8,
+        length: usize,
+    ) -> bool;
+    pub(super) fn qw_ladybug_set_extension_bool(
+        connection: *mut ConnectionHandle,
+        option: *const c_char,
+        value: bool,
+    ) -> bool;
 
     pub(super) fn lbug_database_destroy(database: *mut DatabaseHandle);
     pub(super) fn lbug_connection_init(

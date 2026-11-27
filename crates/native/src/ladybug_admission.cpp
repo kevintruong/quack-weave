@@ -1,6 +1,8 @@
 #include "c_api/lbug.h"
 #include "catalog/catalog.h"
 #include "catalog/catalog_entry/rel_group_catalog_entry.h"
+#include "catalog/schema_graph.h"
+#include "main/client_context.h"
 #include "main/connection.h"
 #include "main/database_manager.h"
 #include "storage/storage_manager.h"
@@ -45,6 +47,61 @@ extern "C" lbug_state qw_ladybug_open_database(const char* path, bool read_only,
         return lbug_database_init(path, config, database);
     } catch (...) {
         return LbugError;
+    }
+}
+
+extern "C" bool qw_ladybug_set_extension_string(lbug_connection* handle, const char* option,
+    const char* value, size_t length) noexcept {
+    try {
+        auto* connection = static_cast<lbug::main::Connection*>(handle->_connection);
+        auto* context = connection->getClientContext();
+        if (!context->getExtensionOption(option)) {
+            return false;
+        }
+        context->setExtensionOption(option, lbug::common::Value(std::string(value, length)));
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+// Visit the attached catalog directly. Its labels are data and may contain dots
+// or quotes, and a relationship with no user properties still has a catalog entry.
+extern "C" bool qw_ladybug_attached_catalog(lbug_connection* handle, const char* alias,
+    void* output, bool (*visit)(void*, const char*, const char*, const char*)) noexcept {
+    try {
+        auto& context = *static_cast<lbug::main::Connection*>(handle->_connection)->getClientContext();
+        auto* attached = lbug::main::DatabaseManager::Get(context)->getAttachedDatabase(alias);
+        auto* txn = lbug::transaction::Transaction::Get(context);
+        for (auto* table : attached->getCatalog()->getTableEntries(txn, false)) {
+            const auto& label = table->getName();
+            if (lbug::catalog::isSchemaGraphTableName(label)) continue;
+            if (!visit(output, label.c_str(), nullptr, nullptr)) return false;
+            for (const auto& property : table->getProperties()) {
+                if (table->getType() == lbug::catalog::CatalogEntryType::REL_GROUP_ENTRY &&
+                    property.getName() == lbug::common::InternalKeyword::ID) continue;
+                if (!visit(output, label.c_str(), property.getName().c_str(),
+                         property.getType().toString().c_str())) return false;
+            }
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+extern "C" bool qw_ladybug_set_extension_bool(lbug_connection* handle, const char* option,
+    bool value) noexcept {
+    try {
+        auto* connection = static_cast<lbug::main::Connection*>(handle->_connection);
+        auto* context = connection->getClientContext();
+        if (!context->getExtensionOption(option)) {
+            return false;
+        }
+        context->setExtensionOption(option, lbug::common::Value(value));
+        return true;
+    } catch (...) {
+        return false;
     }
 }
 

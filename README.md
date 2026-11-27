@@ -62,6 +62,27 @@ Run the package and runtime acceptance checks with the pinned CLIs.
 make native-test DUCKDB=/path/to/duckdb-v2.0.1 LBUG=/path/to/lbug-v0.23.0
 ```
 
+### Query a Ladybug snapshot in S3 or Google Cloud Storage
+
+Publish a checkpointed `.lbdb` to a new object key and keep that key readable while admitted queries can still use it. Grant the runtime identity read access to the object and let it distinguish an absent WAL sidecar from an authorization failure. On S3, a missing key returns 404 only when the identity has `s3:ListBucket` on the bucket. A 403 aborts registration. The reader needs no write permissions. The native Ladybug adapter attaches the object through its embedded HTTPFS and runs GQL translated to Cypher or authored Cypher. DuckDB evaluates the surrounding SQL.
+
+Provision a connection-scoped DuckDB `s3` or `gcs` secret with an explicit object URI or a bucket prefix ending in `/`. Load DuckDB's `httpfs` to register the secret type. Use an AWS region for S3 and interoperability HMAC credentials for GCS. The following example assumes that the executing connection already has a secret named `analytics_graph`.
+
+```sql
+SET GLOBAL qw_enable_remote_graphs = true;
+SET GLOBAL qw_ladybug_config = '{
+  "alias": "creator_graph",
+  "path": "s3://analytics-graphs/snapshots/creator-v1.lbdb",
+  "secret": "analytics_graph"
+}';
+SESSION SET GRAPH creator_graph;
+
+MATCH (c:Creator)-[e:AUTHORED]->(p:Post)
+RETURN c.id AS creator_id, p.id AS post_id;
+```
+
+Cloud HTTPS uses the OpenSSL trust store. Set `SSL_CERT_FILE` to a trusted CA bundle when the build-time default is unavailable. Ladybug applies its query timeout to each statement and bounds individual HTTP requests. Use a `gs://` URI for GCS. Create the scoped secret on each querying connection. Replacing a snapshot requires a new key and registration. Cloud snapshots use the host SQL route, including for `GRAPH_TABLE` joins. Azure Blob Storage and ADLS graph attachments are pending random-access support in the Ladybug Azure extension. [Cloud execution architecture](docs/core-native-architecture.ipynb)
+
 ### Query a RelateDB graph alongside Ladybug
 
 Register an existing, checkpointed, single-file `.rl` bundle after you load QuackWeave. [Pinned RelateDB source](https://github.com/relatedb/relate/tree/v1.2.0)

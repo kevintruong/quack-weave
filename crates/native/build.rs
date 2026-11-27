@@ -188,6 +188,7 @@ fn build_duckdb_shims(manifest: &Path, out: &Path, neo4j: bool) {
     ]
     .map(|file| grammar.join(file))
     .to_vec();
+    sources.push(manifest.join("src/ladybug_cloud_secret.cpp"));
     if neo4j {
         sources.push(manifest.join("src/neo4j_secret.cpp"));
     }

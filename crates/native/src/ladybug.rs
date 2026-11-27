@@ -2,14 +2,16 @@ use std::ffi::{CStr, CString};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use duckdb_neo::connection::Context;
 use rusty_quack_core::qw_query::{
-    BackendError, Batch, BatchReader, ColumnData, ColumnSpec, GraphCatalog, GraphGeneration,
-    GraphParameter, GraphPopulations, OrderedWatchlistLimit, PreparedRegistration, ReadBackend,
-    ReadSession, RetiredRegistration, ScalarType,
+    BackendError, Batch, BatchReader, CloudSource, CloudStorage, ColumnData, ColumnSpec,
+    GraphCatalog, GraphGeneration, GraphParameter, GraphPopulations, OrderedWatchlistLimit,
+    PreparedRegistration, ReadBackend, ReadSession, RetiredRegistration, ScalarType,
 };
 
 mod arrow;
 mod catalog;
+mod cloud;
 mod ffi;
 
 #[derive(Default)]
@@ -145,6 +147,31 @@ impl ReadBackend for LadybugBackend {
     ) -> Result<Box<dyn ReadSession>, BackendError> {
         Session::connect(self.database(path, generation)?, timeout_ms, schema)
     }
+
+    fn supports_cloud_storage(&self, storage: CloudStorage) -> bool {
+        matches!(storage, CloudStorage::S3 | CloudStorage::Gcs)
+    }
+
+    fn cloud_catalog(
+        &self,
+        context: &Context,
+        source: &CloudSource,
+        timeout_ms: Option<u64>,
+    ) -> Result<GraphCatalog, BackendError> {
+        cloud::catalog(context, source, timeout_ms)
+    }
+
+    fn open_cloud(
+        &self,
+        context: &Context,
+        source: &CloudSource,
+        timeout_ms: Option<u64>,
+        schema: &[ColumnSpec],
+    ) -> Result<Box<dyn ReadSession>, BackendError> {
+        Ok(Box::new(cloud::Pending::new(
+            context, source, timeout_ms, schema,
+        )?))
+    }
 }
 
 impl Session {
@@ -153,6 +180,18 @@ impl Session {
         timeout_ms: Option<u64>,
         schema: &[ColumnSpec],
     ) -> Result<Box<dyn ReadSession>, BackendError> {
+        Ok(Box::new(Self::connect_native(
+            database,
+            timeout_ms,
+            schema.iter().any(|column| column.data_type.is_nested()),
+        )?))
+    }
+
+    fn connect_native(
+        database: Arc<Mutex<Database>>,
+        timeout_ms: Option<u64>,
+        nested: bool,
+    ) -> Result<Self, BackendError> {
         let mut connection = {
             let mut handle = database.lock().map_err(|_| BackendError::Open)?;
             Connection::open(&mut handle)?
@@ -164,12 +203,12 @@ impl Session {
                 return Err(BackendError::Open);
             }
         }
-        Ok(Box::new(Session {
+        Ok(Session {
             connection,
             _database: database,
-            nested: schema.iter().any(|column| column.data_type.is_nested()),
+            nested,
             timeout_ms,
-        }))
+        })
     }
 }
 
@@ -187,18 +226,29 @@ unsafe impl Send for Session {}
 
 impl ReadSession for Session {
     fn execute_with_params(
-        mut self: Box<Self>,
+        self: Box<Self>,
         cypher: &str,
         params: &[(String, GraphParameter)],
     ) -> Result<Box<dyn BatchReader>, BackendError> {
-        let cypher = CString::new(cypher).map_err(|_| BackendError::Admission)?;
+        self.execute_admitted(&admit_graph_read(cypher)?, params)
+    }
+}
 
-        // Parse before prepare. Native read-only mode deliberately permits some standalone
-        // commands and does not by itself establish a row-returning graph statement.
-        if !unsafe { ffi::qw_ladybug_is_graph_read(cypher.as_ptr()) } {
-            return Err(BackendError::Admission);
-        }
+fn admit_graph_read(cypher: &str) -> Result<CString, BackendError> {
+    let cypher = CString::new(cypher).map_err(|_| BackendError::Admission)?;
+    // Native read-only mode also permits some standalone commands. Require a graph read.
+    if !unsafe { ffi::qw_ladybug_is_graph_read(cypher.as_ptr()) } {
+        return Err(BackendError::Admission);
+    }
+    Ok(cypher)
+}
 
+impl Session {
+    fn execute_admitted(
+        mut self: Box<Self>,
+        cypher: &CStr,
+        params: &[(String, GraphParameter)],
+    ) -> Result<Box<dyn BatchReader>, BackendError> {
         let mut prepared = PreparedStatement::default();
         let status = unsafe {
             ffi::lbug_connection_prepare(&mut self.connection.0, cypher.as_ptr(), &mut prepared.0)

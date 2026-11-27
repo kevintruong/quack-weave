@@ -265,7 +265,7 @@ def main():
             "graph_aggregate_pushdown.test", "table_watchlist.test", "hybrid_public.test",
             "graph_parameters.test", "declared_bindings.test", "graph_values.test",
             "bind.test", "admission.test", "scan.test", "host_access.test", "remote_policy.test", "limits.test",
-            "ladybug_cloud_config.test",
+            "ladybug_cloud_config.test", "ladybug_cloud_credentials.test",
             "timeout.test_slow", "artifact.test",
             "duckgql_admission.test", "duckgql_aggregates.test", "duckgql_basic.test",
             "duckgql_paths.test", "duckgql_reachability.test", "duckgql_scalars.test",
