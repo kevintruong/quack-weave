@@ -85,6 +85,22 @@ Registration opens the cloud snapshot once on the registering DuckDB connection.
 
 Cloud HTTPS uses the OpenSSL trust store. Set `SSL_CERT_FILE` to a trusted CA bundle when the build-time default is unavailable. Ladybug applies its query timeout to each statement and bounds individual HTTP requests. Use a `gs://` URI for GCS. Replacing a snapshot requires a new key and registration. Cloud snapshots use the host SQL route, including for `GRAPH_TABLE` joins. Azure Blob Storage and ADLS graph attachments are pending random-access support in the Ladybug Azure extension. [Cloud execution architecture](docs/core-native-architecture.ipynb)
 
+### Query a public Ladybug snapshot on Hugging Face
+
+Use `xet://datasets/<owner>/<repo>/<40-hex-commit>/<path>.lbdb` for a public, checkpointed graph in a Hugging Face dataset. Omit the `secret` field. Embedded Ladybug reads the pinned file over HTTPS, and sequential scans on the same DuckDB connection reuse the attachment. Both DuckDB external access and QuackWeave remote graphs must be enabled.
+
+```sql
+SET GLOBAL qw_enable_remote_graphs = true;
+SET GLOBAL qw_ladybug_config = '{
+  "alias": "public_graph",
+  "path": "xet://datasets/ladybugdb/small-kgs/9f306f6d19d191f4be480e04ed6dbcbe1e513782/kg_history/lbdb/kg_history.lbdb"
+}';
+SELECT edge_count FROM qw_query('public_graph', 'cypher',
+    'MATCH ()-[r]->() RETURN count(r) AS edge_count', schema := 'edge_count BIGINT');
+```
+
+This revision contains 207 relationships. Run `make native-ladybug-xet-live-test-prebuilt` with the pinned DuckDB test runner and release extension to check the count, projected types and all 16 ordered `proposed` edges against Hugging Face. [Live SQLLogic test](test/ladybug_cloud/sqllogic/xet_huggingface_public.test)
+
 ### Query a RelateDB graph alongside Ladybug
 
 Register an existing, checkpointed, single-file `.rl` bundle after you load QuackWeave. [Pinned RelateDB source](https://github.com/relatedb/relate/tree/v1.2.0)

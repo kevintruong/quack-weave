@@ -1,0 +1,56 @@
+# name: test/ladybug_cloud/sqllogic/xet_huggingface_public.test
+# description: Query the immutable public kg_history graph through the packaged Ladybug provider
+# group: [quack_weave]
+
+test-env QW_EXT UNSET_QW_EXT
+
+query TT
+SELECT library_version, source_id FROM pragma_version();
+----
+v2.0.1	8d78114e90
+
+statement ok
+LOAD '{QW_EXT}';
+
+statement ok
+SET GLOBAL qw_enable_remote_graphs = true;
+
+statement ok
+SET GLOBAL qw_ladybug_config = '{"alias":"public_graph","path":"xet://datasets/ladybugdb/small-kgs/9f306f6d19d191f4be480e04ed6dbcbe1e513782/kg_history/lbdb/kg_history.lbdb"}';
+
+query I
+SELECT edge_count FROM qw_query('public_graph', 'cypher',
+    'MATCH ()-[r]->() RETURN count(r) AS edge_count', schema := 'edge_count BIGINT');
+----
+207
+
+query TT
+SELECT typeof(person_id), typeof(concept_id)
+FROM GRAPH_TABLE (public_graph MATCH (p:person)-[r:proposed]->(c:concept)
+    COLUMNS (p.id AS person_id, c.id AS concept_id)) AS g LIMIT 1;
+----
+BIGINT	BIGINT
+
+# Expected pairs from the nodes, offsets and targets in the same revision's icebug-disk export.
+query II
+SELECT person_id, concept_id
+FROM GRAPH_TABLE (public_graph MATCH (p:person)-[r:proposed]->(c:concept)
+    COLUMNS (p.id AS person_id, c.id AS concept_id)) AS g
+ORDER BY person_id, concept_id;
+----
+1	402
+1	403
+1	403
+1	406
+1	408
+1	414
+2	401
+3	401
+3	401
+5	407
+6	401
+7	405
+8	401
+14	401
+15	416
+16	415

@@ -4,6 +4,7 @@
 .PHONY: native-stabilization-test native-stabilization-test-prebuilt public-client-test public-client-test-prebuilt
 .PHONY: native-provider-test native-neo4j-tls-test benchmark-engine-timing
 .PHONY: native-ladybug-cloud-package native-ladybug-cloud-test native-ladybug-cloud-test-prebuilt
+.PHONY: native-ladybug-xet-live-test-prebuilt
 
 PROJ_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -122,6 +123,10 @@ native-ladybug-cloud-package:
 native-ladybug-cloud-test: native-ladybug-cloud-package
 native-ladybug-cloud-test native-ladybug-cloud-test-prebuilt:
 	$(PYTHON_BIN) -B test/ladybug_cloud/run.py --duckdb-unittest '$(DUCKDB_UNITTEST)' --lbug '$(LBUG)' --extension '$(LADYBUG_CLOUD_TEST_ARTIFACT)' $(if $(DUCKDB_HTTPFS),--duckdb-httpfs '$(DUCKDB_HTTPFS)')
+
+native-ladybug-xet-live-test-prebuilt:
+	@mkdir -p build/ladybug-xet-live
+	QW_EXT='$(abspath $(NATIVE_RELEASE_ARTIFACT))' '$(DUCKDB_UNITTEST)' --test-dir '$(CURDIR)/build/ladybug-xet-live' --env-passthrough QW_EXT --emit-test-events --stdin < test/ladybug_cloud/sqllogic/xet_huggingface_public.test
 
 native-test: native native-release
 	$(call check_native,$(NATIVE_DEBUG_ARTIFACT))
