@@ -165,7 +165,10 @@ impl ReadBackend for LadybugBackend {
     }
 
     fn supports_cloud_storage(&self, storage: CloudStorage) -> bool {
-        matches!(storage, CloudStorage::S3 | CloudStorage::Gcs)
+        matches!(
+            storage,
+            CloudStorage::S3 | CloudStorage::Gcs | CloudStorage::Xet
+        )
     }
 
     fn prepare_cloud_registration<'a>(

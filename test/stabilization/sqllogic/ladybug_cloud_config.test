@@ -36,3 +36,53 @@ statement error
 SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"gs://example-graphs/snapshots/v1.lbdb"}';
 ----
 QW_CONFIG: A Ladybug cloud graph requires a nonempty secret name
+
+# case: ladybug_cloud_config.xet_policy Admit only secretless, revision-pinned public Hugging Face dataset snapshots
+statement ok
+SET GLOBAL qw_enable_remote_graphs = false;
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"xet://datasets/example-owner/example-repo/0123456789abcdef0123456789abcdef01234567/demo.lbdb"}';
+----
+QW_ACCESS: Remote graph reads require SET GLOBAL qw_enable_remote_graphs = true
+
+statement ok
+SET GLOBAL qw_enable_remote_graphs = true;
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"xet://datasets/example-owner/example-repo/main/demo.lbdb"}';
+----
+QW_CONFIG: Expected a revision-pinned public Hugging Face Xet snapshot URI
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"xet://huggingface.co/datasets/example-owner/example-repo/resolve/0123456789abcdef0123456789abcdef01234567/demo.lbdb"}';
+----
+QW_CONFIG: Expected a revision-pinned public Hugging Face Xet snapshot URI
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"hf://datasets/example-owner/example-repo/0123456789abcdef0123456789abcdef01234567/demo.lbdb"}';
+----
+QW_CONFIG: Unsupported Ladybug cloud storage scheme
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"xet://datasets/example-owner/example-repo/0123456789abcdef0123456789abcdef01234567/demo.lbdb?download=true"}';
+----
+QW_CONFIG: Expected a revision-pinned public Hugging Face Xet snapshot URI
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"xet://datasets/example-owner/example-repo/0123456789abcdef0123456789abcdef01234567/demo.lbdb","secret":"unused_graph_secret"}';
+----
+QW_CONFIG: Public Hugging Face Xet snapshots do not accept a secret
+
+query I
+SELECT count(*) FROM qw_graph_providers() WHERE active_alias = 'cloud_graph';
+----
+0
+
+statement ok
+SET enable_external_access = false;
+
+statement error
+SET GLOBAL qw_ladybug_config = '{"alias":"cloud_graph","path":"xet://datasets/example-owner/example-repo/0123456789abcdef0123456789abcdef01234567/demo.lbdb"}';
+----
+QW_ACCESS: Remote graph reads require DuckDB external access

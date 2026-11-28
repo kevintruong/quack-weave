@@ -88,12 +88,13 @@ unsafe extern "C" fn copy_credential(state: *mut c_void, fields: SecretFields) {
 
 impl Credential {
     fn resolve(context: &Context, source: &CloudSource) -> Result<Self, BackendError> {
+        let secret = source.secret.as_deref().ok_or(BackendError::RemoteConfig)?;
         let mut result = None::<Self>;
         let found = unsafe {
             qw_visit_ladybug_cloud_secret(
                 context.get_raw().cast(),
-                source.secret.as_ptr(),
-                source.secret.len(),
+                secret.as_ptr(),
+                secret.len(),
                 source.uri.as_ptr(),
                 source.uri.len(),
                 source.storage == CloudStorage::Gcs,
@@ -108,16 +109,22 @@ impl Credential {
     }
 }
 
+#[derive(PartialEq, Eq)]
 struct Endpoint {
+    prefix: &'static str,
     host: String,
     disable_ssl: bool,
 }
 
 impl Endpoint {
     fn new(storage: CloudStorage, region: &str) -> Result<Self, BackendError> {
-        if storage == CloudStorage::S3 && !valid_region(region) {
-            return Err(BackendError::RemoteConfig);
-        }
+        let (prefix, host) = match storage {
+            CloudStorage::S3 if valid_region(region) => {
+                ("s3", format!("s3.{region}.amazonaws.com"))
+            }
+            CloudStorage::Gcs => ("gcs", "storage.googleapis.com".to_owned()),
+            _ => return Err(BackendError::RemoteConfig),
+        };
         #[cfg(feature = "ladybug-cloud-test-fixture")]
         if let Ok(host) = std::env::var("QW_LADYBUG_CLOUD_FIXTURE_ENDPOINT") {
             if host
@@ -127,20 +134,60 @@ impl Endpoint {
                 .is_some_and(|port| port != 0)
             {
                 return Ok(Self {
+                    prefix,
                     host,
                     disable_ssl: true,
                 });
             }
             return Err(BackendError::RemoteConfig);
         }
-        let host = match storage {
-            CloudStorage::S3 => format!("s3.{region}.amazonaws.com"),
-            CloudStorage::Gcs => "storage.googleapis.com".to_owned(),
-        };
         Ok(Self {
+            prefix,
             host,
             disable_ssl: false,
         })
+    }
+}
+
+#[derive(PartialEq, Eq)]
+struct ObjectStoreAuth {
+    credential: Credential,
+    endpoint: Endpoint,
+}
+
+impl ObjectStoreAuth {
+    fn resolve(context: &Context, source: &CloudSource) -> Result<Option<Self>, BackendError> {
+        if source.storage == CloudStorage::Xet {
+            return source
+                .secret
+                .is_none()
+                .then_some(None)
+                .ok_or(BackendError::RemoteConfig);
+        }
+        let credential = Credential::resolve(context, source)?;
+        let endpoint = Endpoint::new(source.storage, &credential.region)?;
+        Ok(Some(Self {
+            credential,
+            endpoint,
+        }))
+    }
+
+    fn configure(&self, connection: &mut Connection) -> Result<(), BackendError> {
+        let prefix = self.endpoint.prefix;
+        for (setting, value) in [
+            ("access_key_id", self.credential.key_id.as_str()),
+            ("secret_access_key", self.credential.secret.as_str()),
+            ("session_token", self.credential.token.as_str()),
+            ("url_style", "path"),
+            ("endpoint", self.endpoint.host.as_str()),
+        ] {
+            set_string(connection, prefix, setting, value)?;
+        }
+        if prefix == "s3" {
+            set_string(connection, prefix, "region", &self.credential.region)?;
+        }
+        let ssl = CString::new(format!("{prefix}_disable_ssl")).map_err(|_| BackendError::Open)?;
+        set_bool(connection, &ssl, self.endpoint.disable_ssl)
     }
 }
 
@@ -158,21 +205,21 @@ fn valid_region(region: &str) -> bool {
         && number.bytes().all(|b| b.is_ascii_digit())
 }
 
-// Each generation owns one slot per DuckDB ClientContext. A rotated credential
-// replaces the slot, so an already-admitted scan cannot repopulate its successor.
+// Each generation owns one slot per DuckDB ClientContext. Changed authentication
+// replaces the slot, so an admitted scan cannot repopulate its successor.
 #[derive(Default)]
 pub(super) struct Cache(Mutex<HashMap<u64, Arc<Slot>>>);
 
 impl Cache {
-    fn select(&self, id: u64, uri: &str, credential: Credential) -> Arc<Slot> {
+    fn select(&self, id: u64, uri: &str, auth: Option<ObjectStoreAuth>) -> Arc<Slot> {
         let mut slots = self.0.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(slot) = slots.get(&id)
             && slot.uri == uri
-            && slot.credential == credential
+            && slot.auth == auth
         {
             return Arc::clone(slot);
         }
-        let slot = Slot::new(uri, credential);
+        let slot = Slot::new(uri, auth);
         let retired = slots.insert(id, Arc::clone(&slot));
         drop(slots);
         drop(retired);
@@ -187,23 +234,21 @@ impl Cache {
 
 struct Slot {
     uri: String,
-    credential: Credential,
+    auth: Option<ObjectStoreAuth>,
     database: Mutex<Option<Arc<Mutex<Database>>>>,
 }
 
 impl Slot {
-    fn new(uri: &str, credential: Credential) -> Arc<Self> {
+    fn new(uri: &str, auth: Option<ObjectStoreAuth>) -> Arc<Self> {
         Arc::new(Self {
             uri: uri.to_owned(),
-            credential,
+            auth,
             database: Mutex::default(),
         })
     }
 }
 
 pub(super) struct Pending {
-    storage: CloudStorage,
-    endpoint: Endpoint,
     slot: Arc<Slot>,
     timeout_ms: Option<u64>,
     nested: bool,
@@ -232,18 +277,16 @@ impl Pending {
         scope: &Scope,
         cache: Option<&Arc<DatabaseCache>>,
     ) -> Result<Self, BackendError> {
-        let credential = Credential::resolve(context, source).inspect_err(|_| {
+        let auth = ObjectStoreAuth::resolve(context, source).inspect_err(|_| {
             if let Some(cache) = cache {
                 cache.cloud.remove(scope.id());
             }
         })?;
         let slot = match cache {
-            Some(cache) => cache.cloud.select(scope.id(), &source.uri, credential),
-            None => Slot::new(&source.uri, credential),
+            Some(cache) => cache.cloud.select(scope.id(), &source.uri, auth),
+            None => Slot::new(&source.uri, auth),
         };
         Ok(Self {
-            storage: source.storage,
-            endpoint: Endpoint::new(source.storage, &slot.credential.region)?,
             slot,
             timeout_ms,
             nested: schema.iter().any(|column| column.data_type.is_nested()),
@@ -254,24 +297,9 @@ impl Pending {
         let mut session = Session::connect_native(database, self.timeout_ms, self.nested)?;
         let connection = &mut session.connection;
         // The matching HTTPFS is auto-loaded from the static Ladybug build.
-        let prefix = match self.storage {
-            CloudStorage::S3 => "s3",
-            CloudStorage::Gcs => "gcs",
-        };
-        for (setting, value) in [
-            ("access_key_id", self.slot.credential.key_id.as_str()),
-            ("secret_access_key", self.slot.credential.secret.as_str()),
-            ("session_token", self.slot.credential.token.as_str()),
-            ("url_style", "path"),
-            ("endpoint", self.endpoint.host.as_str()),
-        ] {
-            set_string(connection, prefix, setting, value)?;
+        if let Some(auth) = &self.slot.auth {
+            auth.configure(connection)?;
         }
-        if self.storage == CloudStorage::S3 {
-            set_string(connection, prefix, "region", &self.slot.credential.region)?;
-        }
-        let ssl = CString::new(format!("{prefix}_disable_ssl")).map_err(|_| BackendError::Open)?;
-        set_bool(connection, &ssl, self.endpoint.disable_ssl)?;
         set_bool(connection, c"http_cache_file", false)?;
 
         Ok(session)
@@ -431,18 +459,27 @@ fn command(
 
 #[cfg(test)]
 mod tests {
-    use super::{Cache, Credential, valid_region};
+    use super::{Cache, Credential, Endpoint, ObjectStoreAuth, valid_region};
     use std::sync::Arc;
 
     #[test]
     fn reuse_requires_the_same_connection_uri_and_every_credential_field() {
         let cache = Cache::default();
         let fields = ["identity", "key", "token", "region"];
-        let credential = |v: [&str; 4]| Credential {
-            key_id: v[0].into(),
-            secret: v[1].into(),
-            token: v[2].into(),
-            region: v[3].into(),
+        let credential = |v: [&str; 4]| {
+            Some(ObjectStoreAuth {
+                credential: Credential {
+                    key_id: v[0].into(),
+                    secret: v[1].into(),
+                    token: v[2].into(),
+                    region: v[3].into(),
+                },
+                endpoint: Endpoint {
+                    prefix: "s3",
+                    host: "example.invalid".into(),
+                    disable_ssl: false,
+                },
+            })
         };
         let uri = "s3://graphs/v1.lbdb";
         let slot = cache.select(1, uri, credential(fields));
@@ -471,6 +508,17 @@ mod tests {
             &replaced,
             &cache.select(1, "s3://graphs/v2.lbdb", credential(fields))
         ));
+    }
+
+    #[test]
+    fn public_xet_slots_reuse_only_the_same_uri_and_connection() {
+        let cache = Cache::default();
+        let uri = "xet://datasets/example-owner/example-repo/0123456789abcdef0123456789abcdef01234567/graph.lbdb";
+        let slot = cache.select(1, uri, None);
+        assert!(Arc::ptr_eq(&slot, &cache.select(1, uri, None)));
+        assert!(!Arc::ptr_eq(&slot, &cache.select(2, uri, None)));
+        let replacement = uri.replace("0123456789abcdef", "fedcba9876543210");
+        assert!(!Arc::ptr_eq(&slot, &cache.select(1, &replacement, None)));
     }
 
     #[test]
