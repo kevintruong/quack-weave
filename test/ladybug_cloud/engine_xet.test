@@ -1,0 +1,22 @@
+# name: test/ladybug_cloud/engine_xet.test
+# description: Verify read-only Xet attach through real HTTPS metadata and range responses
+# group: [quack_weave]
+
+test-env QW_XET_ENGINE_OBSERVATIONS UNSET_QW_XET_ENGINE_OBSERVATIONS
+
+# case: ladybug_cloud.xet_engine Xet HTTPS attach and fail-closed metadata/redirect/range checks
+query TTITT
+SELECT scenario, result, wal_status, blob_read, only_read_requests
+FROM read_csv('{QW_XET_ENGINE_OBSERVATIONS}')
+ORDER BY scenario;
+----
+denied_wal	rejected	403	false	true
+dirty_wal	rejected	200	false	true
+full_body	rejected	404	true	true
+http_redirect	rejected	404	false	true
+missing	rejected	0	false	true
+redirect_loop	rejected	404	false	true
+short_body	rejected	404	true	true
+snapshot	10:20	404	true	true
+untrusted_tls	rejected	0	false	true
+wrong_range	rejected	404	true	true

@@ -11,6 +11,7 @@ import sys
 from tempfile import TemporaryDirectory
 
 from fixture import Object, ReadOnlyRequest, read_only_store
+from xet_engine import check_xet
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cypher_acceptance import ladybug, sql_literal
@@ -148,6 +149,8 @@ def main():
             },
             [Path(__file__).with_name("engine_attach.test")],
         )
+        if args.dynamic_httpfs is None:
+            check_xet(lbug, unittest, scratch, data, QUERY, run_cases)
 
 
 if __name__ == "__main__":

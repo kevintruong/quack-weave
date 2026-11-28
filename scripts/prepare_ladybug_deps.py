@@ -86,6 +86,7 @@ def main():
             "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_SHARED_LBUG=OFF",
             "-DBUILD_STATIC_LBUG=ON", "-DBUILD_SINGLE_FILE_HEADER=OFF",
             "-DAUTO_UPDATE_GRAMMAR=OFF", "-DEXTENSION_STATIC_LINK_LIST=httpfs",
+            "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON",
             "-DOPENSSL_USE_STATIC_LIBS=ON",
         ]
         openssl_root = os.environ.get("OPENSSL_ROOT_DIR")

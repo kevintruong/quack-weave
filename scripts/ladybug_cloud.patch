@@ -50,6 +50,18 @@
 +        std::chrono::milliseconds timeout = std::chrono::milliseconds{HTTPParams::DEFAULT_TIMEOUT});
  
      static std::unique_ptr<httplib::Headers> getHTTPHeaders(HeaderMap& headerMap);
+
+@@ -147,6 +150,11 @@
+         common::FileOpenFlags flags, main::ClientContext* context, bool immutableContent);
+
+ protected:
++    static void applyRequestDeadline(httplib::Client& client,
++        std::chrono::steady_clock::time_point deadline);
++    static void validateContentRange(std::string_view value, uint64_t fileOffset,
++        uint64_t bufferLen, uint64_t objectLength);
++
+     void readFromFile(common::FileInfo& fileInfo, void* buffer, uint64_t numBytes,
+         uint64_t position) const override;
  
 --- a/extension/httpfs/src/httpfs.cpp
 +++ b/extension/httpfs/src/httpfs.cpp
@@ -106,7 +118,7 @@
 +    client.set_connection_timeout(timeout);
 +}
 +
-+static void applyRequestDeadline(httplib::Client& client,
++void HTTPFileSystem::applyRequestDeadline(httplib::Client& client,
 +    std::chrono::steady_clock::time_point deadline) {
 +    const auto remaining = deadline - std::chrono::steady_clock::now();
 +    if (remaining <= std::chrono::steady_clock::duration::zero()) {
@@ -136,7 +148,26 @@
      client->set_decompress(false);
      return client;
  }
-@@ -888,7 +906,7 @@
+@@ -780,17 +798,8 @@
+ // the filesystem follows itself, so redirects must be surfaced rather than
+ // absorbed (which would also point the pooled connection at the wrong host).
+ static httplib::Client* makeNoRedirectClient(const std::string& host) {
+-    auto client = std::make_unique<httplib::Client>(host);
+-    client->set_follow_location(false);
++    auto client = HTTPFileSystem::getClient(host);
+     client->set_url_encode(false);
+-    client->set_keep_alive(HTTPParams::DEFAULT_KEEP_ALIVE);
+-#ifdef CPPHTTPLIB_OPENSSL_SUPPORT
+-    client->enable_server_certificate_verification(false);
+-#endif
+-    client->set_write_timeout(HTTPParams::DEFAULT_TIMEOUT);
+-    client->set_read_timeout(HTTPParams::DEFAULT_TIMEOUT);
+-    client->set_connection_timeout(HTTPParams::DEFAULT_TIMEOUT);
+-    client->set_decompress(false);
+     return client.release();
+ }
+
+@@ -888,7 +897,7 @@
              exception = std::current_exception();
          }
  
@@ -145,7 +176,7 @@
              switch (status) {
              case 408: // Request Timeout
              case 418: // Server is pretending to be a teapot
-@@ -947,14 +965,41 @@
+@@ -947,13 +956,39 @@
      auto hostPath = parsedURL.second;
      auto headers = getHTTPHeaders(headerMap);
  
@@ -161,7 +192,7 @@
  
      return runRequestWithRetry(request, url, "HEAD", retry);
  #endif
- }
++}
 +
 +#ifndef __WASM__
 +static void validateRangeStatus(int status, bool requirePartialContent) {
@@ -169,11 +200,11 @@
 +        throw IOException(std::format("Unexpected HTTP {} from range GET", status));
 +    }
 +}
++#endif
 +
-+static void validateContentRange(const httplib::Response& response, uint64_t fileOffset,
++void HTTPFileSystem::validateContentRange(std::string_view value, uint64_t fileOffset,
 +    uint64_t bufferLen, uint64_t objectLength) {
 +    const auto prefix = std::format("bytes {}-{}/", fileOffset, fileOffset + bufferLen - 1);
-+    const auto value = response.get_header_value("Content-Range");
 +    if (!value.starts_with(prefix)) {
 +        throw IOException("Unexpected HTTP Content-Range");
 +    }
@@ -184,12 +215,10 @@
 +        (objectLength != 0 && total != objectLength)) {
 +        throw IOException("Unexpected HTTP Content-Range");
 +    }
-+}
-+#endif
+ }
  
  std::unique_ptr<HTTPResponse> HTTPFileSystem::getRangeRequest(FileInfo* fileInfo,
-     const std::string& url, HeaderMap headerMap, uint64_t fileOffset, char* buffer,
-@@ -992,55 +1037,46 @@
+@@ -992,55 +1027,47 @@
      headers->insert(std::make_pair("Range",
          std::format("bytes={}-{}", fileOffset, fileOffset + bufferLen - 1)));
  
@@ -229,7 +258,8 @@
 -                    }
 +                validateRangeStatus(response.status, httpFileInfo->requirePartialContent);
 +                if (httpFileInfo->requirePartialContent) {
-+                    validateContentRange(response, fileOffset, bufferLen, httpFileInfo->length);
++                    validateContentRange(response.get_header_value("Content-Range"), fileOffset,
++                        bufferLen, httpFileInfo->length);
 +                }
 +                if (response.has_header("Content-Length") &&
 +                    response.get_header_value("Content-Length") != std::to_string(bufferLen)) {
@@ -272,7 +302,7 @@
  #endif
  }
  
-@@ -1133,3 +1169,5 @@
+@@ -1133,3 +1160,5 @@
  
  } // namespace httpfs_extension
  } // namespace lbug
@@ -332,3 +362,371 @@
      static std::string decodeURL(std::string input);
  
      ParsedS3URL parseS3URL(std::string url, S3AuthParams& params) const;
+--- a/extension/httpfs/src/xetfs.cpp
++++ b/extension/httpfs/src/xetfs.cpp
+@@ -1,8 +1,11 @@
+ #include "xetfs.h"
+
++#include "common/exception/interrupt.h"
+ #include "common/exception/io.h"
+ #include "common/string_utils.h"
++#include "main/client_context.h"
+ #include <format>
++#include <limits>
+
+ namespace lbug {
+ namespace httpfs_extension {
+@@ -14,6 +17,8 @@
+ static constexpr std::string_view XET_PREFIX = "xet://";
+ static constexpr std::string_view HF_PREFIX = "hf://";
+ static constexpr std::string_view HF_BASE_URL = "https://huggingface.co/";
++static constexpr int MAX_REDIRECTS = 4;
++using Clock = std::chrono::steady_clock;
+
+ std::vector<std::string> splitPath(std::string_view path) {
+     std::vector<std::string> result;
+@@ -69,18 +74,48 @@
+         repoPrefix.empty() ? "" : "/", segments[0], segments[1], segments[3], filePath);
+ }
+
+-std::string makeAbsoluteRedirectURL(const std::string& sourceURL, const std::string& location) {
+-    if (location.rfind("http://", 0) == 0 || location.rfind("https://", 0) == 0) {
+-        return location;
+-    }
+-    const auto [host, hostPath] = HTTPFileSystem::parseUrl(sourceURL);
+-    if (location.starts_with('/')) {
+-        return host + location;
+-    }
+-    const auto lastSlash = hostPath.find_last_of('/');
+-    const auto basePath =
+-        lastSlash == std::string::npos ? std::string{"/"} : hostPath.substr(0, lastSlash + 1);
+-    return host + basePath + location;
++bool isRedirect(int code) {
++    return code == 301 || code == 302 || code == 303 || code == 307 || code == 308;
++}
++
++std::string redirectTarget(const std::string& sourceURL, const std::string& location) {
++    const auto unsafe = [] { return IOException("Unsafe Xet redirect"); };
++    if (location.empty() || location.starts_with("//") ||
++        location.find_first_of("\\\r\n#") != std::string::npos) {
++        throw unsafe();
++    }
++    std::string target = location;
++    if (!location.starts_with("https://")) {
++        if (location.find(':') < location.find_first_of("/?")) {
++            throw unsafe();
++        }
++        const auto [host, hostPath] = HTTPFileSystem::parseUrl(sourceURL);
++        const auto path = hostPath.substr(0, hostPath.find('?'));
++        if (location.starts_with('/')) {
++            target = host + location;
++        } else if (location.starts_with('?')) {
++            target = host + path + location;
++        } else {
++            target = host + path.substr(0, path.find_last_of('/') + 1) + location;
++        }
++    }
++    const auto [host, path] = HTTPFileSystem::parseUrl(target);
++    if (host.size() <= std::string_view{"https://"}.size() ||
++        host.find_first_of("@?% \t") != std::string::npos || path.starts_with("//")) {
++        throw unsafe();
++    }
++    return target;
++}
++
++struct HttpHostLock {
++    explicit HttpHostLock(const std::string& host) : host{host} { HTTPFileSystem::lockHttp(host); }
++    ~HttpHostLock() { HTTPFileSystem::unlockHttp(host); }
++    const std::string& host;
++};
++
++std::chrono::milliseconds requestTimeout(FileInfo* fileInfo) {
++    return fileInfo ? fileInfo->cast<HTTPFileInfo>().socketTimeout :
++                      std::chrono::milliseconds{HTTPParams::DEFAULT_TIMEOUT};
+ }
+
+ std::unique_ptr<HTTPResponse> synthesizeHeadResponse(const HTTPResponse& response,
+@@ -148,7 +183,12 @@
+ }
+
+ bool XetFileSystem::fileOrPathExists(const std::string& path, main::ClientContext* context) {
+-    return HTTPFileSystem::fileOrPathExists(toHuggingFaceURL(path), context);
++    const auto timeout = context && context->hasTimeout()
++        ? std::min(context->getQueryTimeOut(), HTTPParams::DEFAULT_TIMEOUT)
++        : HTTPParams::DEFAULT_TIMEOUT;
++    const auto response =
++        headFollowingRedirects(toHuggingFaceURL(path), Clock::now() + std::chrono::milliseconds{timeout});
++    return response->code == 200;
+ }
+
+ std::string XetFileSystem::toHuggingFaceURL(const std::string& path) {
+@@ -187,126 +227,140 @@
+     return buildResolveURLWithExplicitResolve("", segments);
+ }
+
+-std::unique_ptr<HTTPResponse> XetFileSystem::headRequest(common::FileInfo* fileInfo,
+-    const std::string& url, HeaderMap headerMap) const {
+-    const auto [host, hostPath] = HTTPFileSystem::parseUrl(url);
+-    auto headers = getHTTPHeaders(headerMap);
+-
+-    // Send one request to `host` under that host's lock. The lock is scoped to
+-    // this block and released before any redirect recursion below, because a
+-    // redirect to another host re-enters that host's lockHttp() and a
+-    // non-recursive mutex would self-deadlock if still held.
++std::unique_ptr<HTTPResponse> XetFileSystem::headRequest(FileInfo* fileInfo,
++    const std::string& url, HeaderMap) const {
++    return headFollowingRedirects(url, Clock::now() + requestTimeout(fileInfo));
++}
++
++std::unique_ptr<HTTPResponse> XetFileSystem::headFollowingRedirects(const std::string& originalUrl,
++    Clock::time_point deadline) const {
++    const bool wal = originalUrl.ends_with(".wal");
++    auto url = originalUrl;
++    for (auto remaining = MAX_REDIRECTS; remaining >= 0; --remaining) {
++        const auto [host, hostPath] = parseUrl(url);
++        std::unique_ptr<HTTPResponse> response;
++        {
++            HttpHostLock lock{host};
++            auto* client = getSharedNoRedirectClient(host);
++            const auto request = [&] {
++                applyRequestDeadline(*client, deadline);
++                return client->Head(hostPath.c_str());
++            };
++            const auto retry = [&] { client = evictAndGetSharedNoRedirectClient(host); };
++            response = runRequestWithRetry(request, host, "HEAD", retry);
++        }
++        if (response->code == 200 || (response->code == 404 && (!wal || url == originalUrl))) {
++            return response;
++        }
++        if (!isRedirect(response->code) || !response->headers.contains("Location")) {
++            throw IOException(std::format("Unable to stat Xet object (HTTP {})", response->code));
++        }
++        auto target = redirectTarget(url, response->headers.at("Location"));
++        // The Hub exposes object size on its signed-download redirect. A WAL
++        // requires an authoritative stat, including at the redirect target.
++        if (!wal && response->headers.contains("x-linked-size")) {
++            return synthesizeHeadResponse(*response, url, response->headers.at("x-linked-size"));
++        }
++        if (!wal && url == originalUrl) {
++            recordMemoizedResolveTarget(originalUrl, target);
++        }
++        url = std::move(target);
++    }
++    throw IOException("Too many Xet redirects");
++}
++
++std::unique_ptr<HTTPResponse> XetFileSystem::getRangeFollowingRedirects(const std::string& url,
++    const std::string& originalUrl, uint64_t fileOffset, char* buffer, uint64_t bufferLen,
++    uint64_t objectLength, int redirectsRemaining, Clock::time_point deadline) const {
++    if (redirectsRemaining < 0) {
++        throw IOException("Too many Xet redirects");
++    }
++    const auto [host, hostPath] = parseUrl(url);
++    // Xet is public. Recreate headers per hop and send only the requested range.
++    const httplib::Headers headers{{"Range",
++        std::format("bytes={}-{}", fileOffset, fileOffset + bufferLen - 1)}};
++    uint64_t received = 0;
+     std::unique_ptr<HTTPResponse> response;
+     {
+-        HTTPFileSystem::lockHttp(host);
+-        struct HttpLockGuard {
+-            const std::string& host;
+-            ~HttpLockGuard() { HTTPFileSystem::unlockHttp(host); }
+-        } httpLockGuard{host};
+-
+-        // Reuse the pooled connection for this host if one is healthy, else
+-        // evict the stale one and build a fresh client.
+-        httplib::Client* client = HTTPFileSystem::getSharedNoRedirectClient(host);
+-
+-        std::function<httplib::Result(void)> request(
+-            [&]() { return client->Head(hostPath.c_str(), *headers); });
+-        std::function<void(void)> retry([&]() {
+-            // A persistent connection may have gone stale (rate-limited or closed
+-            // by the server); evict it so the retry gets a fresh socket instead of
+-            // repeatedly timing out against the same dead connection.
+-            client = HTTPFileSystem::evictAndGetSharedNoRedirectClient(host);
+-        });
+-
+-        response = runRequestWithRetry(request, url, "HEAD", retry);
+-    }
+-
+-    if (response->code >= 300 && response->code < 400 &&
+-        response->headers.contains("x-linked-size")) {
+-        return synthesizeHeadResponse(*response, url, response->headers["x-linked-size"]);
+-    }
+-    if (response->code >= 300 && response->code < 400 && response->headers.contains("Location")) {
+-        auto redirectURL = makeAbsoluteRedirectURL(url, response->headers["Location"]);
+-        recordMemoizedResolveTarget(url, redirectURL);
+-        return headRequest(fileInfo, redirectURL, headerMap);
++        HttpHostLock lock{host};
++        auto* client = getSharedNoRedirectClient(host);
++        const auto request = [&] {
++            applyRequestDeadline(*client, deadline);
++            received = 0;
++            bool acceptsRange = false;
++            return client->Get(hostPath.c_str(), headers,
++                [&](const httplib::Response& head) {
++                    if (isRedirect(head.status)) {
++                        return true;
++                    }
++                    if (head.status != 206) {
++                        throw IOException(std::format("Unexpected HTTP {} from range GET", head.status));
++                    }
++                    validateContentRange(head.get_header_value("Content-Range"), fileOffset,
++                        bufferLen, objectLength);
++                    acceptsRange = true;
++                    return true;
++                },
++                [&](const char* data, size_t size) {
++                    if (Clock::now() >= deadline) {
++                        throw InterruptException();
++                    }
++                    if (!acceptsRange) {
++                        return true;
++                    }
++                    if (size > bufferLen - received) {
++                        throw IOException("Server sent back more data than expected.");
++                    }
++                    if (buffer != nullptr) {
++                        memcpy(buffer + received, data, size);
++                    }
++                    received += size;
++                    return true;
++                });
++        };
++        const auto retry = [&] { client = evictAndGetSharedNoRedirectClient(host); };
++        response = runRequestWithRetry(request, host, "GET Range", retry);
++    }
++
++    if (isRedirect(response->code) && response->headers.contains("Location")) {
++        auto target = redirectTarget(url, response->headers.at("Location"));
++        auto resolved = getRangeFollowingRedirects(target, originalUrl, fileOffset, buffer,
++            bufferLen, objectLength, redirectsRemaining - 1, deadline);
++        if (url == originalUrl) {
++            recordMemoizedResolveTarget(originalUrl, target);
++        }
++        return resolved;
++    }
++    if (response->code != 206) {
++        throw IOException(std::format("Unexpected HTTP {} from range GET", response->code));
++    }
++    if (received != bufferLen) {
++        throw IOException("Incomplete HTTP range response");
+     }
+     return response;
+ }
+
+-std::unique_ptr<HTTPResponse> XetFileSystem::getRangeFollowingRedirects(
+-    common::FileInfo* fileInfo, const std::string& url, const std::string& originalUrl,
+-    HeaderMap headerMap, uint64_t fileOffset, char* buffer, uint64_t bufferLen,
+-    int redirectsRemaining) const {
+-    if (redirectsRemaining < 0) {
+-        throw IOException(std::format("Too many redirects while fetching range of '{}'", url));
+-    }
+-    const auto [host, hostPath] = HTTPFileSystem::parseUrl(url);
+-    auto headers = getHTTPHeaders(headerMap);
+-    headers->insert(std::make_pair("Range",
+-        std::format("bytes={}-{}", fileOffset, fileOffset + bufferLen - 1)));
+-
+-    std::unique_ptr<HTTPResponse> response;
+-    {
+-        HTTPFileSystem::lockHttp(host);
+-        struct HttpLockGuard {
+-            const std::string& host;
+-            ~HttpLockGuard() { HTTPFileSystem::unlockHttp(host); }
+-        } httpLockGuard{host};
+-
+-        httplib::Client* client = HTTPFileSystem::getSharedNoRedirectClient(host);
+-        std::function<httplib::Result(void)> request(
+-            [&]() { return client->Get(hostPath.c_str(), *headers); });
+-        std::function<void(void)> retry([&]() {
+-            client = HTTPFileSystem::evictAndGetSharedNoRedirectClient(host);
+-        });
+-        response = runRequestWithRetry(request, url, "GET Range", retry);
+-    }
+-
+-    if (response->code >= 300 && response->code < 400 && response->headers.contains("Location")) {
+-        auto redirectURL = makeAbsoluteRedirectURL(url, response->headers["Location"]);
+-        if (url == originalUrl) {
+-            recordMemoizedResolveTarget(originalUrl, redirectURL);
+-        }
+-        return getRangeFollowingRedirects(fileInfo, redirectURL, originalUrl, headerMap,
+-            fileOffset, buffer, bufferLen, redirectsRemaining - 1);
+-    }
+-    if (response->code >= 400) {
+-        throw IOException(std::format("HTTP GET error on '{}' (HTTP {})", url, response->code));
+-    }
+-    if (response->code < 300) {
+-        if (response->body.size() != bufferLen) {
+-            throw IOException(std::format("HTTP GET error: response body size {} does not match "
+-                                          "requested range size {}.",
+-                response->body.size(), bufferLen));
+-        }
+-        if (buffer != nullptr) {
+-            memcpy(buffer, response->body.data(), bufferLen);
+-        }
+-    }
+-    return response;
+-}
+-
+-std::unique_ptr<HTTPResponse> XetFileSystem::getRangeRequest(common::FileInfo* fileInfo,
+-    const std::string& url, HeaderMap headerMap, uint64_t fileOffset, char* buffer,
+-    uint64_t bufferLen) const {
+-    static constexpr int MAX_REDIRECTS = 4;
+-
+-    // Fast path: reuse the recently resolved target for this exact source URL,
+-    // skipping the huggingface.co resolve hop. An expired signature surfaces as
+-    // an HTTP error; evict and fall back to a fresh resolve then. Note:
+-    // `fileInfo` may be null here when invoked from prefetch jobs.
++std::unique_ptr<HTTPResponse> XetFileSystem::getRangeRequest(FileInfo* fileInfo,
++    const std::string& url, HeaderMap, uint64_t fileOffset, char* buffer, uint64_t bufferLen) const {
++    if (bufferLen == 0 || fileOffset > std::numeric_limits<uint64_t>::max() - bufferLen) {
++        throw IOException("Invalid Xet byte range");
++    }
++    const auto deadline = Clock::now() + requestTimeout(fileInfo);
++    const auto objectLength = fileInfo ? fileInfo->cast<HTTPFileInfo>().length : 0;
+     std::string memoizedTarget;
+     if (takeMemoizedResolveTarget(url, memoizedTarget)) {
+         try {
+-            return getRangeFollowingRedirects(fileInfo, memoizedTarget, url, headerMap,
+-                fileOffset, buffer, bufferLen, /*redirectsRemaining=*/2);
++            return getRangeFollowingRedirects(memoizedTarget, url, fileOffset, buffer, bufferLen,
++                objectLength, MAX_REDIRECTS - 1, deadline);
+         } catch (const IOException&) {
+             evictMemoizedResolveTarget(url);
+-            // Fall through to a fresh resolve below.
+-        }
+-    }
+-    return getRangeFollowingRedirects(fileInfo, url, url, headerMap, fileOffset, buffer,
+-        bufferLen, MAX_REDIRECTS);
++        }
++    }
++    return getRangeFollowingRedirects(url, url, fileOffset, buffer, bufferLen, objectLength,
++        MAX_REDIRECTS, deadline);
+ }
+
+ } // namespace httpfs_extension
+ } // namespace lbug
++
++extern "C" void qw_lbug_xet_verified_transport() {}
+--- a/extension/httpfs/src/include/xetfs.h
++++ b/extension/httpfs/src/include/xetfs.h
+@@ -47,12 +47,15 @@
+     static std::mutex resolvedTargetsMtx;
+     static std::unordered_map<std::string, ResolvedTarget> resolvedTargets;
+
++    std::unique_ptr<HTTPResponse> headFollowingRedirects(const std::string& url,
++        std::chrono::steady_clock::time_point deadline) const;
++
+     /** Issues one range request against `url`, following 3xx hops manually with
+      * per-host locking. Records the FIRST redirect hop of `originalUrl` into
+      * the memoization cache. `buffer` may be null to fetch without copying. */
+-    std::unique_ptr<HTTPResponse> getRangeFollowingRedirects(common::FileInfo* fileInfo,
+-        const std::string& url, const std::string& originalUrl, HeaderMap headerMap,
+-        uint64_t fileOffset, char* buffer, uint64_t bufferLen, int redirectsRemaining) const;
++    std::unique_ptr<HTTPResponse> getRangeFollowingRedirects(const std::string& url,
++        const std::string& originalUrl, uint64_t fileOffset, char* buffer, uint64_t bufferLen,
++        uint64_t objectLength, int redirectsRemaining, std::chrono::steady_clock::time_point deadline) const;
+ };
+
+ } // namespace httpfs_extension

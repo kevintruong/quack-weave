@@ -62,6 +62,7 @@ fn main() {
 
     require_archive_symbol(&engine_archive, "qw_lbug_cloud_read_only_attach");
     require_archive_symbol(&httpfs_archive, "qw_lbug_cloud_verified_transport");
+    require_archive_symbol(&httpfs_archive, "qw_lbug_xet_verified_transport");
     let object = out.join("ladybug_admission.o");
     run(
         Command::new(env::var_os("CXX").as_deref().unwrap_or(OsStr::new("c++")))
