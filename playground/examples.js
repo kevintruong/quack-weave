@@ -19,6 +19,7 @@ LIMIT 5;`,
   },
   {
     title: "Join both engines",
+    engine: "SQL + Cypher",
     mode: "sql",
     detail: "Use GRAPH_TABLE to join Ladybug citations to publication data in DuckDB.",
     sql: `SELECT p.id, p.title, p.venue, p.citation_count
@@ -39,5 +40,23 @@ ORDER BY p.citation_count DESC;`,
 WHERE source.id = 100
 RETURN via.title AS via_title, cited.title AS cited_title
 ORDER BY via_title, cited_title;`,
+  },
+];
+
+export const publicExamples = [
+  {
+    title: "Preview nodes",
+    mode: "cypher",
+    detail: "Inspect labels and properties on up to ten nodes from the selected graph.",
+    sql: "MATCH (n) RETURN n LIMIT 10;",
+  },
+  {
+    title: "Count relationships",
+    engine: "SQL + Cypher",
+    mode: "sql",
+    detail: "Run a graph-wide count in Ladybug and return it to DuckDB.",
+    sql: `SELECT * FROM qw_query('kg', 'cypher',
+  $$MATCH ()-[r]->() RETURN count(r) AS edges$$,
+  schema := 'edges BIGINT');`,
   },
 ];

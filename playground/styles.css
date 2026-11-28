@@ -66,6 +66,15 @@ aside, .console { display: grid; gap: 16px; min-width: 0; }
 .dataset dt { font-weight: 550; margin-top: 13px; }
 .dataset dt code { color: var(--accent); margin-left: 4px; }
 .dataset dd { margin: 6px 0 0 16px; color: var(--muted); line-height: 1.45; }
+.dataset select, .dataset input {
+  width: 100%; min-width: 0; font: inherit; color: inherit; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin: 6px 0;
+}
+#hf-form label { display: block; font-size: .85rem; margin-top: 8px; }
+.source-help, #active-graph, #source-error { font-size: .8rem; overflow-wrap: anywhere; }
+.source-help { color: var(--muted); margin: 0 0 12px; }
+.dataset #active-graph { margin-bottom: 0; }
+.dataset #source-error { color: #ffafa5; margin: 8px 0 0; }
 .engine-dot { margin-right: 7px; width: 6px; height: 6px; vertical-align: 2px; }
 .engine-dot.graph { background: var(--graph); }
 
@@ -111,6 +120,7 @@ td.null { color: var(--muted); }
   .guide { order: 0; width: 100%; }
   .console { order: 1; }
   .dataset { order: 2; width: 100%; }
+  .dataset:has(#graph-source) { order: -1; }
   #examples { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .intro p { font-size: .95rem; }
   .intro { padding-bottom: 22px; }

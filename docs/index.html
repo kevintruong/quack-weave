@@ -172,7 +172,7 @@ SELECT * FROM qw_query(
       <section id="clients">
         <h2>Client and browser use</h2>
         <p>The native ADBC example prepares a query, fetches typed Arrow result tables and ingests a graph result into a second DuckDB cursor. Use the matched DuckDB library with the extension. <a href="https://github.com/kevintruong/quack-weave/blob/main/test/public_client/run.py">Runnable ADBC example</a></p>
-        <p>The browser Playground runs a separate DuckDB Wasm and Ladybug Wasm pair over the bundled PaperTrail citation fixture. It offers browser SQL and Cypher, scalar <code>qw_query</code>, and a SQL/PGQ-style <code>GRAPH_TABLE</code> bridge that transfers typed Arrow rows. The sample alias is <code>kg</code>. The browser runs its own read-only sample graph and SQL session. <a href="../">Open the Playground</a> · <a href="https://github.com/kevintruong/quack-weave/tree/main/playground">Playground source and tests</a></p>
+        <p>The browser Playground runs a separate DuckDB Wasm and Ladybug Wasm pair with the bundled PaperTrail graph or a public Hugging Face Ladybug database. It offers browser SQL and Cypher, scalar <code>qw_query</code>, and a SQL/PGQ-style <code>GRAPH_TABLE</code> bridge that transfers typed Arrow rows. Choose Hugging Face under Graph source to open a dataset or file link. Ladybug reads the selected snapshot at a pinned commit. Its graph alias is <code>kg</code>. <a href="../">Open the Playground</a> · <a href="https://github.com/kevintruong/quack-weave/tree/main/playground">Playground source and tests</a></p>
       </section>
 
       <section id="evidence">

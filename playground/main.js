@@ -1,5 +1,6 @@
 import "./styles.css";
-import { examples } from "./examples.js";
+import { examples as papertrailExamples, publicExamples } from "./examples.js";
+import { discoverGraphs } from "./huggingface.js";
 import { startEngines } from "./engines.js";
 
 const get = id => document.getElementById(id);
@@ -11,11 +12,16 @@ const modeButtons = [...document.querySelectorAll("[data-mode]")];
 const runButton = get("run-query");
 const copyButton = get("copy-query");
 const displayLimit = 200;
+let examples = papertrailExamples;
 const drafts = { sql: examples[1].sql, cypher: examples[0].sql };
 let selectedExample = 0;
 let mode = "cypher";
 let engines;
 let running = false;
+let switching = false;
+let catalog;
+const source = get("graph-source");
+const filePicker = get("hf-file");
 
 function switchMode(next) {
   drafts[mode] = editor.value;
@@ -34,23 +40,27 @@ function selectExample(index) {
   }
 }
 
-examples.forEach((example, index) => {
-  const button = document.createElement("button");
-  button.className = "example";
-  const engine = document.createElement("small");
-  engine.textContent = index === 2 ? "SQL + Cypher" : example.mode === "sql" ? "SQL" : "Cypher";
-  const number = document.createElement("span");
-  number.className = "step";
-  number.textContent = index + 1;
-  number.setAttribute("aria-hidden", "true");
-  const label = document.createElement("span");
-  label.append(document.createTextNode(example.title), engine);
-  button.append(number, label);
-  button.setAttribute("aria-label", example.title);
-  button.addEventListener("click", () => selectExample(index));
-  exampleList.append(button);
-});
+function renderExamples() {
+  exampleList.replaceChildren();
+  examples.forEach((example, index) => {
+    const button = document.createElement("button");
+    button.className = "example";
+    const engine = document.createElement("small");
+    engine.textContent = example.engine ?? (example.mode === "sql" ? "SQL" : "Cypher");
+    const number = document.createElement("span");
+    number.className = "step";
+    number.textContent = index + 1;
+    number.setAttribute("aria-hidden", "true");
+    const label = document.createElement("span");
+    label.append(document.createTextNode(example.title), engine);
+    button.append(number, label);
+    button.setAttribute("aria-label", example.title);
+    button.addEventListener("click", () => selectExample(index));
+    exampleList.append(button);
+  });
+}
 
+renderExamples();
 editor.value = drafts[mode];
 switchMode(mode);
 selectExample(selectedExample);
@@ -137,21 +147,32 @@ function showError(error) {
   element.textContent = error instanceof Error ? error.message : String(error);
 }
 
-async function runQuery() {
-  if (!engines || running) return;
-  const query = editor.value.trim();
+function clearResults() {
   get("query-error").hidden = true;
   get("result-empty").hidden = true;
   get("result-transfer").hidden = true;
   get("result-table").replaceChildren();
   get("result-summary").textContent = "";
+}
+
+function updateControls() {
+  const busy = !engines || running || switching;
+  for (const control of [runButton, source, filePicker, get("open-graph"), get("hf-location")]) {
+    control.disabled = busy;
+  }
+}
+
+async function runQuery() {
+  if (!engines || running || switching) return;
+  const query = editor.value.trim();
+  clearResults();
   if (!query) {
     showError("Enter a query to run.");
     editor.focus();
     return;
   }
   running = true;
-  runButton.disabled = true;
+  updateControls();
   resultPanel.setAttribute("aria-busy", "true");
   get("result-summary").textContent = "Running query…";
   const start = performance.now();
@@ -162,10 +183,82 @@ async function runQuery() {
     showError(error);
   } finally {
     running = false;
-    runButton.disabled = false;
+    updateControls();
     resultPanel.setAttribute("aria-busy", "false");
   }
 }
+
+function clearCatalog() {
+  catalog = undefined;
+  filePicker.replaceChildren();
+  filePicker.hidden = get("hf-file-label").hidden = true;
+  get("source-error").hidden = true;
+}
+
+function showGraph(name, isPublic) {
+  get("active-graph").textContent = `Active graph · ${name}`;
+  get("graph-description").textContent = isPublic
+    ? "The selected graph is available as kg. The papers table contains the PaperTrail sample."
+    : "12 fictional papers and 20 citations.";
+  for (const row of document.querySelectorAll(".papertrail-schema")) row.hidden = isPublic;
+  examples = isPublic ? publicExamples : papertrailExamples;
+  renderExamples();
+  selectExample(0);
+  switchMode("cypher");
+  editor.value = drafts.cypher = examples[0].sql;
+  drafts.sql = examples[1].sql;
+  clearResults();
+  get("result-empty").textContent = "Run a query to see its results here.";
+  get("result-empty").hidden = false;
+}
+
+async function changeGraph() {
+  if (switching || running || !engines) return;
+  switching = true;
+  updateControls();
+  get("source-error").hidden = true;
+  const open = get("open-graph");
+  open.textContent = "Opening…";
+  try {
+    if (source.value === "papertrail") {
+      await engines.selectGraph(null);
+      showGraph("PaperTrail", false);
+      return;
+    }
+    if (!catalog) {
+      catalog = await discoverGraphs(get("hf-location").value);
+      if (catalog.files.length > 1) {
+        filePicker.replaceChildren(new Option("Choose a file", ""));
+        for (const name of catalog.files) filePicker.add(new Option(name, name));
+        filePicker.hidden = get("hf-file-label").hidden = false;
+        return;
+      }
+    }
+    const file = catalog.files.length === 1 ? catalog.files[0] : filePicker.value;
+    await engines.selectGraph(catalog.url(file));
+    showGraph(`${catalog.repo}/${file} @ ${catalog.sha.slice(0, 8)}`, true);
+  } catch (error) {
+    const message = get("source-error");
+    message.textContent = error.message || String(error);
+    message.hidden = false;
+  } finally {
+    switching = false;
+    open.textContent = "Open graph";
+    updateControls();
+  }
+}
+
+source.addEventListener("change", () => {
+  clearCatalog();
+  get("hf-form").hidden = source.value !== "huggingface";
+  if (source.value === "papertrail") void changeGraph();
+  else get("hf-location").focus();
+});
+get("hf-location").addEventListener("input", clearCatalog);
+get("hf-form").addEventListener("submit", event => {
+  event.preventDefault();
+  void changeGraph();
+});
 
 runButton.addEventListener("click", runQuery);
 editor.addEventListener("keydown", event => {
@@ -177,7 +270,7 @@ editor.addEventListener("keydown", event => {
 
 startEngines().then(result => {
   engines = result;
-  runButton.disabled = false;
+  updateControls();
   engineStatus.dataset.state = "ready";
   engineStatus.textContent = "Engines ready";
 }).catch(error => {

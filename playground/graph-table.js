@@ -19,7 +19,7 @@ export function lowerGraphTables(sql, { offsets, types }) {
   for (let index = 0; index < offsets.length; index++) {
     if (word(index) !== "graph_table" || operator(index - 1, ".") ||
         !operator(index + 1, "(") || word(index + 3) !== "match") continue;
-    if (word(index + 2) !== "kg") throw new Error("GRAPH_TABLE expects the PaperTrail graph alias kg.");
+    if (word(index + 2) !== "kg") throw new Error("GRAPH_TABLE expects the active graph alias kg.");
 
     let depth = 1;
     let columns = -1;

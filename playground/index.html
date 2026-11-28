@@ -24,7 +24,7 @@
     <section class="intro" aria-labelledby="intro-heading">
       <div>
         <h1 id="intro-heading">Query across <em>two engines.</em></h1>
-        <p>Explore a citation graph with Cypher, analyze papers with SQL, or join both in one query. Everything runs in your browser.</p>
+        <p>Query PaperTrail or a public Ladybug graph from Hugging Face with Cypher and SQL. Everything runs in your browser.</p>
       </div>
       <div class="engine-diagram" aria-label="Ladybug sends Arrow query results to DuckDB">
         <div><i aria-hidden="true"></i><span>Ladybug <small>Cypher</small></span></div>
@@ -35,6 +35,23 @@
 
     <div class="workspace">
       <aside>
+        <section class="panel dataset" aria-labelledby="source-heading">
+          <h2 id="source-heading"><label for="graph-source">Graph source</label></h2>
+          <select id="graph-source" disabled>
+            <option value="papertrail">PaperTrail</option>
+            <option value="huggingface">Hugging Face</option>
+          </select>
+          <form id="hf-form" hidden>
+            <label for="hf-location">Dataset or file</label>
+            <input id="hf-location" value="ladybugdb/small-kgs" required spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="hf-help">
+            <p class="source-help" id="hf-help">Enter a public dataset ID, a Hugging Face link, or a pinned xet:// file URI.</p>
+            <label id="hf-file-label" for="hf-file" hidden>Database file</label>
+            <select id="hf-file" hidden></select>
+            <button class="button load" type="submit" id="open-graph">Open graph</button>
+          </form>
+          <p id="active-graph" role="status">Active graph · PaperTrail</p>
+          <p id="source-error" role="alert" hidden></p>
+        </section>
         <section class="panel guide" aria-labelledby="examples-heading">
           <h2 id="examples-heading">Guided examples</h2>
           <div id="examples"></div>
@@ -45,12 +62,12 @@
         </section>
 
         <section class="panel dataset" aria-labelledby="dataset-heading">
-          <h2 id="dataset-heading">PaperTrail</h2>
-          <p>12 fictional papers and 20 citations.</p>
+          <h2 id="dataset-heading">Session data</h2>
+          <p id="graph-description">12 fictional papers and 20 citations.</p>
           <dl>
             <dt><span class="engine-dot graph"></span>Ladybug graph <code>kg</code></dt>
-            <dd><code>Document(id, title)</code></dd>
-            <dd><code>[:LINKS_TO]</code></dd>
+            <dd class="papertrail-schema"><code>Document(id, title)</code></dd>
+            <dd class="papertrail-schema"><code>[:LINKS_TO]</code></dd>
             <dt><span class="engine-dot"></span>DuckDB table <code>papers</code></dt>
             <dd><code>id, title, venue, year,<br>citation_count</code></dd>
           </dl>

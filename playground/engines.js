@@ -246,9 +246,35 @@ async function executeSql({ database, connection }, graph, parseSchema, sql) {
 }
 
 export async function startEngines() {
-  const [sql, graph, parseSchema] = await Promise.all([startDuckDB(), startLadybug(), startSchemaParser()]);
+  const [sql, papertrail, parseSchema] = await Promise.all([startDuckDB(), startLadybug(), startSchemaParser()]);
+  let remote;
   return {
+    async selectGraph(url) {
+      let next;
+      if (url) {
+        const database = new ladybug.Database(":memory:", 0, 1);
+        const connection = new ladybug.Connection(database, 1);
+        try {
+          // ATTACH needs a writable in-memory host. Ladybug enforces read-only
+          // queries once the remote lbug database is attached.
+          await queryGraph(connection, `ATTACH '${url.replaceAll("'", "\\'")}' AS snapshot (DBTYPE lbug)`);
+          await queryGraph(connection, "USE snapshot");
+          next = { database, connection };
+        } catch (error) {
+          await connection.close();
+          await database.close();
+          throw error;
+        }
+      }
+      const previous = remote;
+      remote = next;
+      if (previous) {
+        await previous.connection.close();
+        await previous.database.close();
+      }
+    },
     async run(mode, query) {
+      const graph = remote?.connection ?? papertrail;
       if (mode === "cypher") return { ...await queryGraph(graph, query), engine: "Ladybug" };
       return executeSql(sql, graph, parseSchema, query);
     },
